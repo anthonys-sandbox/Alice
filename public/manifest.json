@@ -1,0 +1,17 @@
+{
+    "name": "Alice",
+    "short_name": "Alice",
+    "description": "Personal AI Agent",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#131314",
+    "theme_color": "#131314",
+    "icons": [
+        {
+            "src": "/alice-icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ]
+}

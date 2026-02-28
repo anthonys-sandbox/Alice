@@ -24,6 +24,7 @@ export class Gateway {
     this.config = config;
     this.app = express();
     this.app.use(express.json());
+    this.app.use(express.static('public'));
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
     this.agent = new Agent(config);
@@ -132,6 +133,29 @@ export class Gateway {
       const sessions = this.agent.listSessions();
       const currentId = this.agent.getSessionId();
       res.json({ sessions, currentId });
+    });
+
+    // Get user profile info (Google profile picture)
+    let cachedUserInfo: any = null;
+    this.app.get('/api/userinfo', async (_req, res) => {
+      if (cachedUserInfo) return res.json(cachedUserInfo);
+      try {
+        const { getAccessToken } = await import('../utils/oauth.js');
+        const token = await getAccessToken(
+          this.config.googleChat.oauthClientId,
+          this.config.googleChat.oauthClientSecret,
+        );
+        const resp = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (resp.ok) {
+          cachedUserInfo = await resp.json();
+          return res.json(cachedUserInfo);
+        }
+        res.json({ picture: null });
+      } catch {
+        res.json({ picture: null });
+      }
     });
 
     // Get messages for a specific session
@@ -285,9 +309,16 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
   <title>Alice</title>
   <meta name="description" content="Alice — Personal AI Assistant">
+  <meta name="theme-color" content="#131314">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Alice">
+  <link rel="icon" type="image/png" href="/alice-icon-512.png">
+  <link rel="apple-touch-icon" href="/alice-icon-512.png">
+  <link rel="manifest" href="/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"><\/script>
@@ -310,11 +341,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       --text-primary: #e3e3e3;
       --text-secondary: #9aa0a6;
       --text-tertiary: #6e7681;
-      --accent: #8ab4f8;
-      --accent-dim: rgba(138, 180, 248, 0.1);
-      --accent-glow: rgba(138, 180, 248, 0.15);
-      --user-bg: #004a77;
-      --user-text: #c2e7ff;
+      --accent: #b388ff;
+      --accent-dim: rgba(179, 136, 255, 0.1);
+      --accent-glow: rgba(179, 136, 255, 0.15);
+      --user-bg: #5b21b6;
+      --user-text: #ede9fe;
       --success: #81c995;
       --error: #f28b82;
       --radius: 20px;
@@ -491,7 +522,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .menu-btn svg { width: 20px; height: 20px; fill: currentColor; }
     .logo {
       width: 32px; height: 32px;
-      background: linear-gradient(135deg, #8ab4f8, #c58af9, #f28b82);
+      background: linear-gradient(135deg, #a855f7, #7c3aed, #6366f1);
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
     }
@@ -589,13 +620,19 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       margin-top: 4px;
     }
     .avatar.alice {
-      background: linear-gradient(135deg, #8ab4f8, #c58af9);
+      background: linear-gradient(135deg, #a855f7, #6366f1);
     }
     .avatar.user-av {
       background: var(--user-bg);
       color: var(--user-text);
       font-weight: 500;
       font-size: 13px;
+      overflow: hidden;
+    }
+    .avatar.user-av img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
     }
 
     .msg-content {
@@ -771,7 +808,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       background: transparent;
       border: none;
       color: var(--text-primary);
-      font-size: 15px;
+      font-size: 16px;
       font-family: var(--font);
       padding: 12px 0;
       outline: none;
@@ -807,7 +844,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     }
     .welcome-icon {
       width: 64px; height: 64px;
-      background: linear-gradient(135deg, #8ab4f8, #c58af9, #f28b82);
+      background: linear-gradient(135deg, #a855f7, #7c3aed, #6366f1);
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
       font-size: 28px;
@@ -815,7 +852,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .welcome h2 {
       font-size: 28px;
       font-weight: 400;
-      background: linear-gradient(135deg, #8ab4f8, #c58af9);
+      background: linear-gradient(135deg, #c084fc, #818cf8);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
     }
@@ -924,6 +961,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     }
     marked.use({ breaks: true, gfm: true });
 
+    // Fetch user profile picture
+    window.__userPicture = null;
+    fetch('/api/userinfo').then(r => r.json()).then(data => {
+      if (data.picture) window.__userPicture = data.picture;
+    }).catch(() => {});
+
     const ws = new WebSocket('ws://' + location.host);
     const messages = document.getElementById('messages');
     const input = document.getElementById('input');
@@ -972,7 +1015,14 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         row.appendChild(content);
         const avatar = document.createElement('div');
         avatar.className = 'avatar user-av';
-        avatar.textContent = 'A';
+        if (window.__userPicture) {
+          const img = document.createElement('img');
+          img.src = window.__userPicture;
+          img.alt = 'You';
+          avatar.appendChild(img);
+        } else {
+          avatar.textContent = 'A';
+        }
         row.appendChild(avatar);
       } else {
         row.appendChild(content);

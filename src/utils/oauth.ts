@@ -71,7 +71,11 @@ async function interactiveLogin(oauth2Client: OAuth2Client): Promise<void> {
     const authUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         prompt: 'consent',
-        scope: ['https://www.googleapis.com/auth/spreadsheets'],
+        scope: [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'openid',
+            'https://www.googleapis.com/auth/userinfo.profile',
+        ],
     });
 
     console.log('\n🔐 Opening browser for Google login...');
