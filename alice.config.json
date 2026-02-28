@@ -1,0 +1,24 @@
+{
+    "chatProvider": "ollama",
+    "gemini": {
+        "model": "gemini-3-flash-preview"
+    },
+    "ollama": {
+        "model": "qwen3:8b"
+    },
+    "gateway": {
+        "host": "0.0.0.0",
+        "port": 18790
+    },
+    "heartbeat": {
+        "enabled": true,
+        "intervalMinutes": 30
+    },
+    "agent": {
+        "maxIterations": 25,
+        "timeoutMs": 300000
+    },
+    "logging": {
+        "level": "info"
+    }
+}

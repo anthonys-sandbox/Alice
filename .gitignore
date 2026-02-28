@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+*.log
+memory/daily/
+memory/data/*.db
+memory/data/*.db-wal
+memory/data/*.db-shm
+.DS_Store
+.gravityclaw-tokens.json
+.alice-tokens.json
+tokens/
+.idea/
+.vscode/
+cat_photo.jpg
+cat_response.json
+com.gravityclaw.agent.plist
