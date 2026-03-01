@@ -4,7 +4,8 @@
         "model": "gemini-3-flash-preview"
     },
     "ollama": {
-        "model": "qwen3:8b"
+        "model": "qwen3:8b",
+        "visionModel": "qwen3-vl"
     },
     "gateway": {
         "host": "0.0.0.0",
