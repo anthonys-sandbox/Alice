@@ -302,6 +302,27 @@ export class Gateway {
         res.json({ status: 'cancelled' });
       } catch (err: any) { res.status(500).json({ error: err.message }); }
     });
+
+    // List available models
+    this.app.get('/api/models', async (_req, res) => {
+      try {
+        const models = await this.agent.getAvailableModels();
+        const active = this.agent.getActiveModel();
+        res.json({ models, active });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Switch model
+    this.app.post('/api/models/switch', (req, res) => {
+      try {
+        const { provider, model } = req.body;
+        if (!provider || !model) {
+          return res.status(400).json({ error: 'provider and model required' });
+        }
+        this.agent.switchModel(provider, model);
+        res.json({ status: 'switched', provider, model });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
   }
 
   private setupWebSocket(): void {
@@ -381,6 +402,7 @@ export class Gateway {
           '📊 **Session Status**',
           `• Session: \`${s.sessionId.slice(0, 8)}...\``,
           `• Messages: ${s.messageCount}`,
+          `• Provider: ${s.provider}`,
           `• Model: ${s.model}` + (s.fallbackModel ? ` (fallback: ${s.fallbackModel})` : ''),
           `• System prompt: ${s.systemPromptChars} chars`,
           `• Est. context: ~${s.estimatedTokens} tokens`,
@@ -716,7 +738,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         max-width: 80%;
         padding: 8px 16px;
       }
-      .header-btn { padding: 0; overflow: hidden; width: 40px; height: 40px; border-radius: 50%; font-size: 18px; display: flex; align-items: center; justify-content: center; white-space: nowrap; text-indent: -2px; }
+      .header-btn { padding: 0; overflow: hidden; width: 40px; height: 40px; border-radius: 50%; font-size: 18px; display: flex; align-items: center; justify-content: center; white-space: nowrap; }
+      .header-btn .btn-label { display: none; }
       .header-actions { flex-shrink: 0; }
     }
 
@@ -1042,9 +1065,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       border: 1px solid var(--border);
       border-radius: var(--shape-xl);
       display: flex;
+      flex-direction: column;
+      transition: border-color var(--duration-short) var(--motion-standard), box-shadow var(--duration-short) var(--motion-standard);
+    }
+    .input-row {
+      display: flex;
       align-items: center;
       padding: 4px 8px 4px 16px;
-      transition: border-color var(--duration-short) var(--motion-standard), box-shadow var(--duration-short) var(--motion-standard);
     }
     .attach-btn {
       background: transparent;
@@ -1058,6 +1085,130 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       flex-shrink: 0;
     }
     .attach-btn:hover { background: rgba(207,188,255,0.08); color: var(--accent); }
+
+    /* ── Model Picker ──────────────── */
+    .model-picker-row {
+      display: flex;
+      align-items: center;
+      padding: 2px 10px 8px;
+      position: relative;
+    }
+    .model-picker-btn {
+      background: rgba(207,188,255,0.06);
+      border: 1px solid rgba(207,188,255,0.1);
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-family: var(--font);
+      font-weight: 500;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px 4px 8px;
+      border-radius: 16px;
+      transition: all 0.2s var(--motion-standard);
+      white-space: nowrap;
+    }
+    .model-picker-btn:hover {
+      background: rgba(207,188,255,0.12);
+      border-color: rgba(207,188,255,0.2);
+      color: var(--text-primary);
+    }
+    .model-picker-btn .provider-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .model-picker-btn .provider-dot.ollama { background: #34d399; }
+    .model-picker-btn .provider-dot.gemini { background: #60a5fa; }
+    .model-picker-btn .provider-dot.openrouter { background: #f472b6; }
+    .model-picker-btn .chevron {
+      transition: transform 0.2s;
+      font-size: 8px;
+      opacity: 0.6;
+    }
+    .model-picker-btn.open { 
+      background: rgba(207,188,255,0.15);
+      border-color: rgba(207,188,255,0.25);
+      color: var(--text-primary);
+    }
+    .model-picker-btn.open .chevron { transform: rotate(180deg); }
+    .model-dropdown {
+      display: none;
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 0;
+      background: var(--surface);
+      border: 1px solid rgba(207,188,255,0.15);
+      border-radius: 14px;
+      min-width: 280px;
+      max-height: 360px;
+      overflow-y: auto;
+      z-index: 100;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(207,188,255,0.05);
+      padding: 6px;
+      backdrop-filter: blur(16px);
+    }
+    .model-dropdown.show { display: block; }
+    .model-group-label {
+      font-size: 10px;
+      color: var(--text-secondary);
+      padding: 10px 10px 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      font-weight: 600;
+      opacity: 0.6;
+    }
+    .model-group-label:first-child { padding-top: 6px; }
+    .model-option {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-size: 13px;
+      font-weight: 450;
+      color: var(--text-primary);
+    }
+    .model-option:hover { background: rgba(207,188,255,0.08); }
+    .model-option.active {
+      background: rgba(124,58,237,0.12);
+      color: var(--accent);
+    }
+    .model-option .model-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .model-option .model-size {
+      font-size: 11px;
+      color: var(--text-secondary);
+      opacity: 0.5;
+      font-weight: 400;
+    }
+    .model-option .model-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .model-option .model-dot.ollama { background: #34d399; }
+    .model-option .model-dot.gemini { background: #60a5fa; }
+    .model-option .model-dot.openrouter { background: #f472b6; }
+    .model-caps {
+      display: flex;
+      gap: 3px;
+      margin-left: auto;
+      flex-shrink: 0;
+    }
+    .model-cap-icon {
+      width: 14px; height: 14px;
+      opacity: 0.5;
+      color: var(--text-secondary);
+    }
+    .model-cap-icon svg { width: 14px; height: 14px; }
     .attach-preview {
       max-width: var(--max-width);
       margin: 0 auto 8px;
@@ -1268,7 +1419,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       </div>
       <div class="header-spacer"></div>
       <div class="header-actions">
-        <button class="header-btn" id="newChatBtn">＋ New Chat</button>
+        <button class="header-btn" id="newChatBtn">＋<span class="btn-label"> New Chat</span></button>
       </div>
     </header>
 
@@ -1292,6 +1443,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     <div class="input-wrapper">
       <div id="attachPreview" class="attach-preview" style="display:none;"></div>
       <div class="input-container">
+        <div class="input-row">
         <button id="attachBtn" class="attach-btn" title="Attach file">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6l-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
         </button>
@@ -1300,6 +1452,15 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
         </button>
         <button id="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11zm7.318-19.539l-10.94 10.939"/></svg></button>
+        </div>
+        <div class="model-picker-row">
+          <button class="model-picker-btn" id="modelPickerBtn">
+            <span class="provider-dot ollama" id="modelProviderDot"></span>
+            <span id="modelPickerLabel">Loading...</span>
+            <span class="chevron">▲</span>
+          </button>
+          <div class="model-dropdown" id="modelDropdown"></div>
+        </div>
       </div>
       <input type="file" id="fileInput" accept="image/*,.pdf,.txt,.csv,.json,.md" multiple style="display:none;" />
     </div>
@@ -1669,6 +1830,108 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       input.style.height = 'auto';
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     });
+
+    // ── Model Picker ──
+    const modelPickerBtn = document.getElementById('modelPickerBtn');
+    const modelPickerLabel = document.getElementById('modelPickerLabel');
+    const modelDropdown = document.getElementById('modelDropdown');
+    let modelPickerOpen = false;
+
+    function capIcons(caps) {
+      if (!caps || !caps.length) return '';
+      let html = '<span class="model-caps">';
+      if (caps.includes('vision')) html += '<span class="model-cap-icon" title="Vision"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg></span>';
+      if (caps.includes('reasoning')) html += '<span class="model-cap-icon" title="Reasoning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3 4 4.5 4.5 0 0 1-3-4"/><path d="M12 18v4h4"/></svg></span>';
+      html += '</span>';
+      return html;
+    }
+
+    function renderModelOption(m, active) {
+      const isActive = m.provider === active.provider && m.id === active.model;
+      return '<div class="model-option' + (isActive ? ' active' : '') + '" data-provider="' + m.provider + '" data-model="' + m.id + '">'
+        + '<span class="model-dot ' + m.provider + '"></span>'
+        + '<span class="model-name">' + m.name + '</span>'
+        + (m.size ? '<span class="model-size">' + m.size + '</span>' : '')
+        + capIcons(m.capabilities)
+        + '</div>';
+    }
+
+    function renderModelDropdown(models, active) {
+      const groups = [
+        { key: 'ollama', label: 'Local' },
+        { key: 'gemini', label: 'Gemini' },
+        { key: 'openrouter', label: 'OpenRouter' },
+      ];
+      let html = '';
+      groups.forEach(g => {
+        const items = models.filter(m => m.provider === g.key);
+        if (!items.length) return;
+        html += '<div class="model-group-label">' + g.label + '</div>';
+        items.forEach(m => { html += renderModelOption(m, active); });
+      });
+      modelDropdown.innerHTML = html;
+
+      // Click handlers
+      modelDropdown.querySelectorAll('.model-option').forEach(opt => {
+        opt.addEventListener('click', async () => {
+          const provider = opt.dataset.provider;
+          const model = opt.dataset.model;
+          modelPickerLabel.textContent = opt.querySelector('.model-name').textContent;
+          // Update provider dot color
+          const dot = document.getElementById('modelProviderDot');
+          dot.className = 'provider-dot ' + provider;
+          closeModelPicker();
+          try {
+            await fetch('/api/models/switch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ provider, model }),
+            });
+            // Refresh to update active state
+            loadModels();
+          } catch (e) { console.error('Model switch failed:', e); }
+        });
+      });
+    }
+
+    async function loadModels() {
+      try {
+        const resp = await fetch('/api/models');
+        const data = await resp.json();
+        if (data.models && data.active) {
+          renderModelDropdown(data.models, data.active);
+          // Set label and provider dot
+          const activeModel = data.models.find(m => m.id === data.active.model && m.provider === data.active.provider);
+          modelPickerLabel.textContent = activeModel ? activeModel.name : data.active.model;
+          const dot = document.getElementById('modelProviderDot');
+          dot.className = 'provider-dot ' + data.active.provider;
+        }
+      } catch (e) {
+        modelPickerLabel.textContent = 'Offline';
+      }
+    }
+
+    function closeModelPicker() {
+      modelPickerOpen = false;
+      modelDropdown.classList.remove('show');
+      modelPickerBtn.classList.remove('open');
+    }
+
+    modelPickerBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      modelPickerOpen = !modelPickerOpen;
+      modelDropdown.classList.toggle('show', modelPickerOpen);
+      modelPickerBtn.classList.toggle('open', modelPickerOpen);
+    });
+
+    document.addEventListener('click', (e) => {
+      if (modelPickerOpen && !modelDropdown.contains(e.target)) {
+        closeModelPicker();
+      }
+    });
+
+    // Load models on startup
+    loadModels();
 
     // ── Voice Dictation (Web Speech API) ──
     const micBtn = document.getElementById('micBtn');

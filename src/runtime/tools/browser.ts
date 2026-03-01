@@ -51,7 +51,7 @@ async function getPage(): Promise<any> {
     if (!page || page.isClosed()) {
         const pages = await b.pages();
         page = pages.length > 0 ? pages[0] : await b.newPage();
-        await page.setViewport({ width: 1280, height: 800 });
+        await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 });
     }
     return page;
 }
@@ -83,7 +83,7 @@ export const browsePageTool: ToolDefinition = {
             const p = await getPage();
             log.info(`Navigating to ${args.url}`);
             await p.goto(args.url, {
-                waitUntil: 'domcontentloaded',
+                waitUntil: 'networkidle2',
                 timeout: NAV_TIMEOUT_MS,
             });
 
@@ -144,6 +144,8 @@ export const screenshotTool: ToolDefinition = {
                 if (!element) return `Error: Element not found: ${args.selector}`;
                 await element.screenshot({ path: outputPath });
             } else {
+                // Wait briefly for any late-loading content
+                await new Promise(r => setTimeout(r, 1000));
                 await p.screenshot({
                     path: outputPath,
                     fullPage: args.full_page ?? false,

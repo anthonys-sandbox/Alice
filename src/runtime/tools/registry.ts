@@ -473,7 +473,7 @@ export const webFetchTool: ToolDefinition = {
         const maxLen = args.max_length ?? 5000;
         try {
             const response = await fetch(args.url, {
-                headers: { 'User-Agent': 'Toby/1.0 (Personal AI Agent)' },
+                headers: { 'User-Agent': 'Alice/1.0 (Personal AI Agent)' },
                 signal: AbortSignal.timeout(15000),
             });
 
@@ -735,16 +735,20 @@ export async function executeTool(name: string, args: Record<string, any>): Prom
 
 /**
  * Convert tools to Gemini function declarations format.
- * @param excludePrefix - Optional prefix: tools whose names start with this are excluded.
- *                        Use 'mcp_' when targeting Ollama to avoid overwhelming small models.
+ * Only send essential tools to the model to minimize context overhead.
+ * All tools remain registered and executable — just not advertised.
  */
-export function toGeminiFunctionDeclarations(excludePrefix?: string) {
-    const tools = excludePrefix
-        ? ALL_TOOLS.filter(t => !t.name.startsWith(excludePrefix))
-        : ALL_TOOLS;
-    return tools.map(tool => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-    }));
+export function toGeminiFunctionDeclarations() {
+    const CORE_TOOLS = new Set([
+        'bash', 'read_file', 'write_file', 'edit_file',
+        'web_search', 'search_memory', 'set_reminder', 'generate_image',
+        'browse_page', 'screenshot',
+    ]);
+    return ALL_TOOLS
+        .filter(tool => CORE_TOOLS.has(tool.name))
+        .map(tool => ({
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+        }));
 }

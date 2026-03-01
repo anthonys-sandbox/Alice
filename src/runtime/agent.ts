@@ -8,10 +8,6 @@ import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
 import { join } from 'path';
 
-// Auto-register GravityClaw integration tools (SQLite, JIRA, Gmail, Todoist, GitHub)
-import '../tools/gravityclaw-tools.js';
-import { saveToGcDb } from '../tools/gravityclaw-tools.js';
-
 const log = createLogger('Agent');
 
 /** Both providers expose the same generateContent signature. */
@@ -35,6 +31,22 @@ export interface AgentResponse {
     iterations: number;
 }
 
+// Known model families that support tool/function calling
+const TOOL_CAPABLE_FAMILIES = new Set([
+    'qwen3', 'qwen2.5', 'qwen2', 'llama3', 'llama3.1', 'llama3.2', 'llama3.3',
+    'mistral', 'mixtral', 'command-r', 'firefunction', 'granite',
+    'nemotron', 'hermes', 'deepseek-r1',
+]);
+
+export interface ModelInfo {
+    id: string;
+    name: string;
+    provider: 'ollama' | 'gemini' | 'openrouter';
+    size?: string;
+    toolCapable: boolean;
+    capabilities?: string[];  // e.g. ['vision', 'reasoning']
+}
+
 export class Agent {
     private provider: ChatProvider;
     private config: AliceConfig;
@@ -42,6 +54,8 @@ export class Agent {
     private systemPrompt: string = '';
     private sessionStore: SessionStore;
     private currentSessionId: string;
+    private activeProvider: 'ollama' | 'gemini' | 'openrouter';
+    private activeModel: string;
 
     constructor(config: AliceConfig) {
         this.config = config;
@@ -49,6 +63,8 @@ export class Agent {
         if (config.chatProvider === 'gemini') {
             log.info('Using Gemini as chat provider');
             this.provider = new GeminiProvider(config);
+            this.activeProvider = 'gemini';
+            this.activeModel = config.gemini.model;
         } else {
             // ollama (default)
             log.info('Using Ollama (local) as chat provider');
@@ -57,6 +73,8 @@ export class Agent {
                 baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
                 fallbackModel: config.ollama.fallbackModel,
             });
+            this.activeProvider = 'ollama';
+            this.activeModel = config.ollama.model;
         }
 
         // Initialize session persistence
@@ -181,7 +199,7 @@ export class Agent {
 
         registerTool({
             name: 'watch_file',
-            description: 'Start watching a file or directory for changes. Toby will be notified when changes occur.',
+            description: 'Start watching a file or directory for changes. Alice will be notified when changes occur.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -200,7 +218,7 @@ export class Agent {
         // Skill installation tool
         registerTool({
             name: 'install_skill',
-            description: 'Install a new skill for Toby from a git URL. The skill will be cloned, dependencies installed, and immediately available.',
+            description: 'Install a new skill for Alice from a git URL. The skill will be cloned, dependencies installed, and immediately available.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -223,7 +241,7 @@ export class Agent {
         // Persona switching tool
         registerTool({
             name: 'switch_persona',
-            description: 'Switch Toby\'s personality/persona. Available: "coding" (focused, technical), "research" (thorough, analytical), "casual" (friendly, conversational).',
+            description: 'Switch Alice\'s personality/persona. Available: "coding" (focused, technical), "research" (thorough, analytical), "casual" (friendly, conversational).',
             parameters: {
                 type: 'object',
                 properties: {
@@ -234,9 +252,9 @@ export class Agent {
             execute: async (args: Record<string, any>) => {
                 const persona = args.persona?.toLowerCase();
                 const personas: Record<string, string> = {
-                    coding: 'You are Toby in CODING mode. Be precise, technical, and action-oriented. Prefer showing code over explanation. Use tools eagerly. Skip pleasantries.',
-                    research: 'You are Toby in RESEARCH mode. Be thorough and analytical. Cite sources when possible. Consider multiple perspectives. Think step-by-step.',
-                    casual: 'You are Toby in CASUAL mode. Be warm, friendly, and conversational. Use emoji occasionally. Keep responses concise and approachable.',
+                    coding: 'You are Alice in CODING mode. Be precise, technical, and action-oriented. Prefer showing code over explanation. Use tools eagerly. Skip pleasantries.',
+                    research: 'You are Alice in RESEARCH mode. Be thorough and analytical. Cite sources when possible. Consider multiple perspectives. Think step-by-step.',
+                    casual: 'You are Alice in CASUAL mode. Be warm, friendly, and conversational. Use emoji occasionally. Keep responses concise and approachable.',
                 };
                 if (!personas[persona]) {
                     return `Unknown persona "${persona}". Available: ${Object.keys(personas).join(', ')}`;
@@ -269,50 +287,11 @@ export class Agent {
             timeStyle: 'short',
         });
 
-        // Explicit tool inventory — local models (qwen3, llama3, etc.) sometimes lose track
-        // of which tools are available when given 20+ tools via the API. Listing them in the
-        // system prompt ensures the model always knows what it can call.
-        const toolInventory = `<available_tools>
-You have access to ALL of the following tools. NEVER say a tool is unavailable — if you need one, call it.
-
-## File & Code Tools
-- read_file, write_file, edit_file — read/write/patch files
-- bash — run any shell command
-- list_directory — list folder contents
-- read_pdf — extract text from PDFs
-
-## Web Tools
-- web_search, web_fetch — search web and read pages
-
-## Git Tools
-- git_status, git_diff, git_commit, git_log, git_backup
-
-## GravityClaw Integration Tools (ALWAYS AVAILABLE)
-- gc_todoist — Todoist task management: list, add, complete tasks, list projects
-- gc_jira — JIRA: search, get issues, comment, my_issues, projects
-- gc_gmail_read — Gmail: list, search, read emails
-- gc_github — GitHub: repos, commits, issues, pull requests
-- gc_memory_query — search GravityClaw SQLite memory
-- gc_memory_save — save facts to GravityClaw SQLite
-
-## Memory Tools
-- search_memory — search past conversations and memory files
-
-## Scheduler Tools
-- set_reminder, cancel_reminder, list_reminders, watch_file
-
-## Other Tools
-- generate_image, clipboard_read, clipboard_write
-- install_skill, switch_persona, gemini_code
-</available_tools>`;
-
         this.systemPrompt = [
-            `You are Toby, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
+            `You are Alice, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
             '',
             memoryPrompt,
-            skillPrompt,
-            toolInventory,
-            `<system_info>`,
+            '',
             `Current date/time: ${currentDate}`,
             `Working directory: ${process.cwd()}`,
             '',
@@ -351,8 +330,8 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
      * Keeps the most recent messages and compresses the rest into a summary.
      */
     private trimContextIfNeeded(): void {
-        // Token budget: Gemini 2.0 Flash has 1M context, leave generous room for system prompt + response
-        const MAX_CONTEXT_TOKENS = 24000; // Comfortable limit for fast responses
+        // Token budget: qwen3:8b has 32K context, leave room for system prompt + response
+        const MAX_CONTEXT_TOKENS = 24000; // ~75% of 32K
         const KEEP_RECENT = 20; // Always keep the last N messages
 
         const tokenEstimate = this.estimateTokens(this.conversationHistory);
@@ -597,6 +576,15 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
                 // Trim context if approaching token budget
                 this.trimContextIfNeeded();
 
+                // Dynamic model routing: use vision model ONLY when the latest user message has images
+                const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
+                const hasImages = lastUserMsg?.parts.some((p: any) => 'inlineData' in p) ?? false;
+                const oaiProvider = this.provider as any;
+                if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
+                    oaiProvider.setModel(this.config.ollama.visionModel);
+                } else if (!hasImages && oaiProvider.setModel) {
+                    oaiProvider.setModel(this.config.ollama?.model || 'qwen3:8b');
+                }
 
                 const response = await this.provider.generateContentStream!(
                     this.systemPrompt,
@@ -761,12 +749,13 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
     }
 
     /**
-     * Get session status info for /status command.
-     */
+ * Get session status info for /status command.
+ */
     getStatus(): {
         sessionId: string;
         messageCount: number;
         model: string;
+        provider: string;
         fallbackModel?: string;
         systemPromptChars: number;
         estimatedTokens: number;
@@ -776,8 +765,9 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
         return {
             sessionId: this.currentSessionId,
             messageCount: this.conversationHistory.length,
-            model: this.config.chatProvider === 'gemini' ? this.config.gemini.model : this.config.ollama.model,
-            fallbackModel: this.config.chatProvider === 'gemini' ? undefined : this.config.ollama.fallbackModel,
+            model: this.activeModel,
+            provider: this.activeProvider,
+            fallbackModel: this.activeProvider === 'ollama' ? this.config.ollama.fallbackModel : undefined,
             systemPromptChars: this.systemPrompt.length,
             estimatedTokens: Math.round(this.systemPrompt.length / 4) +
                 this.conversationHistory.reduce((sum, msg) => {
@@ -788,6 +778,132 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
         };
     }
 
+    /**
+     * Switch the active model (and provider if needed).
+     * Returns the new model name.
+     */
+    switchModel(providerName: 'ollama' | 'gemini' | 'openrouter', modelId: string): string {
+        if (providerName === this.activeProvider && providerName === 'ollama') {
+            // Same Ollama provider — just swap model
+            (this.provider as OAIProvider).setModel(modelId);
+        } else if (providerName === 'gemini') {
+            this.provider = new GeminiProvider({
+                ...this.config,
+                gemini: { ...this.config.gemini, model: modelId },
+            });
+        } else if (providerName === 'openrouter') {
+            this.provider = new OAIProvider({
+                model: modelId,
+                baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+                apiKey: this.config.openRouter.apiKey,
+            });
+        } else {
+            // Ollama (from a different provider)
+            this.provider = new OAIProvider({
+                model: modelId,
+                baseUrl: `http://${this.config.ollama.host}:${this.config.ollama.port}/v1/chat/completions`,
+                fallbackModel: this.config.ollama.fallbackModel,
+            });
+        }
+
+        this.activeProvider = providerName;
+        this.activeModel = modelId;
+        log.info('Model switched', { provider: providerName, model: modelId });
+        return modelId;
+    }
+
+    /** Get the currently active model info. */
+    getActiveModel(): { provider: string; model: string } {
+        return { provider: this.activeProvider, model: this.activeModel };
+    }
+
+    /**
+     * Query available models from all providers.
+     * Ollama: fetches /api/tags. Gemini: returns known models if API key present.
+     * Only returns tool-capable models.
+     */
+    async getAvailableModels(): Promise<ModelInfo[]> {
+        const models: ModelInfo[] = [];
+
+        // ── Ollama models ──
+        try {
+            const url = `http://${this.config.ollama.host}:${this.config.ollama.port}/api/tags`;
+            const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
+            if (resp.ok) {
+                const data: any = await resp.json();
+                for (const m of data.models || []) {
+                    const name: string = m.name || m.model || '';
+                    const family = name.split(':')[0].toLowerCase();
+                    const isToolCapable = TOOL_CAPABLE_FAMILIES.has(family);
+                    if (isToolCapable) {
+                        const sizeGB = m.size ? (m.size / 1e9).toFixed(1) + 'GB' : undefined;
+                        models.push({
+                            id: name,
+                            name: name,
+                            provider: 'ollama',
+                            size: sizeGB,
+                            toolCapable: true,
+                        });
+                    }
+                }
+            }
+        } catch {
+            log.warn('Could not fetch Ollama models');
+        }
+
+        // ── Gemini models ──
+        if (this.config.gemini.apiKey) {
+            models.push({
+                id: 'gemini-2.5-flash-preview-05-20',
+                name: 'Gemini 2.5 Flash',
+                provider: 'gemini',
+                toolCapable: true,
+                capabilities: ['reasoning'],
+            });
+            models.push({
+                id: 'gemini-2.5-pro-preview-05-06',
+                name: 'Gemini 2.5 Pro',
+                provider: 'gemini',
+                toolCapable: true,
+                capabilities: ['reasoning'],
+            });
+        }
+
+        // ── OpenRouter free models ──
+        if (this.config.openRouter.apiKey) {
+            try {
+                const resp = await fetch('https://openrouter.ai/api/v1/models', {
+                    signal: AbortSignal.timeout(8000),
+                });
+                if (resp.ok) {
+                    const data: any = await resp.json();
+                    for (const m of data.data || []) {
+                        const pricing = m.pricing || {};
+                        const isFree = parseFloat(pricing.prompt || '1') === 0 && parseFloat(pricing.completion || '1') === 0;
+                        const hasTools = m.supported_parameters?.includes('tools');
+                        if (!isFree || !hasTools) continue;
+
+                        const caps: string[] = [];
+                        const modality = m.architecture?.modality || '';
+                        if (modality.includes('image') || m.id?.includes('-vl')) caps.push('vision');
+                        if (m.supported_parameters?.includes('reasoning') || m.id?.includes('thinking')) caps.push('reasoning');
+
+                        models.push({
+                            id: m.id,
+                            name: (m.name || m.id).replace(/ \(free\)$/i, ''),
+                            provider: 'openrouter',
+                            toolCapable: true,
+                            capabilities: caps,
+                        });
+                    }
+                }
+            } catch {
+                log.warn('Could not fetch OpenRouter models');
+            }
+        }
+
+        return models;
+    }
     /**
      * Auto-generate a session title from the first user message.
      * Runs asynchronously in the background.
@@ -883,24 +999,22 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
                     return;
                 }
 
-                // Apply structured memory updates
-                if (parsed.updates && parsed.updates.length > 0) {
-                    const appended = await updateMemory(memoryDir, parsed.updates);
-                    if (appended > 0) {
-                        log.info(`Auto-learned ${appended} facts from conversation`);
+                if (!parsed.updates || parsed.updates.length === 0) return;
 
-                        // Bridge facts into the shared SQLite DB so Mission Control can see them
-                        const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '_');
-                        let bridged = 0;
-                        for (let i = 0; i < parsed.updates.length; i++) {
-                            const key = `toby_learned_${dateStamp}_${Date.now()}_${i}`;
-                            const ok = await saveToGcDb(key, parsed.updates[i].content || '');
-                            if (ok) bridged++;
-                        }
-                        if (bridged > 0) {
-                            log.info(`Bridged ${bridged} facts to GravityClaw SQLite`);
-                        }
-                    }
+                // Validate and sanitize updates
+                const validUpdates = parsed.updates.filter(u =>
+                    u && u.file && u.action && u.content &&
+                    ['user', 'memory'].includes(u.file) &&
+                    ['add', 'update', 'remove'].includes(u.action)
+                );
+
+                if (validUpdates.length === 0) return;
+
+                const changed = await updateMemory(memoryDir, validUpdates);
+                if (changed > 0) {
+                    log.info(`Smart memory update`, { changes: changed, updates: validUpdates.map(u => `${u.action}:${u.file}`) });
+                    // Refresh context so next response uses updated memory
+                    this.refreshContext();
                 }
             } catch (err: any) {
                 log.debug('Memory extraction failed (non-critical)', { error: err.message });

@@ -59,6 +59,9 @@ export interface AliceConfig {
             enabled?: boolean;
         }>;
     };
+    openRouter: {
+        apiKey: string;
+    };
 }
 
 const DEFAULTS: AliceConfig = {
@@ -107,6 +110,9 @@ const DEFAULTS: AliceConfig = {
     mcp: {
         servers: [],
     },
+    openRouter: {
+        apiKey: '',
+    },
 };
 
 export function loadConfig(projectDir?: string): AliceConfig {
@@ -140,6 +146,7 @@ export function loadConfig(projectDir?: string): AliceConfig {
     if (process.env.GATEWAY_PORT) config.gateway.port = parseInt(process.env.GATEWAY_PORT, 10);
     if (process.env.HEARTBEAT_INTERVAL) config.heartbeat.intervalMinutes = parseInt(process.env.HEARTBEAT_INTERVAL, 10);
     if (process.env.LOG_LEVEL) config.logging.level = process.env.LOG_LEVEL as AliceConfig['logging']['level'];
+    if (process.env.OPENROUTER_API_KEY) config.openRouter.apiKey = process.env.OPENROUTER_API_KEY;
 
     // MCP servers — parsed from JSON array in MCP_SERVERS env var
     if (process.env.MCP_SERVERS) {
