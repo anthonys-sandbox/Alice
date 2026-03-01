@@ -9,3 +9,4 @@ Knowledge, patterns, and context curated by Alice over time.
 ## Projects
 
 ## Workflows
+- Disk space utilization: 23% (10GiB used of 926GiB total)

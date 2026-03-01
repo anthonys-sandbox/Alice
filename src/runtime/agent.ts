@@ -51,6 +51,7 @@ export class Agent {
             this.provider = new OAIProvider({
                 model: config.ollama.model,
                 baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
+                fallbackModel: config.ollama.fallbackModel,
             });
         }
 
@@ -673,6 +674,84 @@ export class Agent {
         this.conversationHistory = [];
         this.currentSessionId = this.sessionStore.createSession();
         log.info('Conversation history cleared, new session', { id: this.currentSessionId });
+    }
+
+    /**
+     * Compact the conversation history by summarizing it into a condensed form.
+     * Preserves key context while freeing up context window space.
+     */
+    async compactSession(): Promise<string> {
+        if (this.conversationHistory.length < 4) {
+            return 'Session is already compact (fewer than 4 messages).';
+        }
+
+        try {
+            // Build a transcript of the conversation
+            const transcript = this.conversationHistory.map(msg => {
+                const text = msg.parts.map((p: any) => p.text || '[tool call]').join(' ');
+                return `${msg.role === 'user' ? 'USER' : 'ASSISTANT'}: ${text.slice(0, 300)}`;
+            }).join('\n');
+
+            const result = await this.provider.generateContent(
+                'You are a conversation summarizer. Create a concise summary. /no_think',
+                [{
+                    role: 'user',
+                    parts: [{
+                        text: `Summarize this conversation into key points. Be concise but preserve important context, decisions, and facts.\n\n${transcript.slice(0, 3000)}\n\nOutput a brief summary (2-4 sentences).`
+                    }]
+                }],
+                []
+            );
+
+            const summary = (result.text || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+            if (!summary || summary.length < 20) {
+                return 'Failed to generate summary.';
+            }
+
+            const beforeCount = this.conversationHistory.length;
+            // Replace history with a single context message
+            this.conversationHistory = [{
+                role: 'user',
+                parts: [{ text: `[COMPACTED SESSION CONTEXT]\n${summary}` }]
+            }, {
+                role: 'model',
+                parts: [{ text: 'Got it, I have the context from our previous conversation.' }]
+            }];
+
+            log.info('Session compacted', { before: beforeCount, after: 2, summaryLength: summary.length });
+            return `✅ Session compacted: ${beforeCount} messages → 2. Summary:\n\n${summary}`;
+        } catch (err: any) {
+            log.error('Session compaction failed', { error: err.message });
+            return `❌ Compaction failed: ${err.message}`;
+        }
+    }
+
+    /**
+     * Get session status info for /status command.
+     */
+    getStatus(): {
+        sessionId: string;
+        messageCount: number;
+        model: string;
+        fallbackModel?: string;
+        systemPromptChars: number;
+        estimatedTokens: number;
+        lastUsage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+    } {
+        const provider = this.provider as any;
+        return {
+            sessionId: this.currentSessionId,
+            messageCount: this.conversationHistory.length,
+            model: this.config.ollama.model,
+            fallbackModel: this.config.ollama.fallbackModel,
+            systemPromptChars: this.systemPrompt.length,
+            estimatedTokens: Math.round(this.systemPrompt.length / 4) +
+                this.conversationHistory.reduce((sum, msg) => {
+                    const text = msg.parts.map((p: any) => p.text || '').join('');
+                    return sum + Math.round(text.length / 4);
+                }, 0),
+            lastUsage: provider.lastUsage || undefined,
+        };
     }
 
     /**

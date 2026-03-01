@@ -14,6 +14,7 @@ export interface AliceConfig {
         port: number;
         model: string;
         visionModel?: string;
+        fallbackModel?: string;
     };
     googleChat: {
         sheetId: string;
@@ -65,6 +66,7 @@ const DEFAULTS: AliceConfig = {
         port: 11434,
         model: 'qwen3:8b',
         visionModel: 'qwen3-vl',
+        fallbackModel: 'qwen3:1.7b',
     },
     googleChat: {
         sheetId: '',
@@ -124,6 +126,7 @@ export function loadConfig(projectDir?: string): AliceConfig {
     if (process.env.OLLAMA_PORT) config.ollama.port = parseInt(process.env.OLLAMA_PORT, 10);
     if (process.env.OLLAMA_MODEL) config.ollama.model = process.env.OLLAMA_MODEL;
     if (process.env.OLLAMA_VISION_MODEL) config.ollama.visionModel = process.env.OLLAMA_VISION_MODEL;
+    if (process.env.OLLAMA_FALLBACK_MODEL) config.ollama.fallbackModel = process.env.OLLAMA_FALLBACK_MODEL;
     if (process.env.RELAY_SHEET_ID) config.googleChat.sheetId = process.env.RELAY_SHEET_ID;
     if (process.env.GOOGLE_CLIENT_ID) config.googleChat.oauthClientId = process.env.GOOGLE_CLIENT_ID;
     if (process.env.GOOGLE_CLIENT_SECRET) config.googleChat.oauthClientSecret = process.env.GOOGLE_CLIENT_SECRET;

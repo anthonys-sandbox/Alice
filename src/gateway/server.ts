@@ -319,6 +319,18 @@ export class Gateway {
           // Plain text message — no attachments
         }
 
+        // --- Chat command handling ---
+        const trimmed = text.trim().toLowerCase();
+        if (trimmed.startsWith('/')) {
+          const cmdResult = await this.handleChatCommand(trimmed);
+          if (cmdResult !== null) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'done', text: cmdResult, toolsUsed: [], iterations: 0 }));
+            }
+            return;
+          }
+        }
+
         try {
           const response = await this.agent.processMessageStream(
             text,
@@ -347,6 +359,56 @@ export class Gateway {
         log.info('WebSocket client disconnected');
       });
     });
+  }
+
+  /**
+   * Handle chat commands (messages starting with /).
+   * Returns response string if handled, null if not a recognized command.
+   */
+  private async handleChatCommand(command: string): Promise<string | null> {
+    const cmd = command.split(/\s+/)[0];
+
+    switch (cmd) {
+      case '/status': {
+        const s = this.agent.getStatus();
+        const lines = [
+          '📊 **Session Status**',
+          `• Session: \`${s.sessionId.slice(0, 8)}...\``,
+          `• Messages: ${s.messageCount}`,
+          `• Model: ${s.model}` + (s.fallbackModel ? ` (fallback: ${s.fallbackModel})` : ''),
+          `• System prompt: ${s.systemPromptChars} chars`,
+          `• Est. context: ~${s.estimatedTokens} tokens`,
+        ];
+        if (s.lastUsage) {
+          lines.push(`• Last request: ${s.lastUsage.promptTokens} prompt + ${s.lastUsage.completionTokens} completion = ${s.lastUsage.totalTokens} tokens`);
+        }
+        return lines.join('\n');
+      }
+
+      case '/new':
+      case '/reset': {
+        this.agent.clearHistory();
+        this.agent.refreshContext();
+        return '🔄 Session reset. Fresh start!';
+      }
+
+      case '/compact': {
+        return await this.agent.compactSession();
+      }
+
+      case '/help': {
+        return [
+          '**Available Commands:**',
+          '• `/status` — Session info (model, tokens, messages)',
+          '• `/new` or `/reset` — Start a fresh session',
+          '• `/compact` — Summarize conversation to free context space',
+          '• `/help` — Show this help',
+        ].join('\n');
+      }
+
+      default:
+        return null; // Not a recognized command — pass to agent
+    }
   }
 
   /**
@@ -1114,6 +1176,35 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       color: var(--text-primary);
       border-color: var(--accent);
     }
+    /* ── Typing indicator ── */
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 12px 16px;
+    }
+    .typing-indicator .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-tertiary);
+      animation: typingBounce 1.4s ease-in-out infinite;
+    }
+    .typing-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-6px); opacity: 1; }
+    }
+    /* ── Mic recording state ── */
+    .mic-recording {
+      color: var(--error) !important;
+      animation: micPulse 1.5s ease-in-out infinite;
+    }
+    @keyframes micPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
   </style>
 </head>
 <body>
@@ -1191,6 +1282,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6l-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
         </button>
         <textarea id="input" placeholder="Message Alice…" autofocus autocomplete="off" rows="1"></textarea>
+        <button id="micBtn" class="attach-btn" title="Voice dictation" style="display:none;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        </button>
         <button id="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11zm7.318-19.539l-10.94 10.939"/></svg></button>
       </div>
       <input type="file" id="fileInput" accept="image/*,.pdf,.txt,.csv,.json,.md" multiple style="display:none;" />
@@ -1351,8 +1445,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       row.appendChild(avatar);
 
       const content = document.createElement('div');
-      content.className = 'msg-content';
-      content.innerHTML = '<div class="thinking"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+      content.className = 'typing-indicator';
+      content.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
       row.appendChild(content);
 
       messages.appendChild(row);
@@ -1561,6 +1655,72 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       input.style.height = 'auto';
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     });
+
+    // ── Voice Dictation (Web Speech API) ──
+    const micBtn = document.getElementById('micBtn');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition && micBtn) {
+      micBtn.style.display = '';
+      let recognition = null;
+      let isListening = false;
+
+      micBtn.addEventListener('click', () => {
+        if (isListening) {
+          recognition.stop();
+          return;
+        }
+
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        let finalTranscript = '';
+
+        recognition.onstart = () => {
+          isListening = true;
+          micBtn.classList.add('mic-recording');
+          micBtn.title = 'Stop dictation';
+        };
+
+        recognition.onresult = (event) => {
+          let interim = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript + ' ';
+            } else {
+              interim += event.results[i][0].transcript;
+            }
+          }
+          // Show live transcript in the input
+          const existing = input.value.replace(/\\s*\\[…\\]$/, '');
+          if (interim) {
+            input.value = (existing ? existing + ' ' : '') + finalTranscript + interim + ' […]';
+          } else {
+            input.value = (existing ? existing + ' ' : '') + finalTranscript;
+          }
+          input.style.height = 'auto';
+          input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+        };
+
+        recognition.onend = () => {
+          isListening = false;
+          micBtn.classList.remove('mic-recording');
+          micBtn.title = 'Voice dictation';
+          // Clean up trailing [...] marker
+          input.value = input.value.replace(/\\s*\\[…\\]$/, '').trim();
+          input.focus();
+        };
+
+        recognition.onerror = (event) => {
+          console.warn('Speech recognition error:', event.error);
+          isListening = false;
+          micBtn.classList.remove('mic-recording');
+        };
+
+        recognition.start();
+      });
+    }
 
     // ── Sidebar ──────────────────────────
     const sidebar = document.getElementById('sidebar');

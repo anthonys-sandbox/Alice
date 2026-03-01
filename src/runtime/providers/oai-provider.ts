@@ -7,6 +7,7 @@ export interface OAIProviderConfig {
     apiKey?: string;
     model: string;
     baseUrl: string;
+    fallbackModel?: string;
 }
 
 // ── Internal OpenAI-compatible types ──────────────────────────
@@ -133,11 +134,14 @@ export class OAIProvider {
     private apiKey: string | undefined;
     private model: string;
     private baseUrl: string;
+    private fallbackModel: string | undefined;
+    public lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | null = null;
 
     constructor(config: OAIProviderConfig) {
         this.apiKey = config.apiKey;
         this.model = config.model;
         this.baseUrl = config.baseUrl;
+        this.fallbackModel = config.fallbackModel;
         log.info('Initialized provider', { model: this.model, baseUrl: this.baseUrl });
     }
 
@@ -174,6 +178,7 @@ export class OAIProvider {
         }
 
         const MAX_RETRIES = 3;
+        let activeModel = this.model;
 
         try {
             for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -199,10 +204,27 @@ export class OAIProvider {
 
                 if (!response.ok) {
                     const errText = await response.text();
+                    // If primary model failed and we have a fallback, try it
+                    if (this.fallbackModel && activeModel !== this.fallbackModel) {
+                        log.warn(`Primary model failed (${response.status}), trying fallback: ${this.fallbackModel}`);
+                        body.model = this.fallbackModel;
+                        activeModel = this.fallbackModel;
+                        continue; // retry with fallback
+                    }
                     throw new Error(`OAI API error ${response.status}: ${errText}`);
                 }
 
                 const data = await response.json() as any;
+
+                // Track token usage from Ollama
+                if (data.usage) {
+                    this.lastUsage = {
+                        promptTokens: data.usage.prompt_tokens || 0,
+                        completionTokens: data.usage.completion_tokens || 0,
+                        totalTokens: data.usage.total_tokens || 0,
+                    };
+                }
+
                 const choice = data.choices?.[0];
 
                 if (!choice) {
