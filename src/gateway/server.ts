@@ -193,6 +193,65 @@ export class Gateway {
       this.agent.deleteSession(req.params.id);
       res.json({ status: 'deleted', currentId: this.agent.getSessionId() });
     });
+
+    // ── Dashboard API ──────────────────────────────
+    // List all tools
+    this.app.get('/api/tools', async (_req, res) => {
+      try {
+        const { toGeminiFunctionDeclarations } = await import('../runtime/tools/registry.js');
+        const tools = toGeminiFunctionDeclarations().map(t => ({
+          name: t.name,
+          description: t.description,
+        }));
+        res.json({ tools });
+      } catch { res.json({ tools: [] }); }
+    });
+
+    // List memory files
+    this.app.get('/api/memory', (_req, res) => {
+      try {
+        const { readdirSync, readFileSync } = require('fs');
+        const { join } = require('path');
+        const dir = this.config.memory.dir;
+        const files = readdirSync(dir)
+          .filter((f: string) => f.endsWith('.md'))
+          .map((f: string) => ({
+            name: f.replace('.md', ''),
+            content: readFileSync(join(dir, f), 'utf-8'),
+          }));
+        res.json({ files });
+      } catch { res.json({ files: [] }); }
+    });
+
+    // Update a memory file
+    this.app.put('/api/memory/:name', (req, res) => {
+      try {
+        const { writeFileSync } = require('fs');
+        const { join } = require('path');
+        const filePath = join(this.config.memory.dir, `${req.params.name}.md`);
+        writeFileSync(filePath, req.body.content || '', 'utf-8');
+        this.agent.refreshContext();
+        res.json({ status: 'saved' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // List reminders
+    this.app.get('/api/reminders', async (_req, res) => {
+      try {
+        const { scheduler } = await import('../scheduler/task-scheduler.js');
+        const reminders = scheduler.listReminders();
+        res.json({ reminders });
+      } catch { res.json({ reminders: [] }); }
+    });
+
+    // Cancel a reminder
+    this.app.delete('/api/reminders/:id', async (req, res) => {
+      try {
+        const { scheduler } = await import('../scheduler/task-scheduler.js');
+        scheduler.cancelReminder(req.params.id);
+        res.json({ status: 'cancelled' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
   }
 
   private setupWebSocket(): void {
@@ -200,17 +259,31 @@ export class Gateway {
       log.info('WebSocket client connected');
 
       ws.on('message', async (data: Buffer) => {
-        const message = data.toString();
-        log.debug('WebSocket message received', { length: message.length });
+        const raw = data.toString();
+        log.debug('WebSocket message received', { length: raw.length });
+
+        // Parse JSON payload (or plain text for backward compat)
+        let text = raw;
+        let attachments: Array<{ name: string; type: string; data: string }> = [];
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.text !== undefined) {
+            text = parsed.text;
+            attachments = parsed.attachments || [];
+          }
+        } catch {
+          // Plain text message — no attachments
+        }
 
         try {
           const response = await this.agent.processMessageStream(
-            message,
+            text,
             (token: string) => {
               if (ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'token', text: token }));
               }
-            }
+            },
+            attachments
           );
           // Send final done message with metadata
           if (ws.readyState === WebSocket.OPEN) {
@@ -485,6 +558,17 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         z-index: 25;
       }
       .sidebar-overlay.active { display: block; }
+      .msg-content {
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .msg-content h1 { font-size: 1.2em; }
+      .msg-content h2 { font-size: 1.1em; }
+      .msg-content h3 { font-size: 1em; }
+      .msg-row.user .msg-content {
+        max-width: 80%;
+        padding: 8px 14px;
+      }
     }
 
     /* ── Main Content ────────────────── */
@@ -498,7 +582,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     /* ── Header ─────────────────────── */
     header {
-      padding: 14px 16px 14px 12px;
+      padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 14px 12px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -646,6 +730,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       color: var(--user-text);
       padding: 10px 18px;
       border-radius: var(--radius) var(--radius) 4px var(--radius);
+      max-width: 65%;
     }
     .msg-row.agent .msg-content {
       padding: 4px 0;
@@ -784,7 +869,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       position: absolute;
       bottom: 0;
       left: 0; right: 0;
-      padding: 16px 16px calc(24px + env(safe-area-inset-bottom, 0px));
+      padding: 12px 12px calc(8px + env(safe-area-inset-bottom, 0px));
       background: linear-gradient(transparent, var(--bg-primary) 30%);
       z-index: 10;
     }
@@ -796,8 +881,64 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       border-radius: 28px;
       display: flex;
       align-items: center;
-      padding: 4px 8px 4px 20px;
+      padding: 4px 8px 4px 12px;
       transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .attach-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .attach-btn:hover { background: var(--surface-hover); color: var(--accent); }
+    .attach-preview {
+      max-width: var(--max-width);
+      margin: 0 auto 8px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 8px 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+    }
+    .attach-thumb {
+      position: relative;
+      width: 64px; height: 64px;
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--bg-tertiary);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .attach-thumb img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+    }
+    .attach-thumb .file-name {
+      font-size: 10px;
+      color: var(--text-secondary);
+      text-align: center;
+      padding: 4px;
+      word-break: break-all;
+      line-height: 1.2;
+    }
+    .attach-thumb .remove-attach {
+      position: absolute;
+      top: 2px; right: 2px;
+      width: 18px; height: 18px;
+      background: rgba(0,0,0,0.7);
+      color: white;
+      border: none;
+      border-radius: 50%;
+      font-size: 11px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      line-height: 1;
     }
     .input-container:focus-within {
       border-color: var(--accent);
@@ -813,6 +954,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       padding: 12px 0;
       outline: none;
       line-height: 1.4;
+      resize: none;
+      overflow-y: auto;
+      max-height: 160px;
+      min-height: 22px;
     }
     #input::placeholder { color: var(--text-tertiary); }
     #send {
@@ -937,11 +1082,19 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       </div>
     </div>
 
+    <div id="dashboardView" style="display:none; padding: 32px 24px; overflow-y: auto; flex: 1;">
+    </div>
+
     <div class="input-wrapper">
+      <div id="attachPreview" class="attach-preview" style="display:none;"></div>
       <div class="input-container">
-        <input id="input" placeholder="Message Alice..." autofocus autocomplete="off" />
+        <button id="attachBtn" class="attach-btn" title="Attach file">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <textarea id="input" placeholder="Message Alice..." autofocus autocomplete="off" rows="1"></textarea>
         <button id="send">➤</button>
       </div>
+      <input type="file" id="fileInput" accept="image/*,.pdf,.txt,.csv,.json,.md" multiple style="display:none;" />
     </div>
   </div><!-- /main -->
 
@@ -978,7 +1131,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       if (welcome) welcome.style.display = 'none';
     }
 
-    function addMsg(text, type, meta) {
+    function addMsg(text, type, meta, attachments) {
       hideWelcome();
       const row = document.createElement('div');
       row.className = 'msg-row ' + type;
@@ -993,15 +1146,37 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       const content = document.createElement('div');
       content.className = 'msg-content';
 
+      // Show inline attachment thumbnails for user messages
+      if (attachments && attachments.length > 0) {
+        const strip = document.createElement('div');
+        strip.style.cssText = 'display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;';
+        attachments.forEach(att => {
+          if (att.type && att.type.startsWith('image/')) {
+            const img = document.createElement('img');
+            img.src = 'data:' + att.type + ';base64,' + att.data;
+            img.style.cssText = 'max-width:200px;max-height:150px;border-radius:10px;';
+            strip.appendChild(img);
+          } else {
+            const badge = document.createElement('span');
+            badge.style.cssText = 'background:var(--bg-tertiary);padding:4px 10px;border-radius:8px;font-size:12px;color:var(--text-secondary);';
+            badge.textContent = '📄 ' + att.name;
+            strip.appendChild(badge);
+          }
+        });
+        content.appendChild(strip);
+      }
+
       if (type === 'agent') {
         try {
-          content.innerHTML = marked.parse(text);
+          content.innerHTML += marked.parse(text);
           addCopyButtons(content);
         } catch (err) {
           content.textContent = text;
         }
       } else {
-        content.textContent = text;
+        const textEl = document.createElement('span');
+        textEl.textContent = text;
+        content.appendChild(textEl);
       }
 
       if (meta) {
@@ -1086,13 +1261,80 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       });
     }
 
+    // ── File Attachment Handling ──────────────────
+    const attachBtn = document.getElementById('attachBtn');
+    const fileInput = document.getElementById('fileInput');
+    const attachPreview = document.getElementById('attachPreview');
+    let pendingAttachments = [];
+
+    attachBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', () => {
+      const files = Array.from(fileInput.files);
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result.split(',')[1];
+          pendingAttachments.push({
+            name: file.name,
+            type: file.type,
+            data: base64,
+          });
+          renderAttachPreview();
+        };
+        reader.readAsDataURL(file);
+      });
+      fileInput.value = '';
+    });
+
+    function renderAttachPreview() {
+      attachPreview.innerHTML = '';
+      if (pendingAttachments.length === 0) {
+        attachPreview.style.display = 'none';
+        return;
+      }
+      attachPreview.style.display = 'flex';
+      pendingAttachments.forEach((att, i) => {
+        const thumb = document.createElement('div');
+        thumb.className = 'attach-thumb';
+        if (att.type.startsWith('image/')) {
+          const img = document.createElement('img');
+          img.src = 'data:' + att.type + ';base64,' + att.data;
+          thumb.appendChild(img);
+        } else {
+          const span = document.createElement('span');
+          span.className = 'file-name';
+          span.textContent = att.name;
+          thumb.appendChild(span);
+        }
+        const rm = document.createElement('button');
+        rm.className = 'remove-attach';
+        rm.textContent = '✕';
+        rm.onclick = () => {
+          pendingAttachments.splice(i, 1);
+          renderAttachPreview();
+        };
+        thumb.appendChild(rm);
+        attachPreview.appendChild(thumb);
+      });
+    }
+
     function sendMessage() {
       const text = input.value.trim();
-      if (!text || send.disabled) return;
+      if ((!text && pendingAttachments.length === 0) || send.disabled) return;
 
-      addMsg(text, 'user');
-      ws.send(text);
+      // Show user message with attachment previews
+      const displayText = text || '(attached file' + (pendingAttachments.length > 1 ? 's' : '') + ')';
+      addMsg(displayText, 'user', null, pendingAttachments);
+
+      // Send as JSON with attachments
+      const payload = { text: text || '', attachments: pendingAttachments };
+      ws.send(JSON.stringify(payload));
+
       input.value = '';
+      input.style.height = 'auto';
+      pendingAttachments = [];
+      renderAttachPreview();
       send.disabled = true;
     }
 
@@ -1196,6 +1438,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         thinkingRow = showThinking();
       }
     });
+    // Auto-resize textarea as user types
+    input.addEventListener('input', () => {
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+    });
 
     // ── Sidebar ──────────────────────────
     const sidebar = document.getElementById('sidebar');
@@ -1236,6 +1483,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const res = await fetch('/api/sessions', { method: 'POST' });
         const data = await res.json();
         currentSessionId = data.sessionId;
+        showChatView();
         showWelcome();
         loadSessions();
       } catch (err) {
@@ -1246,138 +1494,207 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     document.getElementById('newChatBtn').addEventListener('click', startNewChat);
 
     // Dashboard nav items
-    const dashboardActions = {
-      tools: 'List all your available tools and what they do',
-      memory: 'Search my memory for recent topics',
-      reminders: 'List all active reminders',
-      personas: 'What persona are you currently using? What personas are available?',
-    };
+    const dashboardView = document.getElementById('dashboardView');
+    function showChatView() {
+      messages.style.display = '';
+      document.querySelector('.input-wrapper').style.display = '';
+      dashboardView.style.display = 'none';
+    }
+    function showDashboardView(html) {
+      messages.style.display = 'none';
+      document.querySelector('.input-wrapper').style.display = 'none';
+      dashboardView.style.display = '';
+      dashboardView.innerHTML = html;
+    }
+
+    async function loadDashboard(page) {
+      if (page === 'tools') {
+        const res = await fetch('/api/tools').then(r => r.json());
+        let html = '<h2 style="color:var(--accent);margin-bottom:16px">Tools &amp; Plugins</h2>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">';
+        res.tools.forEach(t => {
+          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;border-left:3px solid var(--accent)">';
+          html += '<div style="font-weight:500;color:var(--text-primary);margin-bottom:6px">' + t.name + '</div>';
+          html += '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">' + t.description + '</div></div>';
+        });
+        html += '</div>';
+        showDashboardView(html);
+      } else if (page === 'memory') {
+        const res = await fetch('/api/memory').then(r => r.json());
+        let html = '<h2 style="color:var(--accent);margin-bottom:16px">Memory</h2>';
+        res.files.forEach(f => {
+          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">';
+          html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+          html += '<span style="font-weight:500;color:var(--text-primary);text-transform:uppercase;font-size:12px;letter-spacing:0.5px">' + f.name + '</span>';
+          html += '<button class="save-mem-btn" data-name="' + f.name + '" style="background:var(--accent);color:#131314;border:none;padding:4px 14px;border-radius:8px;cursor:pointer;font-size:12px">Save</button></div>';
+          html += '<textarea class="mem-editor" data-name="' + f.name + '" style="width:100%;min-height:120px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.5">' + f.content + '</textarea></div>';
+        });
+        showDashboardView(html);
+        dashboardView.querySelectorAll('.save-mem-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const name = btn.dataset.name;
+            const ta = dashboardView.querySelector('.mem-editor[data-name="' + name + '"]');
+            await fetch('/api/memory/' + name, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: ta.value}) });
+            btn.textContent = 'Saved!';
+            setTimeout(() => { btn.textContent = 'Save'; }, 2000);
+          });
+        });
+      } else if (page === 'reminders') {
+        const res = await fetch('/api/reminders').then(r => r.json());
+        let html = '<h2 style="color:var(--accent);margin-bottom:16px">Reminders</h2>';
+        if (res.reminders.length === 0) {
+          html += '<p style="color:var(--text-secondary)">No active reminders. Ask Alice to set one!</p>';
+        } else {
+          res.reminders.forEach(r => {
+            html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">';
+            html += '<div><span style="color:var(--text-primary);font-weight:500">' + (r.message || r.id) + '</span>';
+            if (r.cron) html += '<span style="color:var(--text-tertiary);font-size:12px;margin-left:8px">' + r.cron + '</span>';
+            html += '</div>';
+            html += '<button class="cancel-rem-btn" data-id="' + r.id + '" style="background:#e53935;color:white;border:none;padding:4px 12px;border-radius:8px;cursor:pointer;font-size:12px">Cancel</button></div>';
+          });
+        }
+        showDashboardView(html);
+        dashboardView.querySelectorAll('.cancel-rem-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            await fetch('/api/reminders/' + btn.dataset.id, { method: 'DELETE' });
+            loadDashboard('reminders');
+          });
+        });
+      } else if (page === 'personas') {
+        var html = '<h2 style="color:var(--accent);margin-bottom:16px">Personas</h2>';
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;border-left:3px solid var(--accent)">';
+        html += '<div style="font-weight:500;color:var(--text-primary);margin-bottom:6px">Alice (Default)</div>';
+        html += '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">Your personal AI assistant with a warm, helpful personality. Manages reminders, searches memory, and helps with coding tasks.</div></div>';
+        html += '<p style="color:var(--text-tertiary);margin-top:16px;font-size:13px">More personas coming soon.</p>';
+        showDashboardView(html);
+      }
+    }
+
     document.querySelectorAll('.sidebar-nav-item').forEach(item => {
       item.addEventListener('click', () => {
         const page = item.dataset.page;
-        if (dashboardActions[page]) {
-          input.value = dashboardActions[page];
-          sendMessage();
-          thinkingRow = showThinking();
-          if (window.innerWidth <= 768) toggleSidebar();
-        }
+        loadDashboard(page);
+        document.querySelectorAll('.sidebar-nav-item').forEach(i => i.style.background = '');
+        item.style.background = 'var(--surface-hover)';
+        if (window.innerWidth <= 768) toggleSidebar();
       });
     });
 
-    // Load sessions into sidebar
-    async function loadSessions() {
-      try {
-        const res = await fetch('/api/sessions');
-        const data = await res.json();
-        currentSessionId = data.currentId;
-        renderSessions(data.sessions, data.currentId);
-      } catch (err) {
-        console.error('Failed to load sessions:', err);
-      }
-    }
+// Load sessions into sidebar
+async function loadSessions() {
+  try {
+    const res = await fetch('/api/sessions');
+    const data = await res.json();
+    currentSessionId = data.currentId;
+    renderSessions(data.sessions, data.currentId);
+  } catch (err) {
+    console.error('Failed to load sessions:', err);
+  }
+}
 
-    function renderSessions(sessions, activeId) {
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-      const weekAgo = new Date(today); weekAgo.setDate(today.getDate() - 7);
+function renderSessions(sessions, activeId) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+  const weekAgo = new Date(today); weekAgo.setDate(today.getDate() - 7);
 
-      const groups = { today: [], yesterday: [], week: [], older: [] };
-      sessions.forEach(s => {
-        const d = new Date(s.updatedAt || s.createdAt);
-        if (d >= today) groups.today.push(s);
-        else if (d >= yesterday) groups.yesterday.push(s);
-        else if (d >= weekAgo) groups.week.push(s);
-        else groups.older.push(s);
-      });
+  const groups = { today: [], yesterday: [], week: [], older: [] };
+  sessions.forEach(s => {
+    const d = new Date(s.updatedAt || s.createdAt);
+    if (d >= today) groups.today.push(s);
+    else if (d >= yesterday) groups.yesterday.push(s);
+    else if (d >= weekAgo) groups.week.push(s);
+    else groups.older.push(s);
+  });
 
-      let html = '';
-      function addGroup(label, items) {
-        if (items.length === 0) return;
-        html += '<div class="sidebar-group-label">' + label + '</div>';
-        items.forEach(s => {
-          const active = s.id === activeId ? ' active' : '';
-          const title = (s.title || 'Untitled').replace(/</g, '&lt;');
-          html += '<div class="sidebar-item' + active + '" data-id="' + s.id + '">'
-            + '<span class="sidebar-item-title">' + title + '</span>'
-            + '<button class="sidebar-item-delete" data-id="' + s.id + '" title="Delete">\u00d7</button>'
-            + '</div>';
-        });
-      }
-      addGroup('Today', groups.today);
-      addGroup('Yesterday', groups.yesterday);
-      addGroup('Previous 7 Days', groups.week);
-      addGroup('Older', groups.older);
+  let html = '';
+  function addGroup(label, items) {
+    if (items.length === 0) return;
+    html += '<div class="sidebar-group-label">' + label + '</div>';
+    items.forEach(s => {
+      const active = s.id === activeId ? ' active' : '';
+      const title = (s.title || 'Untitled').replace(/</g, '&lt;');
+      html += '<div class="sidebar-item' + active + '" data-id="' + s.id + '">'
+        + '<span class="sidebar-item-title">' + title + '</span>'
+        + '<button class="sidebar-item-delete" data-id="' + s.id + '" title="Delete">\u00d7</button>'
+        + '</div>';
+    });
+  }
+  addGroup('Today', groups.today);
+  addGroup('Yesterday', groups.yesterday);
+  addGroup('Previous 7 Days', groups.week);
+  addGroup('Older', groups.older);
 
-      if (!html) html = '<div style="padding:16px;color:var(--text-tertiary);font-size:13px;">No conversations yet</div>';
-      sessionList.innerHTML = html;
+  if (!html) html = '<div style="padding:16px;color:var(--text-tertiary);font-size:13px;">No conversations yet</div>';
+  sessionList.innerHTML = html;
 
-      // Bind click handlers
-      sessionList.querySelectorAll('.sidebar-item').forEach(item => {
-        item.addEventListener('click', (e) => {
-          if (e.target.classList.contains('sidebar-item-delete')) return;
-          switchToSession(item.dataset.id);
-        });
-      });
-      sessionList.querySelectorAll('.sidebar-item-delete').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          deleteSessionById(btn.dataset.id);
-        });
-      });
-    }
+  // Bind click handlers
+  sessionList.querySelectorAll('.sidebar-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('sidebar-item-delete')) return;
+      switchToSession(item.dataset.id);
+    });
+  });
+  sessionList.querySelectorAll('.sidebar-item-delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteSessionById(btn.dataset.id);
+    });
+  });
+}
 
-    async function switchToSession(id) {
-      try {
-        const res = await fetch('/api/sessions/' + id + '/switch', { method: 'POST' });
-        const data = await res.json();
-        currentSessionId = data.sessionId;
-        messages.innerHTML = '';
+async function switchToSession(id) {
+  showChatView();
+  try {
+    const res = await fetch('/api/sessions/' + id + '/switch', { method: 'POST' });
+    const data = await res.json();
+    currentSessionId = data.sessionId;
+    messages.innerHTML = '';
 
-        if (data.messages.length === 0) {
-          showWelcome();
-        } else {
-          data.messages.forEach(m => {
-            const type = m.role === 'user' ? 'user' : 'agent';
-            addMsg(m.text, type);
-          });
-        }
-        loadSessions();
-        // Close sidebar on mobile
-        if (window.innerWidth <= 768) toggleSidebar();
-      } catch (err) {
-        console.error('Switch failed:', err);
-      }
-    }
-
-    async function deleteSessionById(id) {
-      try {
-        await fetch('/api/sessions/' + id, { method: 'DELETE' });
-        if (id === currentSessionId) {
-          showWelcome();
-        }
-        loadSessions();
-      } catch (err) {
-        console.error('Delete failed:', err);
-      }
-    }
-
-    // Suggestion chips
-    function bindSuggestions() {
-      document.querySelectorAll('.suggestion').forEach(btn => {
-        btn.addEventListener('click', () => {
-          input.value = btn.dataset.msg;
-          sendMessage();
-          thinkingRow = showThinking();
-        });
+    if (data.messages.length === 0) {
+      showWelcome();
+    } else {
+      data.messages.forEach(m => {
+        const type = m.role === 'user' ? 'user' : 'agent';
+        addMsg(m.text, type);
       });
     }
-    bindSuggestions();
-
-    // Load sessions on startup
     loadSessions();
-  <\/script>
-</body>
-</html>`;
+    // Close sidebar on mobile
+    if (window.innerWidth <= 768) toggleSidebar();
+  } catch (err) {
+    console.error('Switch failed:', err);
+  }
+}
+
+async function deleteSessionById(id) {
+  try {
+    await fetch('/api/sessions/' + id, { method: 'DELETE' });
+    if (id === currentSessionId) {
+      showWelcome();
+    }
+    loadSessions();
+  } catch (err) {
+    console.error('Delete failed:', err);
+  }
+}
+
+// Suggestion chips
+function bindSuggestions() {
+  document.querySelectorAll('.suggestion').forEach(btn => {
+    btn.addEventListener('click', () => {
+      input.value = btn.dataset.msg;
+      sendMessage();
+      thinkingRow = showThinking();
+    });
+  });
+}
+bindSuggestions();
+
+// Load sessions on startup
+loadSessions();
+<\/script>
+  </body>
+  </html>`;
 
 

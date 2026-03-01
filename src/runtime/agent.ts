@@ -456,7 +456,8 @@ export class Agent {
      */
     async processMessageStream(
         userMessage: string,
-        onToken: (token: string) => void
+        onToken: (token: string) => void,
+        attachments: Array<{ name: string; type: string; data: string }> = []
     ): Promise<AgentResponse> {
         if (!this.provider.generateContentStream) {
             // Fallback: run non-streaming, emit full text at once
@@ -465,11 +466,22 @@ export class Agent {
             return result;
         }
 
-        log.info('Processing message (streaming)', { length: userMessage.length });
+        log.info('Processing message (streaming)', { length: userMessage.length, attachments: attachments.length });
+
+        // Build user message parts: text + any file attachments
+        const userParts: LLMPart[] = [{ text: userMessage }];
+        for (const att of attachments) {
+            (userParts as any[]).push({
+                inlineData: {
+                    mimeType: att.type,
+                    data: att.data,
+                },
+            });
+        }
 
         this.pushMessage({
             role: 'user',
-            parts: [{ text: userMessage }],
+            parts: userParts,
         });
 
         const functionDeclarations = toGeminiFunctionDeclarations();

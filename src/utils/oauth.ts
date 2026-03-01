@@ -42,7 +42,7 @@ export async function getAuthenticatedClient(
             saveTokens(credentials);
         }
 
-        log.info('Using stored OAuth tokens');
+        log.debug('Using stored OAuth tokens');
         return oauth2Client;
     }
 

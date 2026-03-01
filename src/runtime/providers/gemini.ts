@@ -86,4 +86,78 @@ export class GeminiProvider {
             throw err;
         }
     }
+
+    /**
+     * Streaming variant — yields text tokens as they arrive.
+     */
+    async generateContentStream(
+        systemInstruction: string,
+        messages: LLMMessage[],
+        functionDeclarations: FunctionDeclaration[],
+        onToken: (token: string) => void
+    ): Promise<LLMResponse> {
+        log.debug(`Streaming call to ${this.model}`, {
+            messagesCount: messages.length,
+            toolsCount: functionDeclarations.length,
+        });
+
+        try {
+            const response = await this.ai.models.generateContentStream({
+                model: this.model,
+                contents: messages as any,
+                config: {
+                    systemInstruction,
+                    tools: functionDeclarations.length > 0
+                        ? [{ functionDeclarations: functionDeclarations as any }]
+                        : undefined,
+                },
+            });
+
+            let fullText = '';
+            let functionCalls: Array<{ name: string; args: Record<string, any> }> | null = null;
+            let rawParts: any[] = [];
+
+            for await (const chunk of response) {
+                // Stream text chunks
+                const chunkText = chunk.text ?? '';
+                if (chunkText) {
+                    fullText += chunkText;
+                    onToken(chunkText);
+                }
+
+                // Collect function calls from the final chunk
+                if (chunk.functionCalls && chunk.functionCalls.length > 0) {
+                    functionCalls = chunk.functionCalls.map(fc => ({
+                        name: fc.name!,
+                        args: fc.args as Record<string, any>,
+                    }));
+                }
+
+                // Collect raw parts
+                const parts = (chunk.candidates?.[0]?.content?.parts as any[]) ?? [];
+                if (parts.length > 0) {
+                    rawParts = parts;
+                }
+            }
+
+            log.debug('Stream complete', {
+                hasText: !!fullText,
+                functionCallCount: functionCalls?.length ?? 0,
+            });
+
+            return {
+                text: fullText || null,
+                functionCalls,
+                rawParts,
+                rawResponse: null,
+            };
+        } catch (err: any) {
+            log.error('Gemini streaming error', { error: err.message });
+            // Fall back to non-streaming
+            log.info('Falling back to non-streaming');
+            const result = await this.generateContent(systemInstruction, messages, functionDeclarations);
+            if (result.text) onToken(result.text);
+            return result;
+        }
+    }
 }

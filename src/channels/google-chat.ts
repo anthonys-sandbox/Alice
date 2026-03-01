@@ -44,7 +44,7 @@ export class GoogleChatAdapter {
         this.agent = agent;
     }
 
-    async startListening(pollMs: number = 3000): Promise<void> {
+    async startListening(pollMs: number = 10000): Promise<void> {
         if (!this.sheetId || !this.oauthClientId || !this.oauthClientSecret) {
             log.debug('Sheets queue not configured — skipping polling');
             return;
