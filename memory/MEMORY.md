@@ -71,3 +71,32 @@ Facts, patterns, and knowledge curated by Alice over time.
 - Assistant introduced itself as Alice
 - Tool "search_memory" was used to check user.md
 - User has not set their name in the system
+
+## Learned 2026-03-01
+- User prioritizes AI as a productivity tool in both professional and personal contexts
+- User has a documented interest in video games and emo music
+- User explicitly focuses the conversation on professional software development topics
+- User intends to use the tool primarily for work-related tasks
+- No specific project names, tech stacks, or environment details were mentioned
+
+## Learned 2026-03-01
+- User is Global Creative Director at Hill's Pet Nutrition (Colgate-Palmolive company)
+- User serves as AI Ambassador for Hill's, leading digital innovation and AI adoption
+- AI is used to accelerate creative processes in pet nutrition marketing
+- Expanding team by adding new roles and implementing an agentic creative workflow
+- Goals: Increase volume, velocity, and variety of creative output while reducing costs
+- No specific tools or tech stacks mentioned in the exchange
+- Focus on balancing creative output with cost efficiency through AI and workflow changes
+
+## Learned 2026-03-01
+- Disk space utilization: 23% (10GiB used of 926GiB total)
+- No critical dev server crashes detected
+- No tool configurations or environment details reported
+- No reminders or custom workflows added yet
+- Assistant offered optional reminder suggestions for AI team expansions/creative workflows
+
+## Learned 2026-03-01
+- Project name: Creative Lab
+- Tech stack: AI agents, automation, agentic workflows
+- Alice's role: Personal assistant for administrative tasks
+- Administrative tasks focus: Scheduling, task prioritization, documentation, AI workflow coordination (as requested by assistant)

@@ -115,6 +115,7 @@ export function updateMemoryFile(memoryDir: string, filename: string, content: s
 /**
  * Append new facts to MEMORY.md, deduplicating against existing content.
  * Returns the number of facts actually appended.
+ * @deprecated Use updateMemory() for structured multi-file updates.
  */
 let memoryWriteLock = false;
 export async function appendFacts(memoryDir: string, facts: string[]): Promise<number> {
@@ -167,6 +168,161 @@ export async function appendFacts(memoryDir: string, facts: string[]): Promise<n
     } finally {
         memoryWriteLock = false;
     }
+}
+
+/**
+ * Structured memory update — routes facts to the correct file and supports corrections.
+ */
+export interface MemoryUpdate {
+    file: 'user' | 'memory';
+    action: 'add' | 'update' | 'remove';
+    section?: string;   // e.g. "About Anthony", "Preferences", "Active Projects"
+    content: string;    // the new fact or replacement content
+    match?: string;     // for update/remove: text to find and replace/delete
+}
+
+const FILE_MAP: Record<string, string> = {
+    user: 'USER.md',
+    memory: 'MEMORY.md',
+};
+
+const FILE_DEFAULTS: Record<string, string> = {
+    user: '# User Context\n\n## About the User\n\n## Preferences\n\n## Active Projects\n\n(Updated by the agent as it learns)\n',
+    memory: '# Long-Term Memory\n\nFacts, patterns, and knowledge curated by Alice over time.\n',
+};
+
+export async function updateMemory(memoryDir: string, updates: MemoryUpdate[]): Promise<number> {
+    while (memoryWriteLock) {
+        await new Promise(r => setTimeout(r, 50));
+    }
+    memoryWriteLock = true;
+
+    let totalChanges = 0;
+
+    try {
+        // Group updates by target file
+        const grouped = new Map<string, MemoryUpdate[]>();
+        for (const u of updates) {
+            const filename = FILE_MAP[u.file] || 'MEMORY.md';
+            if (!grouped.has(filename)) grouped.set(filename, []);
+            grouped.get(filename)!.push(u);
+        }
+
+        for (const [filename, fileUpdates] of grouped) {
+            const filePath = join(memoryDir, filename);
+            let content = '';
+            if (existsSync(filePath)) {
+                content = readFileSync(filePath, 'utf-8');
+            } else {
+                content = FILE_DEFAULTS[filename === 'USER.md' ? 'user' : 'memory'];
+            }
+
+            const MAX_SIZE = 8192;
+            if (content.length > MAX_SIZE) {
+                log.warn(`${filename} approaching size limit, skipping updates`, { size: content.length });
+                continue;
+            }
+
+            for (const update of fileUpdates) {
+                const cleaned = update.content.replace(/^[-•*]\s*/, '').trim();
+                if (cleaned.length < 5) continue;
+
+                if (update.action === 'remove' && update.match) {
+                    // Remove lines matching the target
+                    const lines = content.split('\n');
+                    const matchLower = update.match.toLowerCase();
+                    const before = lines.length;
+                    const filtered = lines.filter(line => {
+                        const lineLower = line.replace(/^[-•*]\s*/, '').trim().toLowerCase();
+                        return !lineLower.includes(matchLower);
+                    });
+                    if (filtered.length < before) {
+                        content = filtered.join('\n');
+                        totalChanges++;
+                        log.info(`Removed from ${filename}`, { match: update.match });
+                    }
+
+                } else if (update.action === 'update' && update.match) {
+                    // Find the line matching 'match' and replace it
+                    const lines = content.split('\n');
+                    const matchLower = update.match.toLowerCase();
+                    let replaced = false;
+                    for (let i = 0; i < lines.length; i++) {
+                        const lineLower = lines[i].replace(/^[-•*]\s*/, '').trim().toLowerCase();
+                        if (lineLower.includes(matchLower)) {
+                            lines[i] = `- ${cleaned}`;
+                            replaced = true;
+                            totalChanges++;
+                            log.info(`Updated in ${filename}`, { old: update.match, new: cleaned });
+                            break;
+                        }
+                    }
+                    // If no match found, treat as an add
+                    if (!replaced) {
+                        content = addToSection(content, update.section, cleaned);
+                        totalChanges++;
+                        log.info(`Added to ${filename} (update target not found)`, { content: cleaned });
+                    } else {
+                        content = lines.join('\n');
+                    }
+
+                } else if (update.action === 'add') {
+                    // Check for duplicates before adding
+                    const contentLower = content.toLowerCase();
+                    const words = cleaned.toLowerCase().split(/\s+/);
+                    const keyPhrase = words.slice(0, Math.min(6, words.length)).join(' ');
+                    if (contentLower.includes(keyPhrase)) continue;
+
+                    content = addToSection(content, update.section, cleaned);
+                    totalChanges++;
+                    log.info(`Added to ${filename}`, { section: update.section, content: cleaned });
+                }
+            }
+
+            writeFileSync(filePath, content, 'utf-8');
+        }
+    } finally {
+        memoryWriteLock = false;
+    }
+
+    if (totalChanges > 0) {
+        log.info(`Memory updated`, { changes: totalChanges });
+    }
+    return totalChanges;
+}
+
+/**
+ * Add a bullet point under a specific section heading, or at the end if no section matches.
+ */
+function addToSection(content: string, section: string | undefined, fact: string): string {
+    if (!section) {
+        // No section specified — append at end
+        return content.trimEnd() + `\n- ${fact}\n`;
+    }
+
+    const lines = content.split('\n');
+    const sectionLower = section.toLowerCase();
+
+    // Find the section heading
+    for (let i = 0; i < lines.length; i++) {
+        if (lines[i].toLowerCase().includes(sectionLower) && lines[i].trim().startsWith('#')) {
+            // Find the end of this section (next heading or end of file)
+            let insertAt = i + 1;
+            while (insertAt < lines.length && !lines[insertAt].trim().startsWith('#')) {
+                insertAt++;
+            }
+            // Insert before the next section heading (or at end)
+            // Back up past empty lines to keep formatting clean
+            while (insertAt > i + 1 && lines[insertAt - 1].trim() === '') {
+                insertAt--;
+            }
+            lines.splice(insertAt, 0, `- ${fact}`);
+            return lines.join('\n');
+        }
+    }
+
+    // Section not found — append at end
+    return content.trimEnd() + `\n- ${fact}\n`;
 }
 
 /**

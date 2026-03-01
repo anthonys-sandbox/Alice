@@ -1,7 +1,7 @@
 import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type FunctionDeclaration } from './providers/gemini.js';
 import { OAIProvider } from './providers/oai-provider.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
-import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, searchMemoryFiles } from '../memory/index.js';
+import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, type MemoryUpdate } from '../memory/index.js';
 import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
 import { SessionStore } from '../memory/sessions.js';
 import { createLogger } from '../utils/logger.js';
@@ -271,6 +271,8 @@ export class Agent {
             '',
             `Current date/time: ${currentDate}`,
             `Working directory: ${process.cwd()}`,
+            '',
+            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, set_reminder, generate_image) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
             `/no_think`,
         ].filter(Boolean).join('\n');
 
@@ -718,41 +720,72 @@ export class Agent {
 
         (async () => {
             try {
-                const extractPrompt = `Analyze this conversation exchange and extract any important facts worth remembering long-term. Focus on:
-- User preferences, habits, or personal details
-- Project names, tech stacks, or architecture decisions
-- Tool configurations or environment details
-- Recurring patterns or workflows
+                const extractPrompt = `Analyze this conversation and extract facts to store in memory files.
+
+Route each fact to the correct file:
+- "user" → personal info, preferences, habits, name, birthday, work style
+- "memory" → project details, tech stacks, architecture decisions, workflows
+
+For each fact, specify an action:
+- "add" → new information
+- "update" → corrects/replaces existing info (include "match" to find the old text)
+- "remove" → info is no longer true (include "match" to find text to delete)
+
+For "user" file facts, specify a section: "About Anthony", "Preferences", or "Active Projects".
 
 USER: ${userMessage.slice(0, 500)}
-
 ASSISTANT: ${assistantResponse.slice(0, 500)}
 
-TOOLS USED: ${toolsUsed.join(', ') || 'none'}
-
-Respond with ONLY a bullet list of facts (one per line, starting with "- "). If there are no meaningful facts to extract, respond with "NONE".`;
+Respond with ONLY valid JSON (no markdown, no code fences). If nothing to extract, respond: {"updates":[]}
+Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","content":"fact here"},{"file":"memory","action":"add","content":"fact here"}]}`;
 
                 const result = await provider.generateContent(
-                    'You are a fact extraction system. Extract only concrete, specific facts. Be concise. Never include opinions or speculation.',
+                    'You are a JSON fact extraction system. Output only valid JSON. Be concise. /no_think',
                     [{ role: 'user', parts: [{ text: extractPrompt }] }],
                     []
                 );
 
                 const text = (result.text || '').trim();
-                if (text === 'NONE' || text.length < 5) return;
+                if (!text || text === 'NONE' || text.length < 10) return;
 
-                // Parse bullet points
-                const facts = text.split('\n')
-                    .map(line => line.trim())
-                    .filter(line => line.startsWith('-') || line.startsWith('•') || line.startsWith('*'))
-                    .map(line => line.replace(/^[-•*]\s*/, '').trim())
-                    .filter(fact => fact.length >= 10);
+                // Parse JSON response — try to extract JSON if wrapped in markdown
+                let jsonStr = text;
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (jsonMatch) jsonStr = jsonMatch[0];
 
-                if (facts.length === 0) return;
+                let parsed: { updates?: MemoryUpdate[] };
+                try {
+                    parsed = JSON.parse(jsonStr);
+                } catch {
+                    // Fallback: treat as bullet list for backward compat
+                    const facts = text.split('\n')
+                        .map(line => line.trim())
+                        .filter(line => line.startsWith('-') || line.startsWith('•') || line.startsWith('*'))
+                        .map(line => line.replace(/^[-•*]\s*/, '').trim())
+                        .filter(fact => fact.length >= 10);
+                    if (facts.length > 0) {
+                        const appended = await appendFacts(memoryDir, facts);
+                        if (appended > 0) log.info(`Auto-learned ${appended} facts (fallback)`);
+                    }
+                    return;
+                }
 
-                const appended = await appendFacts(memoryDir, facts);
-                if (appended > 0) {
-                    log.info(`Auto-learned ${appended} facts from conversation`);
+                if (!parsed.updates || parsed.updates.length === 0) return;
+
+                // Validate and sanitize updates
+                const validUpdates = parsed.updates.filter(u =>
+                    u && u.file && u.action && u.content &&
+                    ['user', 'memory'].includes(u.file) &&
+                    ['add', 'update', 'remove'].includes(u.action)
+                );
+
+                if (validUpdates.length === 0) return;
+
+                const changed = await updateMemory(memoryDir, validUpdates);
+                if (changed > 0) {
+                    log.info(`Smart memory update`, { changes: changed, updates: validUpdates.map(u => `${u.action}:${u.file}`) });
+                    // Refresh context so next response uses updated memory
+                    this.refreshContext();
                 }
             } catch (err: any) {
                 log.debug('Memory extraction failed (non-critical)', { error: err.message });
