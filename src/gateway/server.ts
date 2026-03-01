@@ -9,6 +9,7 @@ import { scheduler } from '../scheduler/task-scheduler.js';
 import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
 import { formatForGoogleChat } from '../utils/markdown.js';
+import { MCPManager } from '../mcp/client.js';
 
 const log = createLogger('Gateway');
 
@@ -19,6 +20,7 @@ export class Gateway {
   private agent: Agent;
   private chat: GoogleChatAdapter;
   private config: AliceConfig;
+  private mcp: MCPManager;
 
   constructor(config: AliceConfig) {
     this.config = config;
@@ -36,6 +38,14 @@ export class Gateway {
       config.googleChat.serviceAccountKeyPath
     );
     this.chat.setAgent(this.agent);
+
+    // Initialize MCP connections in background
+    this.mcp = new MCPManager();
+    if (config.mcp.servers.length > 0) {
+      this.mcp.connectAll(config.mcp.servers).catch(err => {
+        log.warn('MCP initialization had errors (non-fatal)', { error: err.message });
+      });
+    }
 
     this.setupRoutes();
     this.setupWebSocket();

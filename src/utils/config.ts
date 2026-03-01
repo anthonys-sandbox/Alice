@@ -41,6 +41,16 @@ export interface AliceConfig {
     logging: {
         level: 'debug' | 'info' | 'warn' | 'error';
     };
+    mcp: {
+        servers: Array<{
+            name: string;
+            command: string;
+            args?: string[];
+            env?: Record<string, string>;
+            cwd?: string;
+            enabled?: boolean;
+        }>;
+    };
 }
 
 const DEFAULTS: AliceConfig = {
@@ -83,6 +93,9 @@ const DEFAULTS: AliceConfig = {
     },
     logging: {
         level: 'info',
+    },
+    mcp: {
+        servers: [],
     },
 };
 
