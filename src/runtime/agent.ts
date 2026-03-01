@@ -2,7 +2,7 @@ import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type F
 import { OAIProvider } from './providers/oai-provider.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
 import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, searchMemoryFiles } from '../memory/index.js';
-import { loadSkills, buildSkillPrompt } from '../skills/loader.js';
+import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
 import { SessionStore } from '../memory/sessions.js';
 import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
@@ -189,6 +189,29 @@ export class Agent {
                 const { scheduler } = await import('../scheduler/task-scheduler.js');
                 const id = scheduler.watchFile(args.path, args.description || 'file changed');
                 return `👁️ Now watching: ${args.path} (ID: ${id})`;
+            },
+        });
+
+        // Skill installation tool
+        registerTool({
+            name: 'install_skill',
+            description: 'Install a new skill for Alice from a git URL. The skill will be cloned, dependencies installed, and immediately available.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    source: { type: 'string', description: 'Git URL (e.g. https://github.com/user/alice-skill-name.git) or local path to a skill directory' },
+                },
+                required: ['source'],
+            },
+            execute: async (args: Record<string, any>) => {
+                try {
+                    const targetDir = this.config.skills.dirs[0]; // Install to project-local skills dir
+                    const skillName = installSkill(args.source, targetDir);
+                    this.refreshContext(); // Hot-reload to pick up new skill
+                    return `✅ Skill "${skillName}" installed successfully to ${targetDir}/${skillName}. I've reloaded my context to include it.`;
+                } catch (err: any) {
+                    return `❌ Failed to install skill: ${err.message}`;
+                }
             },
         });
 
