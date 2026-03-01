@@ -1675,6 +1675,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         recognition.interimResults = true;
         recognition.lang = 'en-US';
 
+        // Snapshot what's already in the input BEFORE dictation starts
+        const preExisting = input.value;
         let finalTranscript = '';
 
         recognition.onstart = () => {
@@ -1692,13 +1694,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
               interim += event.results[i][0].transcript;
             }
           }
-          // Show live transcript in the input
-          const existing = input.value.replace(/\\s*\\[…\\]$/, '');
-          if (interim) {
-            input.value = (existing ? existing + ' ' : '') + finalTranscript + interim + ' […]';
-          } else {
-            input.value = (existing ? existing + ' ' : '') + finalTranscript;
-          }
+          // Always rebuild from snapshot + accumulated transcript
+          const base = preExisting ? preExisting + ' ' : '';
+          input.value = base + finalTranscript + (interim ? interim + ' …' : '');
           input.style.height = 'auto';
           input.style.height = Math.min(input.scrollHeight, 160) + 'px';
         };
@@ -1707,8 +1705,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           isListening = false;
           micBtn.classList.remove('mic-recording');
           micBtn.title = 'Voice dictation';
-          // Clean up trailing [...] marker
-          input.value = input.value.replace(/\\s*\\[…\\]$/, '').trim();
+          // Clean up trailing ellipsis
+          input.value = input.value.replace(/\\s*…$/, '').trim();
           input.focus();
         };
 

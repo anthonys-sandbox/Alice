@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, write } f
 import { dirname, resolve, extname, join } from 'path';
 import { execSync } from 'child_process';
 import { createLogger } from '../../utils/logger.js';
+import { browserTools } from './browser.js';
 
 const log = createLogger('Tools');
 
@@ -669,6 +670,7 @@ const ALL_TOOLS: ToolDefinition[] = [
     clipboardReadTool,
     clipboardWriteTool,
     readPdfTool,
+    ...browserTools,
 ];
 
 const toolMap = new Map<string, ToolDefinition>();
@@ -740,6 +742,7 @@ export function toGeminiFunctionDeclarations() {
     const CORE_TOOLS = new Set([
         'bash', 'read_file', 'write_file', 'edit_file',
         'web_search', 'search_memory', 'set_reminder', 'generate_image',
+        'browse_page',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name))

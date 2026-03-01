@@ -2,12 +2,14 @@
 
 ## About Anthony
 - Full name: Anthony Tackett
-- Global Creative Director at Hill's Pet Nutrition (Colgate-Palmolive)
-- AI Ambassador for Hill's, leading digital innovation and AI adoption
-- Software developer
-- Uses macOS
-- Works on projects in ~/Documents/GitHub/
-- Home directory: /Users/AnthonyTackett
+- Position: Global Creative Director at Hill's Pet Nutrition (Colgate-Palmolive)
+- Role: AI Ambassador for Hill's, leading digital innovation and AI adoption
+- Profession: Software developer
+- Operating System: macOS
+- Project Location: ~/Documents/GitHub/
+- Home Directory: /Users/AnthonyTackett
+- Disk Usage: 23% utilization (10GiB used of 926GiB total) — within safe limits
+- System Status: No critical crashes detected in dev servers; Heartbeat scheduler is active and triggered automated check
 
 ## Preferences
 - Prefers direct, actionable responses

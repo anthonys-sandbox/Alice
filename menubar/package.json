@@ -1,0 +1,25 @@
+{
+    "name": "alice-menubar",
+    "version": "1.0.0",
+    "description": "Alice AI — macOS menu bar app",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "build": "electron-builder --mac"
+    },
+    "dependencies": {
+        "menubar": "^9.5.0"
+    },
+    "devDependencies": {
+        "electron": "^34.0.0",
+        "electron-builder": "^25.0.0"
+    },
+    "build": {
+        "appId": "com.gravityclaw.alice",
+        "productName": "Alice",
+        "mac": {
+            "category": "public.app-category.productivity",
+            "icon": "icon.png"
+        }
+    }
+}
