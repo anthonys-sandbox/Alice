@@ -1,9 +1,8 @@
 // Alice PWA Service Worker
 // Caches static assets for offline-capable experience
 
-const CACHE_NAME = 'alice-v1';
+const CACHE_NAME = 'alice-v2';
 const STATIC_ASSETS = [
-    '/',
     '/alice-icon-512.png',
     '/manifest.json',
 ];
@@ -32,7 +31,7 @@ self.addEventListener('activate', (event) => {
     self.clients.claim();
 });
 
-// Fetch: network-first strategy for API calls, cache-first for static assets
+// Fetch: network-first for HTML & images, cache-first for static assets
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 
@@ -44,6 +43,22 @@ self.addEventListener('fetch', (event) => {
 
     // API calls: network only (real-time data)
     if (url.pathname.startsWith('/api/')) return;
+
+    // HTML page (/): network-first so UI updates are always fresh
+    if (url.pathname === '/' || event.request.mode === 'navigate') {
+        event.respondWith(
+            fetch(event.request)
+                .then((response) => {
+                    const clone = response.clone();
+                    caches.open(CACHE_NAME).then((cache) => {
+                        cache.put(event.request, clone);
+                    });
+                    return response;
+                })
+                .catch(() => caches.match(event.request))
+        );
+        return;
+    }
 
     // Images directory: network first, fallback to cache
     if (url.pathname.startsWith('/images/')) {
@@ -61,7 +76,7 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Static assets: cache first, network fallback
+    // Static assets (icons, manifest): cache first, network fallback
     event.respondWith(
         caches.match(event.request).then((cached) => {
             if (cached) return cached;

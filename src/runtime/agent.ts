@@ -483,8 +483,12 @@ export class Agent {
                 const isModelError = errorMessage.includes('400') || errorMessage.includes('invalid');
 
                 if (isRateLimit && iterations < this.config.agent.maxIterations) {
-                    // Exponential backoff for rate limiting
-                    const waitMs = Math.pow(2, iterations) * 1000;
+                    // Parse "quota will reset after Xs" from API error
+                    const resetMatch = errorMessage.match(/reset after (\d+)s/);
+                    const resetSeconds = resetMatch ? parseInt(resetMatch[1], 10) : 0;
+                    const waitMs = resetSeconds > 0
+                        ? (resetSeconds + 2) * 1000
+                        : Math.min(Math.pow(2, iterations) * 1000, 30000);
                     log.warn(`Rate limited, waiting ${waitMs}ms before retry`);
                     await new Promise(r => setTimeout(r, waitMs));
                     continue;
@@ -648,7 +652,11 @@ export class Agent {
                 const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
 
                 if (isRateLimit && iterations < this.config.agent.maxIterations) {
-                    const waitMs = Math.pow(2, iterations) * 1000;
+                    const resetMatch = errorMessage.match(/reset after (\d+)s/);
+                    const resetSeconds = resetMatch ? parseInt(resetMatch[1], 10) : 0;
+                    const waitMs = resetSeconds > 0
+                        ? (resetSeconds + 2) * 1000
+                        : Math.min(Math.pow(2, iterations) * 1000, 30000);
                     log.warn(`Rate limited, waiting ${waitMs}ms before retry`);
                     await new Promise(r => setTimeout(r, waitMs));
                     continue;
