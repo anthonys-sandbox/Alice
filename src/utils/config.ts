@@ -8,6 +8,7 @@ export interface AliceConfig {
     gemini: {
         apiKey: string;
         model: string;
+        auth: 'api-key' | 'cli' | 'auto';
     };
     ollama: {
         host: string;
@@ -21,12 +22,6 @@ export interface AliceConfig {
         oauthClientId: string;
         oauthClientSecret: string;
         serviceAccountKeyPath: string;
-    };
-    telegram?: {
-        botToken: string;
-        allowedUserIds: Set<number>;
-        elevenLabsApiKey?: string;
-        elevenLabsVoiceId?: string;
     };
     gateway: {
         host: string;
@@ -65,10 +60,11 @@ export interface AliceConfig {
 }
 
 const DEFAULTS: AliceConfig = {
-    chatProvider: 'gemini',
+    chatProvider: 'ollama',
     gemini: {
         apiKey: '',
-        model: 'gemini-2.0-flash',
+        model: 'gemini-3-flash-preview',
+        auth: 'auto' as const,
     },
     ollama: {
         host: '127.0.0.1',
@@ -97,7 +93,7 @@ const DEFAULTS: AliceConfig = {
     skills: {
         dirs: [
             './skills',
-            join(homedir(), '.toby', 'skills'),
+            join(homedir(), '.alice', 'skills'),
         ],
     },
     agent: {
@@ -132,6 +128,7 @@ export function loadConfig(projectDir?: string): AliceConfig {
     // Environment variables override everything
     if (process.env.GEMINI_API_KEY) config.gemini.apiKey = process.env.GEMINI_API_KEY;
     if (process.env.GEMINI_MODEL) config.gemini.model = process.env.GEMINI_MODEL;
+    if (process.env.GEMINI_AUTH) config.gemini.auth = process.env.GEMINI_AUTH as AliceConfig['gemini']['auth'];
 
     if (process.env.CHAT_PROVIDER) config.chatProvider = process.env.CHAT_PROVIDER as AliceConfig['chatProvider'];
     if (process.env.OLLAMA_HOST) config.ollama.host = process.env.OLLAMA_HOST;
@@ -147,37 +144,6 @@ export function loadConfig(projectDir?: string): AliceConfig {
     if (process.env.HEARTBEAT_INTERVAL) config.heartbeat.intervalMinutes = parseInt(process.env.HEARTBEAT_INTERVAL, 10);
     if (process.env.LOG_LEVEL) config.logging.level = process.env.LOG_LEVEL as AliceConfig['logging']['level'];
     if (process.env.OPENROUTER_API_KEY) config.openRouter.apiKey = process.env.OPENROUTER_API_KEY;
-
-    // MCP servers — parsed from JSON array in MCP_SERVERS env var
-    if (process.env.MCP_SERVERS) {
-        try {
-            const parsed = JSON.parse(process.env.MCP_SERVERS);
-            if (Array.isArray(parsed)) {
-                config.mcp.servers = parsed;
-            }
-        } catch {
-            // Malformed JSON — ignore and use defaults (no MCP servers)
-        }
-    }
-
-    // Telegram
-    if (process.env.TELEGRAM_BOT_TOKEN) {
-        const rawIds = process.env.TELEGRAM_ALLOWED_USER_IDS || '';
-        const allowedUserIds = new Set<number>(
-            rawIds
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean)
-                .map((s) => parseInt(s, 10))
-                .filter((n) => !isNaN(n)),
-        );
-        config.telegram = {
-            botToken: process.env.TELEGRAM_BOT_TOKEN,
-            allowedUserIds,
-            elevenLabsApiKey: process.env.ELEVENLABS_API_KEY,
-            elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM',
-        };
-    }
 
     return config;
 }

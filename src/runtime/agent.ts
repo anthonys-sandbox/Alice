@@ -1,4 +1,5 @@
 import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type FunctionDeclaration } from './providers/gemini.js';
+import { hasCliCredentials } from './providers/gemini-cli-auth.js';
 import { OAIProvider } from './providers/oai-provider.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
 import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, type MemoryUpdate } from '../memory/index.js';
@@ -852,17 +853,19 @@ export class Agent {
         }
 
         // ── Gemini models ──
-        if (this.config.gemini.apiKey) {
+        const hasGemini = this.config.gemini.apiKey || hasCliCredentials();
+        if (hasGemini) {
+            const authLabel = hasCliCredentials() && this.config.gemini.auth !== 'api-key' ? 'Ultra' : 'API';
             models.push({
                 id: 'gemini-2.5-flash-preview-05-20',
-                name: 'Gemini 2.5 Flash',
+                name: `Gemini 2.5 Flash (${authLabel})`,
                 provider: 'gemini',
                 toolCapable: true,
                 capabilities: ['reasoning'],
             });
             models.push({
                 id: 'gemini-2.5-pro-preview-05-06',
-                name: 'Gemini 2.5 Pro',
+                name: `Gemini 2.5 Pro (${authLabel})`,
                 provider: 'gemini',
                 toolCapable: true,
                 capabilities: ['reasoning'],
