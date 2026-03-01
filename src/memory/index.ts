@@ -111,3 +111,92 @@ export function updateMemoryFile(memoryDir: string, filename: string, content: s
     writeFileSync(filePath, content, 'utf-8');
     log.info(`Updated memory file: ${filename}`);
 }
+
+/**
+ * Append new facts to MEMORY.md, deduplicating against existing content.
+ * Returns the number of facts actually appended.
+ */
+let memoryWriteLock = false;
+export async function appendFacts(memoryDir: string, facts: string[]): Promise<number> {
+    // Simple mutex to prevent concurrent writes
+    while (memoryWriteLock) {
+        await new Promise(r => setTimeout(r, 50));
+    }
+    memoryWriteLock = true;
+
+    try {
+        const filePath = join(memoryDir, 'MEMORY.md');
+        let existing = '';
+        if (existsSync(filePath)) {
+            existing = readFileSync(filePath, 'utf-8');
+        } else {
+            existing = '# Long-Term Memory\n\nFacts, patterns, and knowledge curated by Alice over time.\n';
+        }
+
+        const existingLower = existing.toLowerCase();
+
+        // Filter out facts that are already present (fuzzy: check if the core content is already there)
+        const newFacts = facts.filter(fact => {
+            const cleaned = fact.replace(/^[-•*]\s*/, '').trim();
+            if (cleaned.length < 10) return false; // Too short to be meaningful
+            // Check if a significant portion of the fact already exists
+            const words = cleaned.toLowerCase().split(/\s+/);
+            const keyPhrase = words.slice(0, Math.min(6, words.length)).join(' ');
+            return !existingLower.includes(keyPhrase);
+        });
+
+        if (newFacts.length === 0) return 0;
+
+        // Cap total memory file at ~8KB to prevent system prompt bloat
+        const MAX_MEMORY_SIZE = 8192;
+        if (existing.length > MAX_MEMORY_SIZE) {
+            log.warn('MEMORY.md approaching size limit, skipping append', { size: existing.length });
+            return 0;
+        }
+
+        const timestamp = new Date().toISOString().slice(0, 10);
+        const factsBlock = newFacts.map(f => {
+            const cleaned = f.replace(/^[-•*]\s*/, '').trim();
+            return `- ${cleaned}`;
+        }).join('\n');
+
+        const appendSection = `\n\n## Learned ${timestamp}\n${factsBlock}\n`;
+        writeFileSync(filePath, existing.trimEnd() + appendSection, 'utf-8');
+        log.info(`Appended ${newFacts.length} new facts to MEMORY.md`);
+        return newFacts.length;
+    } finally {
+        memoryWriteLock = false;
+    }
+}
+
+/**
+ * Search across all memory files for matching content (case-insensitive).
+ * Returns matching lines with their source file.
+ */
+export function searchMemoryFiles(memoryDir: string, query: string): string[] {
+    const results: string[] = [];
+    const queryLower = query.toLowerCase();
+    const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+
+    const files = ['MEMORY.md', 'USER.md', 'IDENTITY.md', 'SOUL.md'];
+    for (const filename of files) {
+        const filePath = join(memoryDir, filename);
+        if (!existsSync(filePath)) continue;
+
+        const content = readFileSync(filePath, 'utf-8');
+        const lines = content.split('\n');
+
+        for (const line of lines) {
+            if (!line.trim() || line.startsWith('#')) continue;
+            const lineLower = line.toLowerCase();
+            // Match if any query word appears in the line
+            const matches = queryWords.filter(w => lineLower.includes(w));
+            if (matches.length >= Math.max(1, Math.floor(queryWords.length / 2))) {
+                results.push(`[${filename}] ${line.trim()}`);
+            }
+        }
+    }
+
+    return results;
+}
+

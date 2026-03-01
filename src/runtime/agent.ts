@@ -1,7 +1,7 @@
 import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type FunctionDeclaration } from './providers/gemini.js';
 import { OAIProvider } from './providers/oai-provider.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
-import { loadMemory, buildSystemPrompt, appendDailyLog } from '../memory/index.js';
+import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, searchMemoryFiles } from '../memory/index.js';
 import { loadSkills, buildSkillPrompt } from '../skills/loader.js';
 import { SessionStore } from '../memory/sessions.js';
 import { createLogger } from '../utils/logger.js';
@@ -89,11 +89,23 @@ export class Agent {
                 required: ['query'],
             },
             execute: async (args: Record<string, any>) => {
-                const results = this.sessionStore.searchMessages(args.query, 5);
-                if (results.length === 0) return 'No matching conversations found.';
-                return results.map((r, i) =>
-                    `[${i + 1}] Session: ${r.sessionTitle} | ${r.role}: ${r.content}`
-                ).join('\n\n');
+                // Search memory files (MEMORY.md, USER.md, etc.)
+                const memResults = searchMemoryFiles(this.config.memory.dir, args.query);
+                // Search past sessions
+                const sessionResults = this.sessionStore.searchMessages(args.query, 5);
+
+                const parts: string[] = [];
+                if (memResults.length > 0) {
+                    parts.push('**Memory Files:**\n' + memResults.map((r, i) => `[${i + 1}] ${r}`).join('\n'));
+                }
+                if (sessionResults.length > 0) {
+                    parts.push('**Past Conversations:**\n' + sessionResults.map((r, i) =>
+                        `[${i + 1}] Session: ${r.sessionTitle} | ${r.role}: ${r.content}`
+                    ).join('\n\n'));
+                }
+
+                if (parts.length === 0) return 'No matching results found in memory or past conversations.';
+                return parts.join('\n\n');
             },
         });
 
@@ -390,6 +402,10 @@ export class Agent {
                     appendDailyLog(this.config.memory.dir, `Processed message (${iterations} iterations, ${toolsUsed.length} tool calls)`);
 
                     log.info('Message processed', { iterations, toolsUsed: toolsUsed.length });
+
+                    // Auto-learn: extract facts from this exchange in the background
+                    this.extractMemoryAsync(userMessage, response.text, toolsUsed);
+
                     return { text: response.text, toolsUsed, iterations };
                 }
 
@@ -546,6 +562,9 @@ export class Agent {
                     // Auto-title: generate a short title after the first exchange
                     this.autoTitleIfNeeded(userMessage);
 
+                    // Auto-learn: extract facts from this exchange in the background
+                    this.extractMemoryAsync(userMessage, response.text, toolsUsed);
+
                     return { text: response.text, toolsUsed, iterations };
                 }
 
@@ -638,6 +657,63 @@ export class Agent {
                 }
             } catch (err: any) {
                 log.warn('Auto-title failed', { error: err.message });
+            }
+        })();
+    }
+
+    /**
+     * Extract facts from a conversation exchange and persist to MEMORY.md.
+     * Runs asynchronously in the background — does not block the response.
+     * Only triggers for substantial exchanges (tools used or long messages).
+     */
+    private extractMemoryAsync(userMessage: string, assistantResponse: string, toolsUsed: string[]): void {
+        // Only extract when the conversation was substantial
+        const isSubstantial = toolsUsed.length > 0 || userMessage.length > 100;
+        if (!isSubstantial) return;
+
+        const memoryDir = this.config.memory.dir;
+        const provider = this.provider;
+
+        (async () => {
+            try {
+                const extractPrompt = `Analyze this conversation exchange and extract any important facts worth remembering long-term. Focus on:
+- User preferences, habits, or personal details
+- Project names, tech stacks, or architecture decisions
+- Tool configurations or environment details
+- Recurring patterns or workflows
+
+USER: ${userMessage.slice(0, 500)}
+
+ASSISTANT: ${assistantResponse.slice(0, 500)}
+
+TOOLS USED: ${toolsUsed.join(', ') || 'none'}
+
+Respond with ONLY a bullet list of facts (one per line, starting with "- "). If there are no meaningful facts to extract, respond with "NONE".`;
+
+                const result = await provider.generateContent(
+                    'You are a fact extraction system. Extract only concrete, specific facts. Be concise. Never include opinions or speculation.',
+                    [{ role: 'user', parts: [{ text: extractPrompt }] }],
+                    []
+                );
+
+                const text = (result.text || '').trim();
+                if (text === 'NONE' || text.length < 5) return;
+
+                // Parse bullet points
+                const facts = text.split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line.startsWith('-') || line.startsWith('•') || line.startsWith('*'))
+                    .map(line => line.replace(/^[-•*]\s*/, '').trim())
+                    .filter(fact => fact.length >= 10);
+
+                if (facts.length === 0) return;
+
+                const appended = await appendFacts(memoryDir, facts);
+                if (appended > 0) {
+                    log.info(`Auto-learned ${appended} facts from conversation`);
+                }
+            } catch (err: any) {
+                log.debug('Memory extraction failed (non-critical)', { error: err.message });
             }
         })();
     }
