@@ -59,3 +59,15 @@ Facts, patterns, and knowledge curated by Alice over time.
 - User may need to check other filesystems or proceed with disk-intensive tasks
 - Monitoring includes checking for crashed dev servers and disk space warnings
 - Heartbeat checklist includes both standard monitoring and customizable reminders
+
+## Learned 2026-03-01
+- Assistant's name is Alice
+- Tool used: search_memory
+- User asked for their own name but it was not provided
+- Assistant offered assistance with directory issues or other tasks
+
+## Learned 2026-03-01
+- User's name not provided in user.md file
+- Assistant introduced itself as Alice
+- Tool "search_memory" was used to check user.md
+- User has not set their name in the system

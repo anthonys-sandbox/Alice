@@ -63,8 +63,8 @@ export class Agent {
         if (latest && latest.messageCount > 0) {
             this.currentSessionId = latest.id;
             const allMessages = this.sessionStore.loadMessages(latest.id);
-            // Cap to avoid exceeding model context window
-            const MAX_RESUME_MESSAGES = 50;
+            // Cap to avoid exceeding model context window — memory files carry long-term knowledge
+            const MAX_RESUME_MESSAGES = 10;
             if (allMessages.length > MAX_RESUME_MESSAGES) {
                 this.conversationHistory = allMessages.slice(-MAX_RESUME_MESSAGES);
                 log.warn('Session truncated for context window', { total: allMessages.length, kept: MAX_RESUME_MESSAGES });
@@ -265,22 +265,14 @@ export class Agent {
         });
 
         this.systemPrompt = [
-            `<instructions>`,
-            `You are Alice, a personal AI assistant. The sections below contain your identity, personality, information about your user, and your long-term memory.`,
-            `IMPORTANT: For personal questions (the user's name, preferences, past conversations, etc.), ALWAYS answer directly from the context below. Do NOT call tools like search_memory for information that is already present in your system prompt.`,
-            `Only use tools when the user asks you to DO something (run commands, read files, search the web) or when the answer genuinely requires external information not in your context.`,
-            `</instructions>`,
+            `You are Alice, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
             '',
             memoryPrompt,
-            skillPrompt,
-            `<system_info>`,
+            '',
             `Current date/time: ${currentDate}`,
             `Working directory: ${process.cwd()}`,
-            `Platform: ${process.platform} (${process.arch})`,
-            `</system_info>`,
-            '',
             `/no_think`,
-        ].filter(Boolean).join('\n\n');
+        ].filter(Boolean).join('\n');
 
         log.info('System prompt built', { chars: this.systemPrompt.length, estimatedTokens: Math.round(this.systemPrompt.length / 4) });
 
