@@ -1,5 +1,5 @@
 import * as cron from 'node-cron';
-import { loadMemory } from '../memory/index.js';
+import { loadMemory, consolidateMemory } from '../memory/index.js';
 import { createLogger } from '../utils/logger.js';
 import type { Agent } from '../runtime/agent.js';
 import type { GoogleChatAdapter } from '../channels/google-chat.js';
@@ -8,10 +8,12 @@ import type { AliceConfig } from '../utils/config.js';
 const log = createLogger('Heartbeat');
 
 let heartbeatTask: ReturnType<typeof cron.schedule> | null = null;
+let heartbeatCount = 0;
 
 /**
  * Start the heartbeat scheduler.
  * Reads HEARTBEAT.md and sends it to the agent at regular intervals.
+ * Every 3rd heartbeat, also consolidates memory files.
  */
 export function startHeartbeat(
     config: AliceConfig,
@@ -25,6 +27,7 @@ export function startHeartbeat(
 
     heartbeatTask = cron.schedule(cronExpr, async () => {
         log.info('Heartbeat triggered');
+        heartbeatCount++;
 
         try {
             // Reload memory to get latest HEARTBEAT.md
@@ -55,6 +58,17 @@ export function startHeartbeat(
             }
 
             log.info('Heartbeat complete', { toolsUsed: response.toolsUsed.length });
+
+            // Consolidate memory every 3rd heartbeat to keep profiles clean
+            if (heartbeatCount % 3 === 0) {
+                log.info('Running memory consolidation...');
+                const provider = agent.getProvider();
+                const result = await consolidateMemory(config.memory.dir, provider);
+                if (result.memoryChanged || result.userChanged) {
+                    agent.refreshContext();
+                    log.info('Memory consolidation refreshed context');
+                }
+            }
         } catch (err: any) {
             log.error('Heartbeat failed', { error: err.message });
         }

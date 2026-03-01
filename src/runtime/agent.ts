@@ -1,7 +1,7 @@
 import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type FunctionDeclaration } from './providers/gemini.js';
 import { OAIProvider } from './providers/oai-provider.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
-import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, searchMemoryFiles } from '../memory/index.js';
+import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, type MemoryUpdate } from '../memory/index.js';
 import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
 import { SessionStore } from '../memory/sessions.js';
 import { createLogger } from '../utils/logger.js';
@@ -55,6 +55,7 @@ export class Agent {
             this.provider = new OAIProvider({
                 model: config.ollama.model,
                 baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
+                fallbackModel: config.ollama.fallbackModel,
             });
         }
 
@@ -67,8 +68,8 @@ export class Agent {
         if (latest && latest.messageCount > 0) {
             this.currentSessionId = latest.id;
             const allMessages = this.sessionStore.loadMessages(latest.id);
-            // Cap to avoid exceeding model context window
-            const MAX_RESUME_MESSAGES = 50;
+            // Cap to avoid exceeding model context window — memory files carry long-term knowledge
+            const MAX_RESUME_MESSAGES = 10;
             if (allMessages.length > MAX_RESUME_MESSAGES) {
                 this.conversationHistory = allMessages.slice(-MAX_RESUME_MESSAGES);
                 log.warn('Session truncated for context window', { total: allMessages.length, kept: MAX_RESUME_MESSAGES });
@@ -306,15 +307,20 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
 </available_tools>`;
 
         this.systemPrompt = [
+            `You are Alice, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
+            '',
             memoryPrompt,
             skillPrompt,
             toolInventory,
             `<system_info>`,
             `Current date/time: ${currentDate}`,
             `Working directory: ${process.cwd()}`,
-            `Platform: ${process.platform} (${process.arch})`,
-            `</system_info>`,
-        ].filter(Boolean).join('\n\n');
+            '',
+            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, set_reminder, generate_image) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
+            `/no_think`,
+        ].filter(Boolean).join('\n');
+
+        log.info('System prompt built', { chars: this.systemPrompt.length, estimatedTokens: Math.round(this.systemPrompt.length / 4) });
 
         log.info('Context refreshed');
     }
@@ -326,8 +332,15 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
         let totalChars = 0;
         for (const msg of messages) {
             for (const part of msg.parts) {
-                if ('text' in part && part.text) totalChars += part.text.length;
-                else totalChars += JSON.stringify(part).length;
+                if ('text' in part && part.text) {
+                    totalChars += part.text.length;
+                } else if ('inlineData' in part) {
+                    // Images are sent as binary — don't count base64 chars as text tokens.
+                    // Vision models typically use ~500 tokens per image regardless of size.
+                    totalChars += 2000; // ~500 tokens × 4 chars/token
+                } else {
+                    totalChars += JSON.stringify(part).length;
+                }
             }
         }
         return Math.ceil(totalChars / 4);
@@ -589,6 +602,16 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
                 // Trim context if approaching token budget
                 this.trimContextIfNeeded();
 
+                // Dynamic model routing: use vision model ONLY when the latest user message has images
+                const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
+                const hasImages = lastUserMsg?.parts.some((p: any) => 'inlineData' in p) ?? false;
+                const oaiProvider = this.provider as any;
+                if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
+                    oaiProvider.setModel(this.config.ollama.visionModel);
+                } else if (!hasImages && oaiProvider.setModel) {
+                    oaiProvider.setModel(this.config.ollama?.model || 'qwen3:8b');
+                }
+
                 const response = await this.provider.generateContentStream!(
                     this.systemPrompt,
                     this.conversationHistory,
@@ -702,6 +725,84 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
     }
 
     /**
+     * Compact the conversation history by summarizing it into a condensed form.
+     * Preserves key context while freeing up context window space.
+     */
+    async compactSession(): Promise<string> {
+        if (this.conversationHistory.length < 4) {
+            return 'Session is already compact (fewer than 4 messages).';
+        }
+
+        try {
+            // Build a transcript of the conversation
+            const transcript = this.conversationHistory.map(msg => {
+                const text = msg.parts.map((p: any) => p.text || '[tool call]').join(' ');
+                return `${msg.role === 'user' ? 'USER' : 'ASSISTANT'}: ${text.slice(0, 300)}`;
+            }).join('\n');
+
+            const result = await this.provider.generateContent(
+                'You are a conversation summarizer. Create a concise summary. /no_think',
+                [{
+                    role: 'user',
+                    parts: [{
+                        text: `Summarize this conversation into key points. Be concise but preserve important context, decisions, and facts.\n\n${transcript.slice(0, 3000)}\n\nOutput a brief summary (2-4 sentences).`
+                    }]
+                }],
+                []
+            );
+
+            const summary = (result.text || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+            if (!summary || summary.length < 20) {
+                return 'Failed to generate summary.';
+            }
+
+            const beforeCount = this.conversationHistory.length;
+            // Replace history with a single context message
+            this.conversationHistory = [{
+                role: 'user',
+                parts: [{ text: `[COMPACTED SESSION CONTEXT]\n${summary}` }]
+            }, {
+                role: 'model',
+                parts: [{ text: 'Got it, I have the context from our previous conversation.' }]
+            }];
+
+            log.info('Session compacted', { before: beforeCount, after: 2, summaryLength: summary.length });
+            return `✅ Session compacted: ${beforeCount} messages → 2. Summary:\n\n${summary}`;
+        } catch (err: any) {
+            log.error('Session compaction failed', { error: err.message });
+            return `❌ Compaction failed: ${err.message}`;
+        }
+    }
+
+    /**
+     * Get session status info for /status command.
+     */
+    getStatus(): {
+        sessionId: string;
+        messageCount: number;
+        model: string;
+        fallbackModel?: string;
+        systemPromptChars: number;
+        estimatedTokens: number;
+        lastUsage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+    } {
+        const provider = this.provider as any;
+        return {
+            sessionId: this.currentSessionId,
+            messageCount: this.conversationHistory.length,
+            model: this.config.ollama.model,
+            fallbackModel: this.config.ollama.fallbackModel,
+            systemPromptChars: this.systemPrompt.length,
+            estimatedTokens: Math.round(this.systemPrompt.length / 4) +
+                this.conversationHistory.reduce((sum, msg) => {
+                    const text = msg.parts.map((p: any) => p.text || '').join('');
+                    return sum + Math.round(text.length / 4);
+                }, 0),
+            lastUsage: provider.lastUsage || undefined,
+        };
+    }
+
+    /**
      * Auto-generate a session title from the first user message.
      * Runs asynchronously in the background.
      */
@@ -746,37 +847,55 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable �
 
         (async () => {
             try {
-                const extractPrompt = `Analyze this conversation exchange and extract any important facts worth remembering long-term. Focus on:
-- User preferences, habits, or personal details
-- Project names, tech stacks, or architecture decisions
-- Tool configurations or environment details
-- Recurring patterns or workflows
+                const extractPrompt = `Analyze this conversation and extract facts to store in memory files.
+
+Route each fact to the correct file:
+- "user" → personal info, preferences, habits, name, birthday, work style
+- "memory" → project details, tech stacks, architecture decisions, workflows
+
+For each fact, specify an action:
+- "add" → new information
+- "update" → corrects/replaces existing info (include "match" to find the old text)
+- "remove" → info is no longer true (include "match" to find text to delete)
+
+For "user" file facts, specify a section: "About Anthony", "Preferences", or "Active Projects".
 
 USER: ${userMessage.slice(0, 500)}
-
 ASSISTANT: ${assistantResponse.slice(0, 500)}
 
-TOOLS USED: ${toolsUsed.join(', ') || 'none'}
-
-Respond with ONLY a bullet list of facts (one per line, starting with "- "). If there are no meaningful facts to extract, respond with "NONE".`;
+Respond with ONLY valid JSON (no markdown, no code fences). If nothing to extract, respond: {"updates":[]}
+Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","content":"fact here"},{"file":"memory","action":"add","content":"fact here"}]}`;
 
                 const result = await provider.generateContent(
-                    'You are a fact extraction system. Extract only concrete, specific facts. Be concise. Never include opinions or speculation.',
+                    'You are a JSON fact extraction system. Output only valid JSON. Be concise. /no_think',
                     [{ role: 'user', parts: [{ text: extractPrompt }] }],
                     []
                 );
 
                 const text = (result.text || '').trim();
-                if (text === 'NONE' || text.length < 5) return;
+                if (!text || text === 'NONE' || text.length < 10) return;
 
-                // Parse bullet points
-                const facts = text.split('\n')
-                    .map(line => line.trim())
-                    .filter(line => line.startsWith('-') || line.startsWith('•') || line.startsWith('*'))
-                    .map(line => line.replace(/^[-•*]\s*/, '').trim())
-                    .filter(fact => fact.length >= 10);
+                // Parse JSON response — try to extract JSON if wrapped in markdown
+                let jsonStr = text;
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (jsonMatch) jsonStr = jsonMatch[0];
 
-                if (facts.length === 0) return;
+                let parsed: { updates?: MemoryUpdate[] };
+                try {
+                    parsed = JSON.parse(jsonStr);
+                } catch {
+                    // Fallback: treat as bullet list for backward compat
+                    const facts = text.split('\n')
+                        .map(line => line.trim())
+                        .filter(line => line.startsWith('-') || line.startsWith('•') || line.startsWith('*'))
+                        .map(line => line.replace(/^[-•*]\s*/, '').trim())
+                        .filter(fact => fact.length >= 10);
+                    if (facts.length > 0) {
+                        const appended = await appendFacts(memoryDir, facts);
+                        if (appended > 0) log.info(`Auto-learned ${appended} facts (fallback)`);
+                    }
+                    return;
+                }
 
                 const appended = await appendFacts(memoryDir, facts);
                 if (appended > 0) {
@@ -805,6 +924,13 @@ Respond with ONLY a bullet list of facts (one per line, starting with "- "). If 
      */
     getSessionId(): string {
         return this.currentSessionId;
+    }
+
+    /**
+     * Get the LLM provider (for memory consolidation).
+     */
+    getProvider(): any {
+        return this.provider;
     }
 
     /**

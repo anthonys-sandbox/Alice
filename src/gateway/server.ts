@@ -2,6 +2,8 @@ import express from 'express';
 import { hostname } from 'os';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { readdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { join, resolve } from 'path';
 import { Agent } from '../runtime/agent.js';
 import { GoogleChatAdapter } from '../channels/google-chat.js';
 import { startHeartbeat, stopHeartbeat } from '../scheduler/heartbeat.js';
@@ -248,9 +250,12 @@ export class Gateway {
     // List memory files
     this.app.get('/api/memory', (_req, res) => {
       try {
-        const { readdirSync, readFileSync } = require('fs');
-        const { join } = require('path');
-        const dir = this.config.memory.dir;
+        const dir = resolve(this.config.memory.dir);
+        if (!existsSync(dir)) {
+          log.warn('Memory directory not found', { dir });
+          res.json({ files: [] });
+          return;
+        }
         const files = readdirSync(dir)
           .filter((f: string) => f.endsWith('.md'))
           .map((f: string) => ({
@@ -258,15 +263,16 @@ export class Gateway {
             content: readFileSync(join(dir, f), 'utf-8'),
           }));
         res.json({ files });
-      } catch { res.json({ files: [] }); }
+      } catch (err: any) {
+        log.error('Failed to load memory files', { error: err.message });
+        res.json({ files: [] });
+      }
     });
 
     // Update a memory file
     this.app.put('/api/memory/:name', (req, res) => {
       try {
-        const { writeFileSync } = require('fs');
-        const { join } = require('path');
-        const filePath = join(this.config.memory.dir, `${req.params.name}.md`);
+        const filePath = join(resolve(this.config.memory.dir), `${req.params.name}.md`);
         writeFileSync(filePath, req.body.content || '', 'utf-8');
         this.agent.refreshContext();
         res.json({ status: 'saved' });
@@ -313,6 +319,18 @@ export class Gateway {
           // Plain text message — no attachments
         }
 
+        // --- Chat command handling ---
+        const trimmed = text.trim().toLowerCase();
+        if (trimmed.startsWith('/')) {
+          const cmdResult = await this.handleChatCommand(trimmed);
+          if (cmdResult !== null) {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'done', text: cmdResult, toolsUsed: [], iterations: 0 }));
+            }
+            return;
+          }
+        }
+
         try {
           const response = await this.agent.processMessageStream(
             text,
@@ -341,6 +359,56 @@ export class Gateway {
         log.info('WebSocket client disconnected');
       });
     });
+  }
+
+  /**
+   * Handle chat commands (messages starting with /).
+   * Returns response string if handled, null if not a recognized command.
+   */
+  private async handleChatCommand(command: string): Promise<string | null> {
+    const cmd = command.split(/\s+/)[0];
+
+    switch (cmd) {
+      case '/status': {
+        const s = this.agent.getStatus();
+        const lines = [
+          '📊 **Session Status**',
+          `• Session: \`${s.sessionId.slice(0, 8)}...\``,
+          `• Messages: ${s.messageCount}`,
+          `• Model: ${s.model}` + (s.fallbackModel ? ` (fallback: ${s.fallbackModel})` : ''),
+          `• System prompt: ${s.systemPromptChars} chars`,
+          `• Est. context: ~${s.estimatedTokens} tokens`,
+        ];
+        if (s.lastUsage) {
+          lines.push(`• Last request: ${s.lastUsage.promptTokens} prompt + ${s.lastUsage.completionTokens} completion = ${s.lastUsage.totalTokens} tokens`);
+        }
+        return lines.join('\n');
+      }
+
+      case '/new':
+      case '/reset': {
+        this.agent.clearHistory();
+        this.agent.refreshContext();
+        return '🔄 Session reset. Fresh start!';
+      }
+
+      case '/compact': {
+        return await this.agent.compactSession();
+      }
+
+      case '/help': {
+        return [
+          '**Available Commands:**',
+          '• `/status` — Session info (model, tokens, messages)',
+          '• `/new` or `/reset` — Start a fresh session',
+          '• `/compact` — Summarize conversation to free context space',
+          '• `/help` — Show this help',
+        ].join('\n');
+      }
+
+      default:
+        return null; // Not a recognized command — pass to agent
+    }
   }
 
   /**
@@ -1108,6 +1176,35 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       color: var(--text-primary);
       border-color: var(--accent);
     }
+    /* ── Typing indicator ── */
+    .typing-indicator {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 12px 16px;
+    }
+    .typing-indicator .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-tertiary);
+      animation: typingBounce 1.4s ease-in-out infinite;
+    }
+    .typing-indicator .dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typingBounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+      30% { transform: translateY(-6px); opacity: 1; }
+    }
+    /* ── Mic recording state ── */
+    .mic-recording {
+      color: var(--error) !important;
+      animation: micPulse 1.5s ease-in-out infinite;
+    }
+    @keyframes micPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
   </style>
 </head>
 <body>
@@ -1185,6 +1282,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6l-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
         </button>
         <textarea id="input" placeholder="Message Alice…" autofocus autocomplete="off" rows="1"></textarea>
+        <button id="micBtn" class="attach-btn" title="Voice dictation" style="display:none;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        </button>
         <button id="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11zm7.318-19.539l-10.94 10.939"/></svg></button>
       </div>
       <input type="file" id="fileInput" accept="image/*,.pdf,.txt,.csv,.json,.md" multiple style="display:none;" />
@@ -1345,8 +1445,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       row.appendChild(avatar);
 
       const content = document.createElement('div');
-      content.className = 'msg-content';
-      content.innerHTML = '<div class="thinking"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
+      content.className = 'typing-indicator';
+      content.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
       row.appendChild(content);
 
       messages.appendChild(row);
@@ -1556,6 +1656,70 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       input.style.height = Math.min(input.scrollHeight, 160) + 'px';
     });
 
+    // ── Voice Dictation (Web Speech API) ──
+    const micBtn = document.getElementById('micBtn');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition && micBtn) {
+      micBtn.style.display = '';
+      let recognition = null;
+      let isListening = false;
+
+      micBtn.addEventListener('click', () => {
+        if (isListening) {
+          recognition.stop();
+          return;
+        }
+
+        recognition = new SpeechRecognition();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+
+        // Snapshot what's already in the input BEFORE dictation starts
+        const preExisting = input.value;
+        let finalTranscript = '';
+
+        recognition.onstart = () => {
+          isListening = true;
+          micBtn.classList.add('mic-recording');
+          micBtn.title = 'Stop dictation';
+        };
+
+        recognition.onresult = (event) => {
+          let interim = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript + ' ';
+            } else {
+              interim += event.results[i][0].transcript;
+            }
+          }
+          // Always rebuild from snapshot + accumulated transcript
+          const base = preExisting ? preExisting + ' ' : '';
+          input.value = base + finalTranscript + (interim ? interim + ' …' : '');
+          input.style.height = 'auto';
+          input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+        };
+
+        recognition.onend = () => {
+          isListening = false;
+          micBtn.classList.remove('mic-recording');
+          micBtn.title = 'Voice dictation';
+          // Clean up trailing ellipsis
+          input.value = input.value.replace(/\\s*…$/, '').trim();
+          input.focus();
+        };
+
+        recognition.onerror = (event) => {
+          console.warn('Speech recognition error:', event.error);
+          isListening = false;
+          micBtn.classList.remove('mic-recording');
+        };
+
+        recognition.start();
+      });
+    }
+
     // ── Sidebar ──────────────────────────
     const sidebar = document.getElementById('sidebar');
     const menuBtn = document.getElementById('menuBtn');
@@ -1588,10 +1752,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <h2>Hi, I’m Alice</h2>
           <p>Your personal AI agent. I can write code, search the web, manage files, and much more.</p>
           <div class="suggestions">
-            <button class="suggestion" data-msg="What tools do you have?">\ud83d\udee0\ufe0f What can you do?</button>
-            <button class="suggestion" data-msg="Show me the git status of this project">\ud83d\udcca Git status</button>
-            <button class="suggestion" data-msg="Search my memory for recent topics">\ud83e\udde0 Search memory</button>
-            <button class="suggestion" data-msg="Set a reminder in 5 minutes to take a break">\u23f0 Set reminder</button>
+            <button class="suggestion" data-msg="What tools do you have?"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></svg> What can you do?</button>
+            <button class="suggestion" data-msg="Show me the git status of this project"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg> Git status</button>
+            <button class="suggestion" data-msg="Search my memory for recent topics"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18V5m3 8a4.17 4.17 0 0 1-3-4a4.17 4.17 0 0 1-3 4m8.598-6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg> Search memory</button>
+            <button class="suggestion" data-msg="Set a reminder in 5 minutes to take a break"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Set reminder</button>
           </div>
         </div>\`;
       bindSuggestions();

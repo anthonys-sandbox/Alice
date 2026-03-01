@@ -7,13 +7,14 @@ export interface OAIProviderConfig {
     apiKey?: string;
     model: string;
     baseUrl: string;
+    fallbackModel?: string;
 }
 
 // ── Internal OpenAI-compatible types ──────────────────────────
 
 interface OAIMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
-    content?: string | null;
+    content?: string | Array<{ type: string; text?: string; image_url?: { url: string } }> | null;
     tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
     tool_call_id?: string;
 }
@@ -77,11 +78,31 @@ function toOAIMessages(messages: LLMMessage[]): OAIMessage[] {
                 }
             }
 
-            if (textParts.length > 0) {
-                out.push({
-                    role: 'user',
-                    content: textParts.map((p: any) => p.text).join(''),
-                });
+            // Check for image parts (inlineData)
+            const imageParts = msg.parts.filter((p: any) => 'inlineData' in p);
+
+            if (textParts.length > 0 || imageParts.length > 0) {
+                if (imageParts.length > 0) {
+                    // Use multi-part content array for vision messages
+                    const contentParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+                    for (const tp of textParts) {
+                        contentParts.push({ type: 'text', text: (tp as any).text });
+                    }
+                    for (const ip of imageParts) {
+                        const inline = (ip as any).inlineData;
+                        contentParts.push({
+                            type: 'image_url',
+                            image_url: { url: `data:${inline.mimeType};base64,${inline.data}` },
+                        });
+                    }
+                    out.push({ role: 'user', content: contentParts });
+                } else {
+                    // Text-only: use plain string (more compatible)
+                    out.push({
+                        role: 'user',
+                        content: textParts.map((p: any) => p.text).join(''),
+                    });
+                }
             }
         }
     }
@@ -123,12 +144,23 @@ export class OAIProvider {
     private apiKey: string | undefined;
     private model: string;
     private baseUrl: string;
+    private fallbackModel: string | undefined;
+    public lastUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | null = null;
 
     constructor(config: OAIProviderConfig) {
         this.apiKey = config.apiKey;
         this.model = config.model;
         this.baseUrl = config.baseUrl;
+        this.fallbackModel = config.fallbackModel;
         log.info('Initialized provider', { model: this.model, baseUrl: this.baseUrl });
+    }
+
+    /** Dynamically switch model (e.g., for vision requests) */
+    setModel(model: string): void {
+        if (model !== this.model) {
+            log.info('Switching model', { from: this.model, to: model });
+            this.model = model;
+        }
     }
 
     async generateContent(
@@ -156,6 +188,7 @@ export class OAIProvider {
         }
 
         const MAX_RETRIES = 3;
+        let activeModel = this.model;
 
         try {
             for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -181,10 +214,27 @@ export class OAIProvider {
 
                 if (!response.ok) {
                     const errText = await response.text();
+                    // If primary model failed and we have a fallback, try it
+                    if (this.fallbackModel && activeModel !== this.fallbackModel) {
+                        log.warn(`Primary model failed (${response.status}), trying fallback: ${this.fallbackModel}`);
+                        body.model = this.fallbackModel;
+                        activeModel = this.fallbackModel;
+                        continue; // retry with fallback
+                    }
                     throw new Error(`OAI API error ${response.status}: ${errText}`);
                 }
 
                 const data = await response.json() as any;
+
+                // Track token usage from Ollama
+                if (data.usage) {
+                    this.lastUsage = {
+                        promptTokens: data.usage.prompt_tokens || 0,
+                        completionTokens: data.usage.completion_tokens || 0,
+                        totalTokens: data.usage.total_tokens || 0,
+                    };
+                }
+
                 const choice = data.choices?.[0];
 
                 if (!choice) {
@@ -314,7 +364,12 @@ export class OAIProvider {
                         // Text content
                         if (delta.content) {
                             fullText += delta.content;
-                            onToken(delta.content);
+                            // Filter out qwen3 <think> blocks from user-visible stream
+                            if (!fullText.includes('<think>') || fullText.includes('</think>')) {
+                                // Only emit content after </think> if there was a think block
+                                const cleanContent = delta.content.replace(/<\/?think>/g, '');
+                                if (cleanContent) onToken(cleanContent);
+                            }
                         }
 
                         // Tool call deltas (accumulated across chunks)
@@ -336,6 +391,9 @@ export class OAIProvider {
             reader.releaseLock();
         }
 
+        // Clean qwen3 <think> blocks from the accumulated text
+        const cleanText = fullText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
         // Build response
         if (toolCallChunks.size > 0) {
             const functionCalls = Array.from(toolCallChunks.values()).map(tc => ({
@@ -344,13 +402,13 @@ export class OAIProvider {
             }));
 
             const rawParts: LLMPart[] = [];
-            if (fullText) rawParts.push({ text: fullText });
+            if (cleanText) rawParts.push({ text: cleanText });
             for (const fc of functionCalls) {
                 rawParts.push({ functionCall: { name: fc.name, args: fc.args } });
             }
 
             return {
-                text: fullText || null,
+                text: cleanText || null,
                 functionCalls: functionCalls.length > 0 ? functionCalls : null,
                 rawParts,
                 rawResponse: null,

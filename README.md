@@ -27,7 +27,9 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 - 💬 **Chat** via a slick web UI with streaming responses and syntax highlighting
 - 🔧 **Use tools** — read/write files, run shell commands, search the web, generate images, manage git repos
 - 🧠 **Remember** things about you across conversations using a markdown-based memory system
+- 👁️ **See images** — attach images and Alice automatically switches to a vision model to understand them
 - 📱 **Google Chat** — message Alice from your phone and she responds as a proper Chat app
+- 📲 **PWA** — install as an app on your phone or desktop for quick access
 - ⏰ **Reminders & file watchers** — schedule tasks with cron expressions or relative times
 - 💓 **Heartbeat** — periodic self-checks with reporting to Google Chat
 - 🦀 **Skills** — extend Alice with custom skill files
@@ -73,8 +75,11 @@ npm install
 # Start the Ollama service
 ollama serve
 
-# Pull a model (qwen3:8b is the default — great balance of speed & quality)
+# Pull the text model (default brain — great balance of speed & quality)
 ollama pull qwen3:8b
+
+# Pull the vision model (used automatically when images are attached)
+ollama pull qwen3-vl
 ```
 
 ### 3. Configure Environment
@@ -89,6 +94,7 @@ Edit `.env` with your settings:
 # Minimum viable config (Ollama only — no API keys needed!)
 CHAT_PROVIDER=ollama
 OLLAMA_MODEL=qwen3:8b
+OLLAMA_VISION_MODEL=qwen3-vl  # Auto-used when images are attached
 
 # For image generation, add a Gemini API key (free tier available)
 GEMINI_API_KEY=your_key_here  # Get from https://aistudio.google.com/apikey
@@ -233,7 +239,8 @@ Alice uses a layered configuration system:
 | `CHAT_PROVIDER` | `ollama` | LLM provider: `ollama` (local) or `gemini` (cloud) |
 | `GEMINI_API_KEY` | — | Gemini API key ([get one](https://aistudio.google.com/apikey)) |
 | `GEMINI_MODEL` | `gemini-3-flash-preview` | Gemini model name |
-| `OLLAMA_MODEL` | `qwen3:8b` | Ollama model name |
+| `OLLAMA_MODEL` | `qwen3:8b` | Ollama text model (reasoning + tool calling) |
+| `OLLAMA_VISION_MODEL` | `qwen3-vl` | Ollama vision model (auto-used when images attached) |
 | `OLLAMA_HOST` | `127.0.0.1` | Ollama server host |
 | `OLLAMA_PORT` | `11434` | Ollama server port |
 | `RELAY_SHEET_ID` | — | Google Sheet ID for Chat relay |
@@ -249,7 +256,7 @@ Alice uses a layered configuration system:
 ```json
 {
     "chatProvider": "ollama",
-    "ollama": { "model": "qwen3:8b" },
+    "ollama": { "model": "qwen3:8b", "visionModel": "qwen3-vl" },
     "gemini": { "model": "gemini-3-flash-preview" },
     "gateway": { "host": "0.0.0.0", "port": 18790 },
     "heartbeat": { "enabled": true, "intervalMinutes": 30 },
@@ -430,7 +437,7 @@ alice/
 ├── skills/                    # Custom skill definitions
 ├── scripts/
 │   └── apps-script-relay.js   # Google Chat Apps Script relay
-├── public/                    # Static assets (icons)
+├── public/                    # Static assets (icons, PWA manifest, service worker)
 ├── alice.config.json          # Project configuration
 ├── .env                       # Environment variables (secrets)
 └── com.gravityclaw.agent.plist # macOS launchd auto-start

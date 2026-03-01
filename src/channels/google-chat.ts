@@ -135,15 +135,37 @@ export class GoogleChatAdapter {
                 if (!this.agent || !text) continue;
 
                 let responseText: string;
-                try {
-                    const result = await this.agent.processMessage(text);
-                    const toolInfo = result.toolsUsed.length > 0
-                        ? `\n\n_Tools: ${result.toolsUsed.join(', ')} | Iterations: ${result.iterations}_`
-                        : '';
-                    responseText = formatForGoogleChat(result.text) + toolInfo;
-                } catch (err: any) {
-                    log.error('Error processing message', { error: err.message });
-                    responseText = `❌ Error: ${err.message}`;
+                const trimmedCmd = text.trim().toLowerCase();
+
+                // Handle chat commands
+                if (trimmedCmd.startsWith('/')) {
+                    const cmdResponse = await this.handleChatCommand(trimmedCmd);
+                    if (cmdResponse !== null) {
+                        responseText = formatForGoogleChat(cmdResponse);
+                    } else {
+                        // Unknown command — pass to agent
+                        try {
+                            const result = await this.agent.processMessage(text);
+                            const toolInfo = result.toolsUsed.length > 0
+                                ? `\n\n_Tools: ${result.toolsUsed.join(', ')} | Iterations: ${result.iterations}_`
+                                : '';
+                            responseText = formatForGoogleChat(result.text) + toolInfo;
+                        } catch (err: any) {
+                            log.error('Error processing message', { error: err.message });
+                            responseText = `❌ Error: ${err.message}`;
+                        }
+                    }
+                } else {
+                    try {
+                        const result = await this.agent.processMessage(text);
+                        const toolInfo = result.toolsUsed.length > 0
+                            ? `\n\n_Tools: ${result.toolsUsed.join(', ')} | Iterations: ${result.iterations}_`
+                            : '';
+                        responseText = formatForGoogleChat(result.text) + toolInfo;
+                    } catch (err: any) {
+                        log.error('Error processing message', { error: err.message });
+                        responseText = `❌ Error: ${err.message}`;
+                    }
                 }
 
                 // Write response back to the sheet (columns E and F of this row)
@@ -213,5 +235,44 @@ export class GoogleChatAdapter {
     async sendCard(title: string, subtitle: string, text: string): Promise<boolean> {
         const formatted = `*${title}*\n_${subtitle}_\n\n${text}`;
         return this.sendMessage(formatted);
+    }
+
+    /**
+     * Handle chat commands. Returns response string if handled, null otherwise.
+     */
+    private async handleChatCommand(command: string): Promise<string | null> {
+        if (!this.agent) return null;
+        const cmd = command.split(/\s+/)[0];
+
+        switch (cmd) {
+            case '/status': {
+                const s = this.agent.getStatus();
+                return [
+                    '📊 Session Status',
+                    `Session: ${s.sessionId.slice(0, 8)}...`,
+                    `Messages: ${s.messageCount}`,
+                    `Model: ${s.model}`,
+                    `System prompt: ${s.systemPromptChars} chars`,
+                    `Est. context: ~${s.estimatedTokens} tokens`,
+                ].join('\n');
+            }
+            case '/new':
+            case '/reset':
+                this.agent.clearHistory();
+                this.agent.refreshContext();
+                return '🔄 Session reset. Fresh start!';
+            case '/compact':
+                return await this.agent.compactSession();
+            case '/help':
+                return [
+                    'Available Commands:',
+                    '/status — Session info',
+                    '/new or /reset — Fresh session',
+                    '/compact — Summarize to free context',
+                    '/help — This help',
+                ].join('\n');
+            default:
+                return null;
+        }
     }
 }

@@ -18,3 +18,4 @@ com.gravityclaw.agent.plist
 
 # Service account key
 alice-chat-sa.json
+menubar/node_modules
