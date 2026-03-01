@@ -801,6 +801,13 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
     }
 
     /**
+     * Get the LLM provider (for memory consolidation).
+     */
+    getProvider(): any {
+        return this.provider;
+    }
+
+    /**
      * Get the current conversation history.
      */
     getHistory(): LLMMessage[] {

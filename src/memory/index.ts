@@ -356,3 +356,93 @@ export function searchMemoryFiles(memoryDir: string, query: string): string[] {
     return results;
 }
 
+/**
+ * Consolidate and refine memory files using the LLM.
+ * Removes duplicates, prunes stale info, and organizes facts into clean sections.
+ */
+export interface ConsolidationProvider {
+    generateContent(
+        systemInstruction: string,
+        messages: { role: string; parts: { text: string }[] }[],
+        functionDeclarations: any[]
+    ): Promise<{ text: string | null }>;
+}
+
+export async function consolidateMemory(
+    memoryDir: string,
+    provider: ConsolidationProvider
+): Promise<{ memoryChanged: boolean; userChanged: boolean }> {
+    while (memoryWriteLock) {
+        await new Promise(r => setTimeout(r, 50));
+    }
+    memoryWriteLock = true;
+    const result = { memoryChanged: false, userChanged: false };
+
+    try {
+        const memoryPath = join(memoryDir, 'MEMORY.md');
+        if (existsSync(memoryPath)) {
+            const raw = readFileSync(memoryPath, 'utf-8');
+            if (raw.length > 500) {
+                const out = await consolidateFile(provider, 'MEMORY.md', raw,
+                    'Rewrite as a clean knowledge base. Remove "Learned YYYY-MM-DD" headers, organize by topic. ' +
+                    'Remove tool-meta, stale disk stats, failed commands, duplicates. ' +
+                    'Sections: "## Technical Knowledge", "## Projects", "## Workflows". One bullet per fact.');
+                if (out && out !== raw) {
+                    writeFileSync(memoryPath, out, 'utf-8');
+                    result.memoryChanged = true;
+                    log.info('MEMORY.md consolidated', { before: raw.length, after: out.length });
+                }
+            }
+        }
+
+        const userPath = join(memoryDir, 'USER.md');
+        if (existsSync(userPath)) {
+            const raw = readFileSync(userPath, 'utf-8');
+            if (raw.length > 200) {
+                const out = await consolidateFile(provider, 'USER.md', raw,
+                    'Rewrite as a clean user profile. Sections: "## About Anthony", "## Preferences", "## Active Projects". ' +
+                    'Merge duplicates, remove placeholders. One bullet per fact.');
+                if (out && out !== raw) {
+                    writeFileSync(userPath, out, 'utf-8');
+                    result.userChanged = true;
+                    log.info('USER.md consolidated', { before: raw.length, after: out.length });
+                }
+            }
+        }
+    } catch (err: any) {
+        log.error('Memory consolidation failed', { error: err.message });
+    } finally {
+        memoryWriteLock = false;
+    }
+
+    if (result.memoryChanged || result.userChanged) {
+        log.info('Memory consolidation complete', result);
+    }
+    return result;
+}
+
+async function consolidateFile(
+    provider: ConsolidationProvider,
+    filename: string,
+    content: string,
+    instructions: string
+): Promise<string | null> {
+    try {
+        const prompt = `Current ${filename}:\n\n---\n${content}\n---\n\n${instructions}\n\nOutput ONLY the rewritten file. No code fences. Start with # heading.`;
+        const res = await provider.generateContent(
+            'You are a memory consolidation system. Output only the cleaned file content. /no_think',
+            [{ role: 'user', parts: [{ text: prompt }] }],
+            []
+        );
+        const text = (res.text || '').trim();
+        if (text.length < 50 || !text.startsWith('#')) {
+            log.warn(`Consolidation for ${filename} invalid`, { length: text.length });
+            return null;
+        }
+        return text + '\n';
+    } catch (err: any) {
+        log.error(`Consolidation failed for ${filename}`, { error: err.message });
+        return null;
+    }
+}
+
