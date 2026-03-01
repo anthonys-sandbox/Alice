@@ -265,6 +265,12 @@ export class Agent {
         });
 
         this.systemPrompt = [
+            `<instructions>`,
+            `You are Alice, a personal AI assistant. The sections below contain your identity, personality, information about your user, and your long-term memory.`,
+            `IMPORTANT: For personal questions (the user's name, preferences, past conversations, etc.), ALWAYS answer directly from the context below. Do NOT call tools like search_memory for information that is already present in your system prompt.`,
+            `Only use tools when the user asks you to DO something (run commands, read files, search the web) or when the answer genuinely requires external information not in your context.`,
+            `</instructions>`,
+            '',
             memoryPrompt,
             skillPrompt,
             `<system_info>`,
