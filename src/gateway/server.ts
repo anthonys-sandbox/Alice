@@ -731,6 +731,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     }
     .avatar.alice {
       background: transparent;
+      overflow: hidden;
+    }
+    .avatar.alice img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
     }
     .avatar.user-av {
       background: var(--user-bg);
@@ -1092,7 +1098,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       <button class="menu-btn" id="menuBtn" title="Toggle sidebar">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
       </button>
-      <div class="logo"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="alG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="24" cy="24" r="23" fill="url(#alG)"/><g fill="white"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(7 7) scale(1.15)"/><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(23 25) scale(0.51)"/></g></svg></div>
+      <div class="logo"><img src="/alice-icon-512.png" alt="Alice" width="36" height="36" style="border-radius:50%"></div>
       <h1>Alice</h1>
       <div class="status-badge" id="status">
         <span class="status-dot"></span>
@@ -1106,7 +1112,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     <div id="messages">
       <div class="welcome" id="welcome">
-        <div class="welcome-icon"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="awG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="24" cy="24" r="23" fill="url(#awG)"/><g fill="white"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(7 7) scale(1.15)"/><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(23 25) scale(0.51)"/></g></svg></div>
+        <div class="welcome-icon"><img src="/alice-icon-512.png" alt="Alice" style="width:80px;height:80px;border-radius:50%"></div>
         <h2>Hi, I’m Alice</h2>
         <p>Your personal AI agent. I can write code, search the web, manage files, and much more.</p>
         <div class="suggestions">
@@ -1136,7 +1142,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
   <script>
     // White SVG sparkle icon for avatars
-    const SPARKLE_SVG = '<svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="avG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="24" cy="24" r="23" fill="url(#avG)"/><g fill="white"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(7 7) scale(1.15)"/><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(23 25) scale(0.51)"/></g></svg>';
+    const SPARKLE_SVG = '<img src="/alice-icon-512.png" alt="Alice">';
 
     // Use marked-highlight extension for syntax highlighting
     if (typeof markedHighlight !== 'undefined') {
@@ -1519,7 +1525,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     function showWelcome() {
       messages.innerHTML = \`
         <div class="welcome" id="welcome">
-          <div class="welcome-icon"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="asG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="24" cy="24" r="23" fill="url(#asG)"/><g fill="white"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(7 7) scale(1.15)"/><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(23 25) scale(0.51)"/></g></svg></div>
+          <div class="welcome-icon"><img src="/alice-icon-512.png" alt="Alice" style="width:80px;height:80px;border-radius:50%"></div>
           <h2>Hi, I’m Alice</h2>
           <p>Your personal AI agent. I can write code, search the web, manage files, and much more.</p>
           <div class="suggestions">
