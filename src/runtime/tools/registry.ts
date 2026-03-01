@@ -601,6 +601,56 @@ export const gitBackupTool: ToolDefinition = {
 // Tool Registry
 // ============================================================
 
+// ============================================================
+// gemini_code — Gemini CLI for complex coding tasks
+// ============================================================
+
+const geminiCodeTool: ToolDefinition = {
+    name: 'gemini_code',
+    description: 'Delegate a complex coding task to the Gemini CLI agent. Use this for multi-file refactors, generating entire features, debugging complex issues, or any task that benefits from a dedicated coding agent with file access. The Gemini CLI will execute in the specified directory and can read/write files, run commands, etc.',
+    parameters: {
+        type: 'object',
+        properties: {
+            prompt: { type: 'string', description: 'The coding task description. Be specific about what files to change, what to implement, constraints, etc.' },
+            working_directory: { type: 'string', description: 'Working directory for the Gemini CLI. Defaults to current directory if not specified.' },
+        },
+        required: ['prompt'],
+    },
+    async execute(args: Record<string, any>) {
+        const prompt = args.prompt;
+        const cwd = args.working_directory || process.cwd();
+
+        try {
+            log.info('Delegating to Gemini CLI', { prompt: prompt.slice(0, 100), cwd });
+
+            const output = execSync(
+                `npx -y @google/gemini-cli --non-interactive "${prompt.replace(/"/g, '\\"')}"`,
+                {
+                    cwd,
+                    timeout: 5 * 60 * 1000, // 5 minute timeout
+                    encoding: 'utf-8',
+                    maxBuffer: 5 * 1024 * 1024, // 5MB output buffer
+                    env: { ...process.env },
+                }
+            );
+
+            // Truncate if too long to avoid bloating LLM context
+            const maxLen = 8000;
+            if (output.length > maxLen) {
+                return output.slice(0, maxLen) + `\n\n... [output truncated, ${output.length - maxLen} chars omitted]`;
+            }
+            return output || 'Gemini CLI completed (no output).';
+        } catch (err: any) {
+            if (err.stdout) {
+                // Command failed but produced output — return what we got
+                const output = err.stdout.toString().slice(0, 8000);
+                return `Gemini CLI completed with errors:\n\n${output}\n\nError: ${err.message}`;
+            }
+            return `Error running Gemini CLI: ${err.message}`;
+        }
+    },
+};
+
 const ALL_TOOLS: ToolDefinition[] = [
     readFileTool,
     writeFileTool,
@@ -610,6 +660,7 @@ const ALL_TOOLS: ToolDefinition[] = [
     webFetchTool,
     listDirectoryTool,
     generateImageTool,
+    geminiCodeTool,
     gitStatusTool,
     gitDiffTool,
     gitCommitTool,
