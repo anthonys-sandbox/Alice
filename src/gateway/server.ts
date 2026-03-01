@@ -1806,6 +1806,7 @@ function filterSessions(query) {
     }
     label.style.display = anyVisible ? '' : 'none';
   });
+}
 
 async function switchToSession(id) {
   showChatView();
