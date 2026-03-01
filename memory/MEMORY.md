@@ -12,3 +12,4 @@
 - Disk space: 23% utilization (10GiB used of 926GiB total) - safe
 - Dev servers: No critical crashes detected — ✅
 - Heartbeat check confirmed: Disk space at 23% (10GiB used of 926GiB total), no critical dev server crashes detected. System status: stable.
+- Disk space critical: /System/Volumes/Data at 96% capacity (862Gi used of 926Gi)

@@ -64,7 +64,7 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 ### 1. Clone & Install
 
 ```bash
-git clone https://github.com/anthonytackett/alice.git
+git clone git@github.com:anthonys-sandbox/Alice.git
 cd alice
 npm install
 ```
@@ -135,7 +135,7 @@ If you have a **Google AI Ultra** or **Google One AI Premium** subscription, you
    ```bash
    CHAT_PROVIDER=gemini
    GEMINI_AUTH=cli
-   GEMINI_MODEL=gemini-2.5-flash-preview-05-20
+   GEMINI_MODEL=gemini-3-flash-preview
    ```
 4. **Start Alice** — she'll automatically use your Ultra subscription quota
 
@@ -298,7 +298,7 @@ Alice uses a layered configuration system:
 
 ## Tools
 
-Alice has 16 built-in tools she can use during conversations:
+Alice has 17 built-in tools she can use during conversations:
 
 | Tool | Description |
 |---|---|
@@ -311,8 +311,7 @@ Alice has 16 built-in tools she can use during conversations:
 | `web_fetch` | Fetch and extract text from a URL |
 | `read_pdf` | Extract text from PDF files |
 | `generate_image` | Generate images with Gemini |
-| `browse_page` | Navigate and extract content from web pages |
-| `screenshot` | Take a screenshot of a web page |
+| `gemini_code` | Generate, modify, or explain code using Gemini |
 | `git_status` | Show git repository status |
 | `git_diff` | Show file diffs (staged or unstaged) |
 | `git_commit` | Stage and commit changes |
@@ -321,7 +320,18 @@ Alice has 16 built-in tools she can use during conversations:
 | `clipboard_read` | Read system clipboard |
 | `clipboard_write` | Write to system clipboard |
 
-Additionally, these are registered dynamically at startup:
+### Browser Tools (Puppeteer)
+
+These tools enable full browser automation:
+
+| Tool | Description |
+|---|---|
+| `browse_page` | Navigate to a URL and extract page content |
+| `screenshot` | Take a screenshot of the current browser page |
+| `click_element` | Click an element by CSS selector |
+| `type_text` | Type text into an input field |
+
+### Dynamic Tools (registered at startup)
 
 | Tool | Description |
 |---|---|
@@ -330,6 +340,7 @@ Additionally, these are registered dynamically at startup:
 | `cancel_reminder` | Cancel a scheduled reminder |
 | `list_reminders` | List all active reminders |
 | `watch_file` | Watch a file/directory for changes |
+| `install_skill` | Install a new skill from a directory |
 | `switch_persona` | Switch Alice's personality |
 
 ---
@@ -436,6 +447,29 @@ Open this URL on any device on the same Wi-Fi network to use the web UI from you
 
 ---
 
+## MCP (Model Context Protocol)
+
+Alice supports MCP servers for extended tool integrations. Configure them in `alice.config.json`:
+
+```json
+{
+    "mcp": {
+        "servers": [
+            {
+                "name": "my-server",
+                "command": "/path/to/mcp-server",
+                "args": ["--flag"],
+                "enabled": true
+            }
+        ]
+    }
+}
+```
+
+MCP tools are discovered automatically at startup and made available to the agent.
+
+---
+
 ## Project Structure
 
 ```
@@ -445,15 +479,19 @@ alice/
 │   ├── cli/index.ts           # CLI commands (start, chat, skills, doctor)
 │   ├── gateway/server.ts      # Express server, WebSocket, web UI
 │   ├── runtime/
-│   │   ├── agent.ts           # Core ReAct agentic loop
+│   │   ├── agent.ts           # Core ReAct agentic loop + model switcher
 │   │   ├── providers/
 │   │   │   ├── gemini.ts      # Gemini API provider (API key + CLI auth)
 │   │   │   ├── gemini-cli-auth.ts # Gemini CLI OAuth token manager
 │   │   │   ├── code-assist-client.ts # Code Assist API client (Ultra subscription)
 │   │   │   └── oai-provider.ts # OpenAI-compatible provider (Ollama/OpenRouter)
-│   │   └── tools/registry.ts  # Built-in tool definitions
+│   │   └── tools/
+│   │       ├── registry.ts    # Built-in tool definitions
+│   │       └── browser.ts     # Puppeteer browser automation tools
 │   ├── channels/
 │   │   └── google-chat.ts     # Google Chat adapter (Sheet polling)
+│   ├── mcp/
+│   │   └── client.ts          # MCP server manager
 │   ├── memory/
 │   │   ├── index.ts           # Memory file loader
 │   │   └── sessions.ts        # SQLite session store
