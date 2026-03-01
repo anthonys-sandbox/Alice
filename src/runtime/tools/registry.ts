@@ -80,7 +80,7 @@ export const generateImageTool: ToolDefinition = {
             writeFileSync(outputPath, Buffer.from(base64Data, 'base64'));
 
             log.info(`Image saved to ${outputPath}`);
-            return `Successfully generated image. File saved at: ${outputPath}\n\nNote: You can view this image by opening the file.`;
+            return `Image generated successfully!\n\n![${prompt}](/images/${fileName})\n\nSaved to: ${outputPath}`;
         } catch (err: any) {
             log.error('Image generation failed', { error: err.message });
             return `Error generating image: ${err.message}`;

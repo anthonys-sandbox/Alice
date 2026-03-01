@@ -25,6 +25,7 @@ export class Gateway {
     this.app = express();
     this.app.use(express.json());
     this.app.use(express.static('public'));
+    this.app.use('/images', express.static('generated_images'));
     this.server = createServer(this.app);
     this.wss = new WebSocketServer({ server: this.server });
     this.agent = new Agent(config);
@@ -801,6 +802,17 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .msg-content strong { color: var(--text-primary); }
     .msg-content a { color: var(--accent); text-decoration: none; }
     .msg-content a:hover { text-decoration: underline; }
+    .msg-content img {
+      max-width: 100%;
+      max-height: 400px;
+      border-radius: var(--shape-lg);
+      margin: 8px 0;
+      cursor: pointer;
+      transition: transform var(--duration-short) var(--motion-decelerate);
+    }
+    .msg-content img:hover {
+      transform: scale(1.02);
+    }
     .msg-content hr { border: none; border-top: 1px solid var(--border-subtle); margin: 16px 0; }
 
     /* ── Inline Code ────────────────── */
@@ -1521,6 +1533,14 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     menuBtn.addEventListener('click', toggleSidebar);
     sidebarOverlay.addEventListener('click', toggleSidebar);
+
+    // Click generated images to open full-size in new tab
+    messages.addEventListener('click', (e) => {
+      const img = e.target;
+      if (img.tagName === 'IMG' && img.closest('.msg-content')) {
+        window.open(img.src, '_blank');
+      }
+    });
 
     function showWelcome() {
       messages.innerHTML = \`
