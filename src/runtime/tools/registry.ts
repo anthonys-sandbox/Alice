@@ -473,7 +473,7 @@ export const webFetchTool: ToolDefinition = {
         const maxLen = args.max_length ?? 5000;
         try {
             const response = await fetch(args.url, {
-                headers: { 'User-Agent': 'Alice/1.0 (Personal AI Agent)' },
+                headers: { 'User-Agent': 'Toby/1.0 (Personal AI Agent)' },
                 signal: AbortSignal.timeout(15000),
             });
 

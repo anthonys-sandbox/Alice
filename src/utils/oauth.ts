@@ -105,7 +105,7 @@ async function interactiveLogin(oauth2Client: OAuth2Client): Promise<void> {
                     res.end(`
                         <html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;background:#1a1a2e;color:#e0e0e0;">
                         <div style="text-align:center">
-                            <h1>✨ Alice Authenticated!</h1>
+                            <h1>✨ ✨ Toby Authenticated!</h1>
                             <p>You can close this window and return to your terminal.</p>
                         </div>
                         </body></html>

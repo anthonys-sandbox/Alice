@@ -19,3 +19,6 @@ com.gravityclaw.agent.plist
 # Service account key
 alice-chat-sa.json
 menubar/node_modules
+
+# macOS system CA bundle (machine-specific, generated locally)
+system-ca.pem

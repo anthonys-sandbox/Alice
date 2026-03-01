@@ -31,7 +31,7 @@ interface OAITool {
 // ── Conversion helpers ────────────────────────────────────────
 
 /**
- * Convert Alice LLMMessage[] (Gemini format) → OpenAI messages.
+ * Convert Toby LLMMessage[] (Gemini format) → OpenAI messages.
  */
 function toOAIMessages(messages: LLMMessage[]): OAIMessage[] {
     const out: OAIMessage[] = [];
@@ -111,7 +111,7 @@ function toOAIMessages(messages: LLMMessage[]): OAIMessage[] {
 }
 
 /**
- * Convert Alice FunctionDeclaration[] → OpenAI tool format.
+ * Convert Toby FunctionDeclaration[] → OpenAI tool format.
  */
 function toOAITools(tools: FunctionDeclaration[]): OAITool[] {
     return tools.map(t => ({
@@ -391,9 +391,6 @@ export class OAIProvider {
             reader.releaseLock();
         }
 
-        // Clean qwen3 <think> blocks from the accumulated text
-        const cleanText = fullText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
         // Build response
         if (toolCallChunks.size > 0) {
             const functionCalls = Array.from(toolCallChunks.values()).map(tc => ({
@@ -401,14 +398,15 @@ export class OAIProvider {
                 args: JSON.parse(tc.arguments || '{}'),
             }));
 
+            const cleanedText = stripThinking(fullText);
             const rawParts: LLMPart[] = [];
-            if (cleanText) rawParts.push({ text: cleanText });
+            if (cleanedText) rawParts.push({ text: cleanedText });
             for (const fc of functionCalls) {
                 rawParts.push({ functionCall: { name: fc.name, args: fc.args } });
             }
 
             return {
-                text: cleanText || null,
+                text: cleanedText || null,
                 functionCalls: functionCalls.length > 0 ? functionCalls : null,
                 rawParts,
                 rawResponse: null,

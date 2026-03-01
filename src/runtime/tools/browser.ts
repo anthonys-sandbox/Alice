@@ -1,4 +1,3 @@
-import puppeteer, { Browser, Page } from 'puppeteer';
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { createLogger } from '../../utils/logger.js';
@@ -7,11 +6,13 @@ import type { ToolDefinition } from './registry.js';
 const log = createLogger('Browser');
 
 // ── Singleton browser session ─────────────────────────────────
-// Stays alive between tool calls so Alice can navigate, click,
+// Stays alive between tool calls so Toby can navigate, click,
 // type, and screenshot in sequence — like a real user.
 
-let browser: Browser | null = null;
-let page: Page | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let browser: any = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let page: any = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -25,9 +26,12 @@ function resetIdleTimer(): void {
     }, IDLE_TIMEOUT_MS);
 }
 
-async function getBrowser(): Promise<Browser> {
+async function getBrowser(): Promise<any> {
     if (!browser || !browser.connected) {
         log.info('Launching browser...');
+        // Dynamic import so puppeteer is only loaded when actually needed.
+        // Toby starts fine even if puppeteer/Chromium is not installed.
+        const { default: puppeteer } = await import('puppeteer');
         browser = await puppeteer.launch({
             headless: true,
             args: [
@@ -42,7 +46,7 @@ async function getBrowser(): Promise<Browser> {
     return browser;
 }
 
-async function getPage(): Promise<Page> {
+async function getPage(): Promise<any> {
     const b = await getBrowser();
     if (!page || page.isClosed()) {
         const pages = await b.pages();

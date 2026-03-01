@@ -181,7 +181,7 @@ export class Agent {
 
         registerTool({
             name: 'watch_file',
-            description: 'Start watching a file or directory for changes. Alice will be notified when changes occur.',
+            description: 'Start watching a file or directory for changes. Toby will be notified when changes occur.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -200,7 +200,7 @@ export class Agent {
         // Skill installation tool
         registerTool({
             name: 'install_skill',
-            description: 'Install a new skill for Alice from a git URL. The skill will be cloned, dependencies installed, and immediately available.',
+            description: 'Install a new skill for Toby from a git URL. The skill will be cloned, dependencies installed, and immediately available.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -223,7 +223,7 @@ export class Agent {
         // Persona switching tool
         registerTool({
             name: 'switch_persona',
-            description: 'Switch Alice\'s personality/persona. Available: "coding" (focused, technical), "research" (thorough, analytical), "casual" (friendly, conversational).',
+            description: 'Switch Toby\'s personality/persona. Available: "coding" (focused, technical), "research" (thorough, analytical), "casual" (friendly, conversational).',
             parameters: {
                 type: 'object',
                 properties: {
@@ -234,9 +234,9 @@ export class Agent {
             execute: async (args: Record<string, any>) => {
                 const persona = args.persona?.toLowerCase();
                 const personas: Record<string, string> = {
-                    coding: 'You are Alice in CODING mode. Be precise, technical, and action-oriented. Prefer showing code over explanation. Use tools eagerly. Skip pleasantries.',
-                    research: 'You are Alice in RESEARCH mode. Be thorough and analytical. Cite sources when possible. Consider multiple perspectives. Think step-by-step.',
-                    casual: 'You are Alice in CASUAL mode. Be warm, friendly, and conversational. Use emoji occasionally. Keep responses concise and approachable.',
+                    coding: 'You are Toby in CODING mode. Be precise, technical, and action-oriented. Prefer showing code over explanation. Use tools eagerly. Skip pleasantries.',
+                    research: 'You are Toby in RESEARCH mode. Be thorough and analytical. Cite sources when possible. Consider multiple perspectives. Think step-by-step.',
+                    casual: 'You are Toby in CASUAL mode. Be warm, friendly, and conversational. Use emoji occasionally. Keep responses concise and approachable.',
                 };
                 if (!personas[persona]) {
                     return `Unknown persona "${persona}". Available: ${Object.keys(personas).join(', ')}`;
@@ -307,7 +307,7 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable â
 </available_tools>`;
 
         this.systemPrompt = [
-            `You are Alice, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
+            `You are Toby, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
             '',
             memoryPrompt,
             skillPrompt,
@@ -351,8 +351,8 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable â
      * Keeps the most recent messages and compresses the rest into a summary.
      */
     private trimContextIfNeeded(): void {
-        // Token budget: qwen3:8b has 32K context, leave room for system prompt + response
-        const MAX_CONTEXT_TOKENS = 24000; // ~75% of 32K
+        // Token budget: Gemini 2.0 Flash has 1M context, leave generous room for system prompt + response
+        const MAX_CONTEXT_TOKENS = 24000; // Comfortable limit for fast responses
         const KEEP_RECENT = 20; // Always keep the last N messages
 
         const tokenEstimate = this.estimateTokens(this.conversationHistory);
@@ -410,11 +410,7 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable â
             parts: [{ text: userMessage }],
         });
 
-        // Ollama (qwen3 etc.) cannot reliably handle 30+ tools. Exclude MCP tools
-        // when using Ollama â€” they add 20+ extra entries and cause the model to lose
-        // track of all native tools. Gemini handles unlimited tools fine.
-        const mcpExcludePrefix = this.config.chatProvider === 'ollama' ? 'mcp_' : undefined;
-        const functionDeclarations = toGeminiFunctionDeclarations(mcpExcludePrefix);
+        const functionDeclarations = toGeminiFunctionDeclarations();
         const toolsUsed: string[] = [];
         let iterations = 0;
 
@@ -582,8 +578,7 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable â
             parts: userParts,
         });
 
-        const mcpExcludePrefix = this.config.chatProvider === 'ollama' ? 'mcp_' : undefined;
-        const functionDeclarations = toGeminiFunctionDeclarations(mcpExcludePrefix);
+        const functionDeclarations = toGeminiFunctionDeclarations();
         const toolsUsed: string[] = [];
         let iterations = 0;
         const startTime = Date.now();
@@ -602,15 +597,6 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable â
                 // Trim context if approaching token budget
                 this.trimContextIfNeeded();
 
-                // Dynamic model routing: use vision model ONLY when the latest user message has images
-                const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
-                const hasImages = lastUserMsg?.parts.some((p: any) => 'inlineData' in p) ?? false;
-                const oaiProvider = this.provider as any;
-                if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
-                    oaiProvider.setModel(this.config.ollama.visionModel);
-                } else if (!hasImages && oaiProvider.setModel) {
-                    oaiProvider.setModel(this.config.ollama?.model || 'qwen3:8b');
-                }
 
                 const response = await this.provider.generateContentStream!(
                     this.systemPrompt,
@@ -790,8 +776,8 @@ You have access to ALL of the following tools. NEVER say a tool is unavailable â
         return {
             sessionId: this.currentSessionId,
             messageCount: this.conversationHistory.length,
-            model: this.config.ollama.model,
-            fallbackModel: this.config.ollama.fallbackModel,
+            model: this.config.chatProvider === 'gemini' ? this.config.gemini.model : this.config.ollama.model,
+            fallbackModel: this.config.chatProvider === 'gemini' ? undefined : this.config.ollama.fallbackModel,
             systemPromptChars: this.systemPrompt.length,
             estimatedTokens: Math.round(this.systemPrompt.length / 4) +
                 this.conversationHistory.reduce((sum, msg) => {
@@ -897,20 +883,23 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
                     return;
                 }
 
-                const appended = await appendFacts(memoryDir, facts);
-                if (appended > 0) {
-                    log.info(`Auto-learned ${appended} facts from conversation`);
+                // Apply structured memory updates
+                if (parsed.updates && parsed.updates.length > 0) {
+                    const appended = await updateMemory(memoryDir, parsed.updates);
+                    if (appended > 0) {
+                        log.info(`Auto-learned ${appended} facts from conversation`);
 
-                    // Bridge facts into the shared SQLite DB so Mission Control can see them
-                    const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '_');
-                    let bridged = 0;
-                    for (let i = 0; i < facts.length; i++) {
-                        const key = `alice_learned_${dateStamp}_${Date.now()}_${i}`;
-                        const ok = await saveToGcDb(key, facts[i]);
-                        if (ok) bridged++;
-                    }
-                    if (bridged > 0) {
-                        log.info(`Bridged ${bridged} facts to GravityClaw SQLite`);
+                        // Bridge facts into the shared SQLite DB so Mission Control can see them
+                        const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '_');
+                        let bridged = 0;
+                        for (let i = 0; i < parsed.updates.length; i++) {
+                            const key = `toby_learned_${dateStamp}_${Date.now()}_${i}`;
+                            const ok = await saveToGcDb(key, parsed.updates[i].content || '');
+                            if (ok) bridged++;
+                        }
+                        if (bridged > 0) {
+                            log.info(`Bridged ${bridged} facts to GravityClaw SQLite`);
+                        }
                     }
                 }
             } catch (err: any) {

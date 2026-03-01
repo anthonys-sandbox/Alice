@@ -1,7 +1,7 @@
 /**
  * GravityClaw Integration Tools
  *
- * Bridges Alice to GravityClaw's SQLite memory database and connected services:
+ * Bridges Toby to GravityClaw's SQLite memory database and connected services:
  * - gc_memory_query  — search/read from GravityClaw SQLite
  * - gc_memory_save   — write key/value to GravityClaw SQLite
  * - gc_todoist       — Todoist task management
@@ -9,7 +9,7 @@
  * - gc_gmail_read    — Gmail message reading
  * - gc_github        — GitHub repo status and commits
  *
- * All tools are auto-registered in Alice's tool registry on import.
+ * All tools are auto-registered in Toby's tool registry on import.
  */
 
 import { resolve, join } from 'path';
@@ -131,7 +131,7 @@ registerTool({
 
 registerTool({
     name: 'gc_memory_save',
-    description: 'Save a memory to the GravityClaw SQLite database. Use this to persist important facts, decisions, or context that should be accessible across both Alice and GravityClaw.',
+    description: 'Save a memory to the GravityClaw SQLite database. Use this to persist important facts, decisions, or context that should be accessible across both Toby and GravityClaw.',
     parameters: {
         type: 'object',
         properties: {
@@ -214,7 +214,7 @@ registerTool({
             'Authorization': `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
         };
-        const base = 'https://api.todoist.com/rest/v2';
+        const base = 'https://api.todoist.com/api/v1';
 
         try {
             switch (args.action) {
@@ -224,11 +224,14 @@ registerTool({
                         : `${base}/tasks`;
                     const res = await fetch(url, { headers });
                     if (!res.ok) return `Todoist API error: ${res.status} ${res.statusText}`;
-                    const tasks: any[] = await res.json();
+                    const body: any = await res.json();
+                    // Todoist API v1 wraps results in { results: [...], next_cursor }
+                    const tasks: any[] = Array.isArray(body) ? body : (body.results ?? []);
                     if (tasks.length === 0) return 'No active tasks found.';
-                    const lines = tasks.slice(0, 30).map((t: any) =>
-                        `- [${t.id}] ${t.content}${t.due ? ` (due: ${t.due.string})` : ''}`
-                    );
+                    const lines = tasks.slice(0, 30).map((t: any) => {
+                        const due = t.due?.date || t.due?.datetime || t.deadline?.date || '';
+                        return `- [${t.id}] ${t.content}${due ? ` (due: ${due})` : ''}`;
+                    });
                     return `**Todoist Tasks** (${tasks.length} total):\n\n${lines.join('\n')}`;
                 }
                 case 'add': {
@@ -239,7 +242,8 @@ registerTool({
                     const res = await fetch(`${base}/tasks`, { method: 'POST', headers, body: JSON.stringify(body) });
                     if (!res.ok) return `Todoist API error: ${res.status} ${res.statusText}`;
                     const task: any = await res.json();
-                    return `✅ Task created: "${task.content}" (ID: ${task.id})${task.due ? ` — due ${task.due.string}` : ''}`;
+                    const due = task.due?.date || task.due?.datetime || '';
+                    return `✅ Task created: "${task.content}" (ID: ${task.id})${due ? ` — due ${due}` : ''}`;
                 }
                 case 'complete': {
                     if (!args.task_id) return 'Error: task_id is required for action=complete';
@@ -250,7 +254,8 @@ registerTool({
                 case 'projects': {
                     const res = await fetch(`${base}/projects`, { headers });
                     if (!res.ok) return `Todoist API error: ${res.status} ${res.statusText}`;
-                    const projects: any[] = await res.json();
+                    const body: any = await res.json();
+                    const projects: any[] = Array.isArray(body) ? body : (body.results ?? []);
                     const lines = projects.map((p: any) => `- [${p.id}] ${p.name}`);
                     return `**Todoist Projects** (${projects.length}):\n\n${lines.join('\n')}`;
                 }

@@ -13,7 +13,7 @@ const program = new Command();
 
 program
     .name('alice')
-    .description('✨ Alice — Your personal AI agent')
+    .description('✨ Toby — Your personal AI agent')
     .version('1.0.0');
 
 // ============================================================
@@ -21,7 +21,7 @@ program
 // ============================================================
 program
     .command('start')
-    .description('Start the Alice gateway server')
+    .description('Start the Toby gateway server')
     .option('-p, --port <number>', 'Gateway port', '18790')
     .option('--no-heartbeat', 'Disable the heartbeat scheduler')
     .action(async (opts) => {
@@ -32,7 +32,7 @@ program
 
         console.log(chalk.magenta(`
    ╔══════════════════════════════════════╗
-   ║       ✨  A  L  I  C  E            ║
+   ║        ✨  T  O  B  Y              ║
    ║     Personal AI Agent Runtime       ║
    ╚══════════════════════════════════════╝
     `));
@@ -42,7 +42,7 @@ program
 
         // Handle graceful shutdown
         const shutdown = async () => {
-            console.log(chalk.yellow('\n\nShutting down Alice...'));
+            console.log(chalk.yellow('\n\nShutting down Toby...'));
             await gateway.stop();
             process.exit(0);
         };
@@ -61,7 +61,7 @@ program
         setLogLevel('warn'); // Quiet mode for interactive chat
 
         console.log(chalk.magenta(`
-   ✨ Alice Interactive Chat
+   ✨ Toby Interactive Chat
    Type your message and press Enter. Type "exit" to quit.
    Type "clear" to reset conversation history.
     `));
@@ -91,7 +91,7 @@ program
                 console.log(chalk.gray('Thinking...'));
                 try {
                     const response = await agent.processMessage(trimmed);
-                    console.log(chalk.magenta('\n✨ Alice: ') + response.text);
+                    console.log(chalk.magenta('\n✨ Toby: ') + response.text);
                     if (response.toolsUsed.length > 0) {
                         console.log(chalk.gray(`   [Tools: ${response.toolsUsed.join(', ')} | Iterations: ${response.iterations}]`));
                     }
@@ -110,7 +110,7 @@ program
 // ============================================================
 const skillsCmd = program
     .command('skills')
-    .description('Manage Alice skills');
+    .description('Manage Toby skills');
 
 skillsCmd
     .command('list')
@@ -121,7 +121,7 @@ skillsCmd
 
         if (skills.length === 0) {
             console.log(chalk.yellow('No skills found.'));
-            console.log(chalk.gray('Add skills to ./skills/ or ~/.alice/skills/'));
+            console.log(chalk.gray('Add skills to ./skills/ or ~/.toby/skills/'));
             return;
         }
 
@@ -143,7 +143,7 @@ program
     .description('Run health diagnostics with live connectivity checks')
     .action(async () => {
         const config = loadConfig();
-        console.log(chalk.magenta('\n✨ Alice Health Check\n'));
+        console.log(chalk.magenta('\n✨ Toby Health Check\n'));
 
         // ── Config Checks ──
         const hasKey = !!config.gemini.apiKey;

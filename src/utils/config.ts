@@ -22,6 +22,12 @@ export interface AliceConfig {
         oauthClientSecret: string;
         serviceAccountKeyPath: string;
     };
+    telegram?: {
+        botToken: string;
+        allowedUserIds: Set<number>;
+        elevenLabsApiKey?: string;
+        elevenLabsVoiceId?: string;
+    };
     gateway: {
         host: string;
         port: number;
@@ -56,10 +62,10 @@ export interface AliceConfig {
 }
 
 const DEFAULTS: AliceConfig = {
-    chatProvider: 'ollama',
+    chatProvider: 'gemini',
     gemini: {
         apiKey: '',
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-2.0-flash',
     },
     ollama: {
         host: '127.0.0.1',
@@ -88,7 +94,7 @@ const DEFAULTS: AliceConfig = {
     skills: {
         dirs: [
             './skills',
-            join(homedir(), '.alice', 'skills'),
+            join(homedir(), '.toby', 'skills'),
         ],
     },
     agent: {
@@ -145,6 +151,25 @@ export function loadConfig(projectDir?: string): AliceConfig {
         } catch {
             // Malformed JSON — ignore and use defaults (no MCP servers)
         }
+    }
+
+    // Telegram
+    if (process.env.TELEGRAM_BOT_TOKEN) {
+        const rawIds = process.env.TELEGRAM_ALLOWED_USER_IDS || '';
+        const allowedUserIds = new Set<number>(
+            rawIds
+                .split(',')
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .map((s) => parseInt(s, 10))
+                .filter((n) => !isNaN(n)),
+        );
+        config.telegram = {
+            botToken: process.env.TELEGRAM_BOT_TOKEN,
+            allowedUserIds,
+            elevenLabsApiKey: process.env.ELEVENLABS_API_KEY,
+            elevenLabsVoiceId: process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM',
+        };
     }
 
     return config;

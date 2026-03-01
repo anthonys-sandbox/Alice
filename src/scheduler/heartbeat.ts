@@ -3,6 +3,7 @@ import { loadMemory, consolidateMemory } from '../memory/index.js';
 import { createLogger } from '../utils/logger.js';
 import type { Agent } from '../runtime/agent.js';
 import type { GoogleChatAdapter } from '../channels/google-chat.js';
+import type { TelegramAdapter } from '../channels/telegram.js';
 import type { AliceConfig } from '../utils/config.js';
 
 const log = createLogger('Heartbeat');
@@ -18,7 +19,8 @@ let heartbeatCount = 0;
 export function startHeartbeat(
     config: AliceConfig,
     agent: Agent,
-    chat: GoogleChatAdapter
+    chat: GoogleChatAdapter,
+    telegram?: TelegramAdapter,
 ): void {
     const minutes = config.heartbeat.intervalMinutes;
     const cronExpr = `*/${minutes} * * * *`;
@@ -53,8 +55,12 @@ export function startHeartbeat(
                 await chat.sendCard(
                     '💓 Heartbeat Report',
                     new Date().toLocaleString(),
-                    response.text
+                    response.text,
                 );
+                // Also broadcast to Telegram if configured
+                if (telegram) {
+                    await telegram.broadcast(`💓 *Heartbeat Report*\n${new Date().toLocaleString()}\n\n${response.text}`);
+                }
             }
 
             log.info('Heartbeat complete', { toolsUsed: response.toolsUsed.length });

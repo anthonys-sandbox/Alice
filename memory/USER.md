@@ -14,6 +14,13 @@
 - **GravityClaw** — Main AI agent project (TypeScript/Node.js Telegram bot + Mission Control dashboard)
 - **Alice** — Local LLM controller agent (this system), integrated into GravityClaw as Mission Control controller
 - **Mission Control** — Next.js dashboard at `GravityClaw/mission-control/`, port 3000
+- Product Team Email (due: 2026-03-06)
+- Business Context Slides (due: 2026-02-26)
+- Send Forrester (Laura) a slide deck of org planning and overview (due: 2026-03-02)
+- Review IDPs (due: 2026-03-04)
+- STIBO and ES Share (due: 2026-02-20)
+- AI KPI Form (due: 2026-02-23)
+- Matteo BP, Ariff Connect, Retool (due: 2026-02-23)
 
 ## Service Accounts
 
