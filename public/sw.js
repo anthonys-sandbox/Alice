@@ -39,6 +39,9 @@ self.addEventListener('fetch', (event) => {
     // Skip non-GET requests and WebSocket upgrades
     if (event.request.method !== 'GET') return;
 
+    // Only handle http/https — skip chrome-extension://, etc.
+    if (!url.protocol.startsWith('http')) return;
+
     // API calls: network only (real-time data)
     if (url.pathname.startsWith('/api/')) return;
 
