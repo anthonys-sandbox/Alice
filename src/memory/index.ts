@@ -58,6 +58,10 @@ function loadFile(dir: string, filename: string): MemoryFile | null {
 /**
  * Build the system prompt from memory files.
  * This is injected into the LLM context at the start of each conversation.
+ *
+ * Note: /no_think is appended for Qwen3 compatibility — it disables the extended
+ * thinking (<think>...</think>) block that otherwise causes the model to exhaust
+ * its token budget before producing a response.
  */
 export function buildSystemPrompt(memory: MemoryState): string {
     const sections: string[] = [];
@@ -77,6 +81,10 @@ export function buildSystemPrompt(memory: MemoryState): string {
     if (memory.memory?.content) {
         sections.push(`<long_term_memory>\n${memory.memory.content}\n</long_term_memory>`);
     }
+
+    // /no_think disables Qwen3's extended thinking mode — without this, qwen3:8b
+    // generates a massive <think> block that often exhausts max_tokens before answering.
+    sections.push('/no_think');
 
     return sections.join('\n\n');
 }

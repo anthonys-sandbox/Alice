@@ -20,5 +20,15 @@
     },
     "logging": {
         "level": "info"
+    },
+    "mcp": {
+        "servers": [
+            {
+                "name": "notebooklm",
+                "command": "/Users/TylerBarnes/.local/bin/notebooklm-mcp",
+                "args": [],
+                "enabled": true
+            }
+        ]
     }
 }

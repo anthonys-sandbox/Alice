@@ -129,6 +129,18 @@ export function loadConfig(projectDir?: string): AliceConfig {
     if (process.env.HEARTBEAT_INTERVAL) config.heartbeat.intervalMinutes = parseInt(process.env.HEARTBEAT_INTERVAL, 10);
     if (process.env.LOG_LEVEL) config.logging.level = process.env.LOG_LEVEL as AliceConfig['logging']['level'];
 
+    // MCP servers — parsed from JSON array in MCP_SERVERS env var
+    if (process.env.MCP_SERVERS) {
+        try {
+            const parsed = JSON.parse(process.env.MCP_SERVERS);
+            if (Array.isArray(parsed)) {
+                config.mcp.servers = parsed;
+            }
+        } catch {
+            // Malformed JSON — ignore and use defaults (no MCP servers)
+        }
+    }
+
     return config;
 }
 

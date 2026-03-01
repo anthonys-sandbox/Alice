@@ -8,6 +8,10 @@ import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
 import { join } from 'path';
 
+// Auto-register GravityClaw integration tools (SQLite, JIRA, Gmail, Todoist, GitHub)
+import '../tools/gravityclaw-tools.js';
+import { saveToGcDb } from '../tools/gravityclaw-tools.js';
+
 const log = createLogger('Agent');
 
 /** Both providers expose the same generateContent signature. */
@@ -264,9 +268,47 @@ export class Agent {
             timeStyle: 'short',
         });
 
+        // Explicit tool inventory — local models (qwen3, llama3, etc.) sometimes lose track
+        // of which tools are available when given 20+ tools via the API. Listing them in the
+        // system prompt ensures the model always knows what it can call.
+        const toolInventory = `<available_tools>
+You have access to ALL of the following tools. NEVER say a tool is unavailable — if you need one, call it.
+
+## File & Code Tools
+- read_file, write_file, edit_file — read/write/patch files
+- bash — run any shell command
+- list_directory — list folder contents
+- read_pdf — extract text from PDFs
+
+## Web Tools
+- web_search, web_fetch — search web and read pages
+
+## Git Tools
+- git_status, git_diff, git_commit, git_log, git_backup
+
+## GravityClaw Integration Tools (ALWAYS AVAILABLE)
+- gc_todoist — Todoist task management: list, add, complete tasks, list projects
+- gc_jira — JIRA: search, get issues, comment, my_issues, projects
+- gc_gmail_read — Gmail: list, search, read emails
+- gc_github — GitHub: repos, commits, issues, pull requests
+- gc_memory_query — search GravityClaw SQLite memory
+- gc_memory_save — save facts to GravityClaw SQLite
+
+## Memory Tools
+- search_memory — search past conversations and memory files
+
+## Scheduler Tools
+- set_reminder, cancel_reminder, list_reminders, watch_file
+
+## Other Tools
+- generate_image, clipboard_read, clipboard_write
+- install_skill, switch_persona, gemini_code
+</available_tools>`;
+
         this.systemPrompt = [
             memoryPrompt,
             skillPrompt,
+            toolInventory,
             `<system_info>`,
             `Current date/time: ${currentDate}`,
             `Working directory: ${process.cwd()}`,
@@ -355,7 +397,11 @@ export class Agent {
             parts: [{ text: userMessage }],
         });
 
-        const functionDeclarations = toGeminiFunctionDeclarations();
+        // Ollama (qwen3 etc.) cannot reliably handle 30+ tools. Exclude MCP tools
+        // when using Ollama — they add 20+ extra entries and cause the model to lose
+        // track of all native tools. Gemini handles unlimited tools fine.
+        const mcpExcludePrefix = this.config.chatProvider === 'ollama' ? 'mcp_' : undefined;
+        const functionDeclarations = toGeminiFunctionDeclarations(mcpExcludePrefix);
         const toolsUsed: string[] = [];
         let iterations = 0;
 
@@ -523,7 +569,8 @@ export class Agent {
             parts: userParts,
         });
 
-        const functionDeclarations = toGeminiFunctionDeclarations();
+        const mcpExcludePrefix = this.config.chatProvider === 'ollama' ? 'mcp_' : undefined;
+        const functionDeclarations = toGeminiFunctionDeclarations(mcpExcludePrefix);
         const toolsUsed: string[] = [];
         let iterations = 0;
         const startTime = Date.now();
@@ -734,6 +781,18 @@ Respond with ONLY a bullet list of facts (one per line, starting with "- "). If 
                 const appended = await appendFacts(memoryDir, facts);
                 if (appended > 0) {
                     log.info(`Auto-learned ${appended} facts from conversation`);
+
+                    // Bridge facts into the shared SQLite DB so Mission Control can see them
+                    const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '_');
+                    let bridged = 0;
+                    for (let i = 0; i < facts.length; i++) {
+                        const key = `alice_learned_${dateStamp}_${Date.now()}_${i}`;
+                        const ok = await saveToGcDb(key, facts[i]);
+                        if (ok) bridged++;
+                    }
+                    if (bridged > 0) {
+                        log.info(`Bridged ${bridged} facts to GravityClaw SQLite`);
+                    }
                 }
             } catch (err: any) {
                 log.debug('Memory extraction failed (non-critical)', { error: err.message });

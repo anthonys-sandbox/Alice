@@ -733,9 +733,14 @@ export async function executeTool(name: string, args: Record<string, any>): Prom
 
 /**
  * Convert tools to Gemini function declarations format.
+ * @param excludePrefix - Optional prefix: tools whose names start with this are excluded.
+ *                        Use 'mcp_' when targeting Ollama to avoid overwhelming small models.
  */
-export function toGeminiFunctionDeclarations() {
-    return ALL_TOOLS.map(tool => ({
+export function toGeminiFunctionDeclarations(excludePrefix?: string) {
+    const tools = excludePrefix
+        ? ALL_TOOLS.filter(t => !t.name.startsWith(excludePrefix))
+        : ALL_TOOLS;
+    return tools.map(tool => ({
         name: tool.name,
         description: tool.description,
         parameters: tool.parameters,
