@@ -563,13 +563,16 @@ export class Agent {
                 this.trimContextIfNeeded();
 
                 // Dynamic model routing: use vision model ONLY when the latest user message has images
-                const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
-                const hasImages = lastUserMsg?.parts.some((p: any) => 'inlineData' in p) ?? false;
-                const oaiProvider = this.provider as any;
-                if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
-                    oaiProvider.setModel(this.config.ollama.visionModel);
-                } else if (!hasImages && oaiProvider.setModel) {
-                    oaiProvider.setModel(this.config.ollama?.model || 'qwen3:8b');
+                // Only applies to Ollama — other providers handle vision natively
+                if (this.activeProvider === 'ollama') {
+                    const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
+                    const hasImages = lastUserMsg?.parts.some((p: any) => 'inlineData' in p) ?? false;
+                    const oaiProvider = this.provider as any;
+                    if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
+                        oaiProvider.setModel(this.config.ollama.visionModel);
+                    } else if (!hasImages && oaiProvider.setModel) {
+                        oaiProvider.setModel(this.config.ollama?.model || 'qwen3:8b');
+                    }
                 }
 
                 const response = await this.provider.generateContentStream!(
