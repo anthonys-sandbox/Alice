@@ -1071,7 +1071,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .input-row {
       display: flex;
       align-items: center;
-      padding: 4px 8px 4px 16px;
+      padding: 6px 8px 2px 12px;
     }
     .attach-btn {
       background: transparent;
@@ -1210,15 +1210,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     }
     .model-cap-icon svg { width: 14px; height: 14px; }
     .attach-preview {
-      max-width: var(--max-width);
-      margin: 0 auto 8px;
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
-      padding: 8px 12px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--shape-lg);
+      padding: 10px 12px 6px;
+      border-bottom: 1px solid rgba(207,188,255,0.06);
     }
     .attach-thumb {
       position: relative;
@@ -1441,8 +1437,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     </div>
 
     <div class="input-wrapper">
-      <div id="attachPreview" class="attach-preview" style="display:none;"></div>
       <div class="input-container">
+        <div id="attachPreview" class="attach-preview" style="display:none;"></div>
         <div class="input-row">
         <button id="attachBtn" class="attach-btn" title="Attach file">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6l-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
