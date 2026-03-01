@@ -206,6 +206,32 @@ export class Gateway {
       res.json({ status: 'deleted', currentId: this.agent.getSessionId() });
     });
 
+    // Export a session as markdown
+    this.app.get('/api/sessions/:id/export', (req, res) => {
+      try {
+        const messages = this.agent.getSessionMessages(req.params.id);
+        const sessions = this.agent.listSessions();
+        const session = sessions.find((s: any) => s.id === req.params.id);
+        const title = session?.title || 'Untitled';
+        const date = session?.createdAt || new Date().toISOString();
+
+        let md = `# ${title}\n\n*Exported: ${new Date().toLocaleString()}*\n*Created: ${date}*\n\n---\n\n`;
+        for (const m of messages) {
+          const role = m.role === 'user' ? '**You**' : '**Alice**';
+          const text = m.parts?.map((p: any) => p.text || '').join('') || '';
+          if (text.trim()) {
+            md += `### ${role}\n\n${text.trim()}\n\n---\n\n`;
+          }
+        }
+
+        res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${title.replace(/[^a-zA-Z0-9]/g, '_')}.md"`);
+        res.send(md);
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // ── Dashboard API ──────────────────────────────
     // List all tools
     this.app.get('/api/tools', async (_req, res) => {
@@ -1110,6 +1136,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       </div>
     </div>
     <div class="sidebar-group-label" style="margin-top:4px">Conversations</div>
+    <div style="padding:0 12px 8px">
+      <input type="text" id="sessionSearch" placeholder="Search conversations…" style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:13px;outline:none;" />
+    </div>
     <div class="sidebar-list" id="sessionList"></div>
   </aside>
   <div class="sidebar-overlay" id="sidebarOverlay"></div>
@@ -1584,6 +1613,17 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     sidebarNewChat.addEventListener('click', startNewChat);
     document.getElementById('newChatBtn').addEventListener('click', startNewChat);
 
+    // Session search filtering
+    document.getElementById('sessionSearch').addEventListener('input', (e) => {
+      const query = e.target.value.trim().toLowerCase();
+      if (!query) {
+        // Show all items when search is cleared
+        sessionList.querySelectorAll('.sidebar-item, .sidebar-group-label').forEach(el => el.style.display = '');
+      } else {
+        filterSessions(query);
+      }
+    });
+
     // Dashboard nav items
     const dashboardView = document.getElementById('dashboardView');
     function showChatView() {
@@ -1707,7 +1747,10 @@ function renderSessions(sessions, activeId) {
       const title = (s.title || 'Untitled').replace(/</g, '&lt;');
       html += '<div class="sidebar-item' + active + '" data-id="' + s.id + '">'
         + '<span class="sidebar-item-title">' + title + '</span>'
+        + '<div style="display:flex;gap:2px;align-items:center;">'
+        + '<button class="sidebar-item-export" data-id="' + s.id + '" title="Export as Markdown" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:2px 4px;font-size:13px;opacity:0.6;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">⬇</button>'
         + '<button class="sidebar-item-delete" data-id="' + s.id + '" title="Delete">\u00d7</button>'
+        + '</div>'
         + '</div>';
     });
   }
@@ -1732,7 +1775,37 @@ function renderSessions(sessions, activeId) {
       deleteSessionById(btn.dataset.id);
     });
   });
+  sessionList.querySelectorAll('.sidebar-item-export').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.open('/api/sessions/' + btn.dataset.id + '/export', '_blank');
+    });
+  });
+
+  // Apply current search filter if any
+  const searchInput = document.getElementById('sessionSearch');
+  if (searchInput && searchInput.value.trim()) {
+    filterSessions(searchInput.value.trim().toLowerCase());
+  }
 }
+
+function filterSessions(query) {
+  const items = sessionList.querySelectorAll('.sidebar-item');
+  const labels = sessionList.querySelectorAll('.sidebar-group-label');
+  items.forEach(item => {
+    const title = item.querySelector('.sidebar-item-title')?.textContent?.toLowerCase() || '';
+    item.style.display = title.includes(query) ? '' : 'none';
+  });
+  // Hide group labels if all items in that group are hidden
+  labels.forEach(label => {
+    let next = label.nextElementSibling;
+    let anyVisible = false;
+    while (next && !next.classList.contains('sidebar-group-label')) {
+      if (next.style.display !== 'none') anyVisible = true;
+      next = next.nextElementSibling;
+    }
+    label.style.display = anyVisible ? '' : 'none';
+  });
 
 async function switchToSession(id) {
   showChatView();
