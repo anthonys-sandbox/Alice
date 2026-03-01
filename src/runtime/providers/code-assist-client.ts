@@ -19,8 +19,42 @@ const log = createLogger('CodeAssist');
 const CODE_ASSIST_ENDPOINT = process.env['CODE_ASSIST_ENDPOINT'] || 'https://cloudcode-pa.googleapis.com';
 const CODE_ASSIST_API_VERSION = process.env['CODE_ASSIST_API_VERSION'] || 'v1internal';
 
+/** Minimum delay between consecutive API requests (ms) */
+const MIN_REQUEST_INTERVAL_MS = 2000;
+/** Maximum retries for 429 rate limit errors */
+const MAX_RATE_LIMIT_RETRIES = 3;
+
 /** Cached project ID from loadCodeAssist */
 let cachedProjectId: string | null = null;
+/** Timestamp of the last API request */
+let lastRequestTime = 0;
+
+/**
+ * Enforce minimum spacing between API requests to avoid burst rate limits.
+ */
+async function throttle(): Promise<void> {
+    const now = Date.now();
+    const elapsed = now - lastRequestTime;
+    if (elapsed < MIN_REQUEST_INTERVAL_MS) {
+        const waitMs = MIN_REQUEST_INTERVAL_MS - elapsed;
+        log.debug(`Throttling request, waiting ${waitMs}ms`);
+        await new Promise(r => setTimeout(r, waitMs));
+    }
+    lastRequestTime = Date.now();
+}
+
+/**
+ * Parse the wait time from a 429 error message.
+ * Looks for patterns like "quota will reset after 24s" or "reset after 6s".
+ * Returns wait time in ms, or null if not parseable.
+ */
+function parseRateLimitWait(errorText: string): number | null {
+    const match = errorText.match(/reset after (\d+)s/i);
+    if (match) {
+        return (parseInt(match[1], 10) + 1) * 1000; // Add 1s buffer
+    }
+    return null;
+}
 
 /**
  * Get the base URL for Code Assist API calls.
@@ -36,23 +70,40 @@ async function codeAssistPost(method: string, body: any, signal?: AbortSignal): 
     const token = await getAccessToken();
     if (!token) throw new Error('No CLI OAuth token available');
 
-    const url = `${getBaseUrl()}:${method}`;
-    const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-        signal,
-    });
+    await throttle();
 
-    if (!resp.ok) {
+    const url = `${getBaseUrl()}:${method}`;
+
+    for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify(body),
+            signal,
+        });
+
+        if (resp.ok) {
+            return resp.json();
+        }
+
         const errText = await resp.text();
+
+        if (resp.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+            const parsedWait = parseRateLimitWait(errText);
+            const waitMs = parsedWait || (Math.pow(2, attempt + 1) * 2000); // Fallback: 4s, 8s, 16s
+            log.warn(`Rate limited (${method}), waiting ${waitMs}ms (attempt ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES})`);
+            await new Promise(r => setTimeout(r, waitMs));
+            lastRequestTime = Date.now();
+            continue;
+        }
+
         throw new Error(`Code Assist API ${method} failed (${resp.status}): ${errText}`);
     }
 
-    return resp.json();
+    throw new Error(`Code Assist API ${method} failed after ${MAX_RATE_LIMIT_RETRIES} rate limit retries`);
 }
 
 /**
@@ -229,20 +280,40 @@ export async function* streamGenerateContent(
     const token = await getAccessToken();
     if (!token) throw new Error('No CLI OAuth token available');
 
-    const url = `${getBaseUrl()}:streamGenerateContent`;
-    const resp = await fetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(request),
-        signal,
-    });
+    await throttle();
 
-    if (!resp.ok) {
+    const url = `${getBaseUrl()}:streamGenerateContent`;
+
+    let resp: Response | null = null;
+    for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
+        resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify(request),
+            signal,
+        });
+
+        if (resp.ok) break;
+
         const errText = await resp.text();
+
+        if (resp.status === 429 && attempt < MAX_RATE_LIMIT_RETRIES) {
+            const parsedWait = parseRateLimitWait(errText);
+            const waitMs = parsedWait || (Math.pow(2, attempt + 1) * 2000);
+            log.warn(`Rate limited (stream), waiting ${waitMs}ms (attempt ${attempt + 1}/${MAX_RATE_LIMIT_RETRIES})`);
+            await new Promise(r => setTimeout(r, waitMs));
+            lastRequestTime = Date.now();
+            continue;
+        }
+
         throw new Error(`Code Assist streaming failed (${resp.status}): ${errText}`);
+    }
+
+    if (!resp || !resp.ok) {
+        throw new Error('Code Assist streaming failed after rate limit retries');
     }
 
     // The Code Assist API returns a JSON array, not NDJSON.

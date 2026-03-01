@@ -14,6 +14,9 @@ let heartbeatCount = 0;
  * Start the heartbeat scheduler.
  * Reads HEARTBEAT.md and sends it to the agent at regular intervals.
  * Every 3rd heartbeat, also consolidates memory files.
+ * 
+ * When CLI auth is active, heartbeat uses Ollama to avoid burning
+ * Code Assist API quota on background tasks.
  */
 export function startHeartbeat(
     config: AliceConfig,
@@ -22,8 +25,13 @@ export function startHeartbeat(
 ): void {
     const minutes = config.heartbeat.intervalMinutes;
     const cronExpr = `*/${minutes} * * * *`;
+    const usingCli = config.gemini?.auth === 'cli' || (config.gemini?.auth === 'auto' && agent.activeProvider === 'gemini-cli');
 
-    log.info(`Starting heartbeat every ${minutes} minutes`);
+    if (usingCli && config.ollama) {
+        log.info(`Starting heartbeat every ${minutes} minutes (using Ollama to save Gemini quota)`);
+    } else {
+        log.info(`Starting heartbeat every ${minutes} minutes`);
+    }
 
     heartbeatTask = cron.schedule(cronExpr, async () => {
         log.info('Heartbeat triggered');
