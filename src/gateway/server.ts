@@ -1078,14 +1078,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       border-radius: var(--shape-xl);
       display: flex;
       flex-direction: column;
-      padding: 4px 8px 0 16px;
       transition: border-color var(--duration-short) var(--motion-standard), box-shadow var(--duration-short) var(--motion-standard);
     }
     .input-row {
       display: flex;
       align-items: center;
-      width: 100%;
-      padding-right: 0;
+      padding: 6px 8px 2px 12px;
     }
     .attach-btn {
       background: transparent;
@@ -1455,8 +1453,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     </div>
 
     <div class="input-wrapper">
-      <div id="attachPreview" class="attach-preview" style="display:none;"></div>
       <div class="input-container">
+        <div id="attachPreview" class="attach-preview" style="display:none;"></div>
         <div class="input-row">
         <button id="attachBtn" class="attach-btn" title="Attach file">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6l-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
