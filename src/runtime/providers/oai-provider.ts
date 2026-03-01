@@ -141,6 +141,14 @@ export class OAIProvider {
         log.info('Initialized provider', { model: this.model, baseUrl: this.baseUrl });
     }
 
+    /** Dynamically switch model (e.g., for vision requests) */
+    setModel(model: string): void {
+        if (model !== this.model) {
+            log.info('Switching model', { from: this.model, to: model });
+            this.model = model;
+        }
+    }
+
     async generateContent(
         systemInstruction: string,
         messages: LLMMessage[],

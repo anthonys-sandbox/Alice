@@ -555,6 +555,17 @@ export class Agent {
                 // Trim context if approaching token budget
                 this.trimContextIfNeeded();
 
+                // Dynamic model routing: use vision model when images are present
+                const hasImages = this.conversationHistory.some(m =>
+                    m.role === 'user' && m.parts.some((p: any) => 'inlineData' in p)
+                );
+                const oaiProvider = this.provider as any;
+                if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
+                    oaiProvider.setModel(this.config.ollama.visionModel);
+                } else if (!hasImages && oaiProvider.setModel) {
+                    oaiProvider.setModel(this.config.ollama?.model || 'qwen3:8b');
+                }
+
                 const response = await this.provider.generateContentStream!(
                     this.systemPrompt,
                     this.conversationHistory,

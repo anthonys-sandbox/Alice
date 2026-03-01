@@ -13,6 +13,7 @@ export interface AliceConfig {
         host: string;
         port: number;
         model: string;
+        visionModel?: string;
     };
     googleChat: {
         sheetId: string;
@@ -62,7 +63,8 @@ const DEFAULTS: AliceConfig = {
     ollama: {
         host: '127.0.0.1',
         port: 11434,
-        model: 'qwen3-vl',
+        model: 'qwen3:8b',
+        visionModel: 'qwen3-vl',
     },
     googleChat: {
         sheetId: '',
@@ -121,6 +123,7 @@ export function loadConfig(projectDir?: string): AliceConfig {
     if (process.env.OLLAMA_HOST) config.ollama.host = process.env.OLLAMA_HOST;
     if (process.env.OLLAMA_PORT) config.ollama.port = parseInt(process.env.OLLAMA_PORT, 10);
     if (process.env.OLLAMA_MODEL) config.ollama.model = process.env.OLLAMA_MODEL;
+    if (process.env.OLLAMA_VISION_MODEL) config.ollama.visionModel = process.env.OLLAMA_VISION_MODEL;
     if (process.env.RELAY_SHEET_ID) config.googleChat.sheetId = process.env.RELAY_SHEET_ID;
     if (process.env.GOOGLE_CLIENT_ID) config.googleChat.oauthClientId = process.env.GOOGLE_CLIENT_ID;
     if (process.env.GOOGLE_CLIENT_SECRET) config.googleChat.oauthClientSecret = process.env.GOOGLE_CLIENT_SECRET;
