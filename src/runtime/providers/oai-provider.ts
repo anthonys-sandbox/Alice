@@ -13,7 +13,7 @@ export interface OAIProviderConfig {
 
 interface OAIMessage {
     role: 'system' | 'user' | 'assistant' | 'tool';
-    content?: string | null;
+    content?: string | Array<{ type: string; text?: string; image_url?: { url: string } }> | null;
     tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
     tool_call_id?: string;
 }
@@ -77,11 +77,31 @@ function toOAIMessages(messages: LLMMessage[]): OAIMessage[] {
                 }
             }
 
-            if (textParts.length > 0) {
-                out.push({
-                    role: 'user',
-                    content: textParts.map((p: any) => p.text).join(''),
-                });
+            // Check for image parts (inlineData)
+            const imageParts = msg.parts.filter((p: any) => 'inlineData' in p);
+
+            if (textParts.length > 0 || imageParts.length > 0) {
+                if (imageParts.length > 0) {
+                    // Use multi-part content array for vision messages
+                    const contentParts: Array<{ type: string; text?: string; image_url?: { url: string } }> = [];
+                    for (const tp of textParts) {
+                        contentParts.push({ type: 'text', text: (tp as any).text });
+                    }
+                    for (const ip of imageParts) {
+                        const inline = (ip as any).inlineData;
+                        contentParts.push({
+                            type: 'image_url',
+                            image_url: { url: `data:${inline.mimeType};base64,${inline.data}` },
+                        });
+                    }
+                    out.push({ role: 'user', content: contentParts });
+                } else {
+                    // Text-only: use plain string (more compatible)
+                    out.push({
+                        role: 'user',
+                        content: textParts.map((p: any) => p.text).join(''),
+                    });
+                }
             }
         }
     }
