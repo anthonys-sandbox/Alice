@@ -15,3 +15,6 @@ tokens/
 cat_photo.jpg
 cat_response.json
 com.gravityclaw.agent.plist
+
+# Service account key
+alice-chat-sa.json

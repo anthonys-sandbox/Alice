@@ -1,4 +1,6 @@
 import { google } from 'googleapis';
+import { GoogleAuth } from 'google-auth-library';
+import { existsSync, readFileSync } from 'fs';
 import { createLogger } from '../utils/logger.js';
 import { getAuthenticatedClient } from '../utils/oauth.js';
 import { formatForGoogleChat } from '../utils/markdown.js';
@@ -23,15 +25,31 @@ export class GoogleChatAdapter {
     private agent: Agent | null = null;
     private pollInterval: ReturnType<typeof setInterval> | null = null;
     private processedIds: Set<string> = new Set();
+    private chatAuth: GoogleAuth | null = null;
 
     constructor(
         sheetId: string,
         oauthClientId: string,
-        oauthClientSecret: string
+        oauthClientSecret: string,
+        serviceAccountKeyPath?: string
     ) {
         this.sheetId = sheetId;
         this.oauthClientId = oauthClientId;
         this.oauthClientSecret = oauthClientSecret;
+
+        // Set up service account auth for Chat API if key is available
+        if (serviceAccountKeyPath && existsSync(serviceAccountKeyPath)) {
+            try {
+                const keyFile = JSON.parse(readFileSync(serviceAccountKeyPath, 'utf-8'));
+                this.chatAuth = new GoogleAuth({
+                    credentials: keyFile,
+                    scopes: ['https://www.googleapis.com/auth/chat.bot'],
+                });
+                log.info('Chat API service account loaded for app-level auth');
+            } catch (err: any) {
+                log.warn('Failed to load service account key', { error: err.message });
+            }
+        }
 
         if (sheetId && oauthClientId && oauthClientSecret) {
             log.info('Google Chat adapter initialized (Sheets queue mode)');
@@ -44,7 +62,7 @@ export class GoogleChatAdapter {
         this.agent = agent;
     }
 
-    async startListening(pollMs: number = 10000): Promise<void> {
+    async startListening(pollMs: number = 3000): Promise<void> {
         if (!this.sheetId || !this.oauthClientId || !this.oauthClientSecret) {
             log.debug('Sheets queue not configured — skipping polling');
             return;
@@ -90,17 +108,17 @@ export class GoogleChatAdapter {
             const auth = await getAuthenticatedClient(this.oauthClientId, this.oauthClientSecret);
             const sheets = google.sheets({ version: 'v4', auth });
 
-            // Read all rows
+            // Read all rows (A:G includes spaceName in column G)
             const res = await sheets.spreadsheets.values.get({
                 spreadsheetId: this.sheetId,
-                range: 'messages!A:F',
+                range: 'messages!A:G',
             });
 
             const rows = res.data.values || [];
 
             // Skip header row, find pending messages
             for (let i = 1; i < rows.length; i++) {
-                const [id, _timestamp, sender, text, status] = rows[i];
+                const [id, _timestamp, sender, text, status, _response, spaceName] = rows[i];
 
                 if (status !== 'pending') continue;
                 if (this.processedIds.has(id)) continue;
@@ -139,7 +157,46 @@ export class GoogleChatAdapter {
                     },
                 });
 
-                log.debug('Response written to sheet');
+                log.info('📨 Response written to sheet');
+
+                // Send response directly to Google Chat if spaceName + service account available
+                if (spaceName && this.chatAuth) {
+                    try {
+                        const client = await this.chatAuth.getClient();
+                        const tokenResponse = await client.getAccessToken();
+                        const token = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
+
+                        if (!token) {
+                            log.error('Failed to get service account access token');
+                        } else {
+                            const chatUrl = `https://chat.googleapis.com/v1/${spaceName}/messages`;
+                            const chatRes = await fetch(chatUrl, {
+                                method: 'POST',
+                                headers: {
+                                    'Authorization': `Bearer ${token}`,
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify({ text: responseText }),
+                            });
+
+                            if (chatRes.ok) {
+                                // Mark as delivered in the sheet
+                                await sheets.spreadsheets.values.update({
+                                    spreadsheetId: this.sheetId,
+                                    range: `messages!E${rowIndex}`,
+                                    valueInputOption: 'RAW',
+                                    requestBody: { values: [['delivered']] },
+                                });
+                                log.info('📤 Response delivered to Google Chat');
+                            } else {
+                                const errBody = await chatRes.text();
+                                log.error('Chat API error', { status: chatRes.status, body: errBody.slice(0, 200) });
+                            }
+                        }
+                    } catch (chatErr: any) {
+                        log.error('Failed to deliver to Chat', { error: chatErr.message });
+                    }
+                }
             }
         } catch (err: any) {
             if (err.message && !err.message.includes('fetch failed')) {

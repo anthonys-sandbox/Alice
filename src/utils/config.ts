@@ -18,6 +18,7 @@ export interface AliceConfig {
         sheetId: string;
         oauthClientId: string;
         oauthClientSecret: string;
+        serviceAccountKeyPath: string;
     };
     gateway: {
         host: string;
@@ -57,6 +58,7 @@ const DEFAULTS: AliceConfig = {
         sheetId: '',
         oauthClientId: '',
         oauthClientSecret: '',
+        serviceAccountKeyPath: '',
     },
     gateway: {
         host: '127.0.0.1',
@@ -109,6 +111,7 @@ export function loadConfig(projectDir?: string): AliceConfig {
     if (process.env.RELAY_SHEET_ID) config.googleChat.sheetId = process.env.RELAY_SHEET_ID;
     if (process.env.GOOGLE_CLIENT_ID) config.googleChat.oauthClientId = process.env.GOOGLE_CLIENT_ID;
     if (process.env.GOOGLE_CLIENT_SECRET) config.googleChat.oauthClientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    if (process.env.GOOGLE_SA_KEY_PATH) config.googleChat.serviceAccountKeyPath = process.env.GOOGLE_SA_KEY_PATH;
     if (process.env.GATEWAY_PORT) config.gateway.port = parseInt(process.env.GATEWAY_PORT, 10);
     if (process.env.HEARTBEAT_INTERVAL) config.heartbeat.intervalMinutes = parseInt(process.env.HEARTBEAT_INTERVAL, 10);
     if (process.env.LOG_LEVEL) config.logging.level = process.env.LOG_LEVEL as AliceConfig['logging']['level'];

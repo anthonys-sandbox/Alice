@@ -31,7 +31,8 @@ export class Gateway {
     this.chat = new GoogleChatAdapter(
       config.googleChat.sheetId,
       config.googleChat.oauthClientId,
-      config.googleChat.oauthClientSecret
+      config.googleChat.oauthClientSecret,
+      config.googleChat.serviceAccountKeyPath
     );
     this.chat.setAgent(this.agent);
 
@@ -393,6 +394,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
   <link rel="apple-touch-icon" href="/alice-icon-512.png">
   <link rel="manifest" href="/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"><\/script>
   <script src="https://cdn.jsdelivr.net/npm/marked-highlight@2.1.1/lib/index.umd.min.js"><\/script>
@@ -404,31 +406,49 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       height: -webkit-fill-available;
     }
     :root {
-      --bg-primary: #131314;
-      --bg-secondary: #1e1f20;
-      --bg-tertiary: #282a2c;
-      --surface: #1e1f20;
-      --surface-hover: #282a2c;
-      --border: #3c4043;
-      --border-subtle: #2d2e30;
-      --text-primary: #e3e3e3;
-      --text-secondary: #9aa0a6;
-      --text-tertiary: #6e7681;
-      --accent: #b388ff;
-      --accent-dim: rgba(179, 136, 255, 0.1);
-      --accent-glow: rgba(179, 136, 255, 0.15);
-      --user-bg: #5b21b6;
-      --user-text: #ede9fe;
-      --success: #81c995;
-      --error: #f28b82;
+      /* ── M3 Dark Theme — Purple Primary ── */
+      --bg-primary: #131314;          /* surface */
+      --bg-secondary: #1b1b1f;        /* surface-container-low */
+      --bg-tertiary: #211f26;         /* surface-container */
+      --surface: #2b2930;             /* surface-container-high */
+      --surface-hover: #36343b;       /* surface-container-highest */
+      --border: #49454f;              /* outline-variant */
+      --border-subtle: #322f35;       /* surface-variant */
+      --text-primary: #e6e0e9;        /* on-surface */
+      --text-secondary: #cac4d0;      /* on-surface-variant */
+      --text-tertiary: #938f99;       /* outline */
+      --accent: #cfbcff;              /* primary (tone 80) */
+      --accent-dim: rgba(207,188,255,0.08);  /* primary-container */
+      --accent-glow: rgba(207,188,255,0.12); /* state-layer: focus */
+      --user-bg: #7c3aed;             /* vibrant purple from icon */
+      --user-text: #eaddff;           /* on-primary-container */
+      --success: #a8dab5;             /* tertiary (green tone 80) */
+      --error: #f2b8b5;               /* error (tone 80) */
+      /* ── M3 Shape Scale ── */
+      --shape-xs: 4px;                /* extra-small: badges, chips */
+      --shape-sm: 8px;                /* small: cards, list items */
+      --shape-md: 12px;               /* medium: dialogs, menus */
+      --shape-lg: 16px;               /* large: FABs, sheets */
+      --shape-xl: 28px;               /* extra-large: containers */
+      /* ── Layout ── */
       --radius: 20px;
       --radius-sm: 12px;
       --max-width: 768px;
+      /* ── Typography ── */
       --font: 'Google Sans', 'Segoe UI', Roboto, sans-serif;
       --font-mono: 'Google Sans Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+      /* ── M3 Motion ── */
+      --motion-standard: cubic-bezier(0.2, 0, 0, 1);
+      --motion-emphasized: cubic-bezier(0.2, 0, 0, 1);
+      --motion-decelerate: cubic-bezier(0, 0, 0, 1);
+      --motion-accelerate: cubic-bezier(0.3, 0, 1, 1);
+      --duration-short: 200ms;
+      --duration-medium: 300ms;
+      --duration-long: 500ms;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { height: 100%; }
+
     body {
       font-family: var(--font);
       background: var(--bg-primary);
@@ -447,7 +467,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
-      transition: margin-left 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s;
+      transition: margin-left var(--duration-medium) var(--motion-emphasized), opacity var(--duration-short) var(--motion-standard);
       overflow: hidden;
       z-index: 20;
     }
@@ -456,10 +476,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       opacity: 0;
     }
     .sidebar-header {
-      padding: 14px 16px;
+      padding: 16px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       border-bottom: 1px solid var(--border-subtle);
       flex-shrink: 0;
     }
@@ -473,7 +493,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       font-size: 13px;
       font-family: var(--font);
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all var(--duration-short) var(--motion-standard);
       text-align: left;
       display: flex;
       align-items: center;
@@ -493,7 +513,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .sidebar-group-label {
       font-size: 11px;
       color: var(--text-tertiary);
-      padding: 12px 16px 4px;
+      padding: 8px 16px 4px;
       font-weight: 500;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -501,12 +521,17 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .sidebar-item {
       display: flex;
       align-items: center;
-      padding: 8px 12px 8px 16px;
+      padding: 8px 16px;
       cursor: pointer;
-      transition: background 0.15s;
+      transition: background var(--duration-short) var(--motion-standard);
       border-radius: 0 20px 20px 0;
       margin-right: 8px;
       position: relative;
+      gap: 12px;
+    }
+    .sidebar-item svg {
+      flex-shrink: 0;
+      color: var(--text-secondary);
     }
     .sidebar-item:hover {
       background: var(--surface-hover);
@@ -533,9 +558,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       color: var(--text-tertiary);
       cursor: pointer;
       font-size: 14px;
-      padding: 2px 6px;
+      padding: 4px 8px;
       border-radius: 4px;
-      transition: all 0.15s;
+      transition: all var(--duration-short) var(--motion-standard);
       flex-shrink: 0;
     }
     .sidebar-item:hover .sidebar-item-delete {
@@ -559,16 +584,21 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       }
       .sidebar-overlay.active { display: block; }
       .msg-content {
-        font-size: 14px;
-        line-height: 1.55;
+        font-size: 13px;
+        line-height: 1.45;
       }
-      .msg-content h1 { font-size: 1.2em; }
-      .msg-content h2 { font-size: 1.1em; }
+      .msg-content h1 { font-size: 1.15em; }
+      .msg-content h2 { font-size: 1.05em; }
       .msg-content h3 { font-size: 1em; }
+      .msg-content p { margin-bottom: 8px; }
+      .msg-content ul, .msg-content ol { margin: 0 0 16px 16px; }
+      .msg-content li { margin-bottom: 2px; }
       .msg-row.user .msg-content {
         max-width: 80%;
-        padding: 8px 14px;
+        padding: 8px 16px;
       }
+      .header-btn { padding: 0; overflow: hidden; width: 40px; height: 40px; border-radius: 50%; font-size: 18px; display: flex; align-items: center; justify-content: center; white-space: nowrap; text-indent: -2px; }
+      .header-actions { flex-shrink: 0; }
     }
 
     /* ── Main Content ────────────────── */
@@ -582,7 +612,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     /* ── Header ─────────────────────── */
     header {
-      padding: calc(14px + env(safe-area-inset-top, 0px)) 16px 14px 12px;
+      padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px 16px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -596,27 +626,22 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       border: none;
       color: var(--text-secondary);
       cursor: pointer;
-      width: 36px; height: 36px;
+      width: 40px; height: 40px;
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      transition: background 0.15s;
+      transition: background var(--duration-short) var(--motion-standard);
       flex-shrink: 0;
     }
-    .menu-btn:hover { background: var(--surface-hover); }
-    .menu-btn svg { width: 20px; height: 20px; fill: currentColor; }
+    .menu-btn:hover { background: rgba(207,188,255,0.08); }
+    .menu-btn svg { width: 22px; height: 22px; }
     .logo {
       width: 32px; height: 32px;
-      background: linear-gradient(135deg, #a855f7, #7c3aed, #6366f1);
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
     }
-    .logo svg, .avatar.alice svg, .welcome-icon svg {
-      width: 18px; height: 18px;
-      fill: #fff;
-    }
-    .welcome-icon svg {
-      width: 32px; height: 32px;
-    }
+    .logo svg { width: 32px; height: 32px; }
+    .welcome-icon svg { width: 64px; height: 64px; }
     header h1 {
       font-size: 18px;
       font-weight: 500;
@@ -627,10 +652,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       font-size: 11px;
       color: var(--success);
       background: rgba(129, 201, 149, 0.1);
-      padding: 3px 10px;
+      padding: 4px 8px;
       border-radius: 12px;
       font-weight: 500;
-      display: flex; align-items: center; gap: 5px;
+      display: flex; align-items: center; gap: 4px;
     }
     .status-dot {
       width: 6px; height: 6px;
@@ -651,6 +676,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       border: 1px solid var(--border);
       color: var(--text-secondary);
       padding: 8px 16px;
+      white-space: nowrap;
       border-radius: 20px;
       font-size: 13px;
       font-family: var(--font);
@@ -666,7 +692,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     #messages {
       flex: 1;
       overflow-y: auto;
-      padding: 24px 16px calc(120px + env(safe-area-inset-bottom, 0px));
+      padding: 24px 16px 120px;
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -682,11 +708,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     /* ── Message Rows ───────────────── */
     .msg-row {
       display: flex;
-      gap: 12px;
+      gap: 8px;
       max-width: var(--max-width);
       width: 100%;
       margin: 0 auto;
-      animation: fadeIn 0.3s ease;
+      animation: fadeIn var(--duration-medium) var(--motion-decelerate);
     }
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(8px); }
@@ -701,10 +727,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       display: flex; align-items: center; justify-content: center;
       font-size: 14px;
       flex-shrink: 0;
-      margin-top: 4px;
+      margin-top: 0;
     }
     .avatar.alice {
-      background: linear-gradient(135deg, #a855f7, #6366f1);
+      background: transparent;
     }
     .avatar.user-av {
       background: var(--user-bg);
@@ -721,15 +747,15 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     .msg-content {
       font-size: 15px;
-      line-height: 1.7;
+      line-height: 1.6;
       word-wrap: break-word;
       max-width: calc(var(--max-width) - 50px);
     }
     .msg-row.user .msg-content {
       background: var(--user-bg);
       color: var(--user-text);
-      padding: 10px 18px;
-      border-radius: var(--radius) var(--radius) 4px var(--radius);
+      padding: 8px 16px;
+      border-radius: var(--shape-xl) var(--shape-xl) var(--shape-xs) var(--shape-xl);
       max-width: 65%;
     }
     .msg-row.agent .msg-content {
@@ -738,8 +764,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     /* ── Thinking Indicator ─────────── */
     .thinking {
-      display: flex; gap: 5px;
-      padding: 16px 4px;
+      display: flex; gap: 4px; align-items: center;
+      padding: 16px 4px; min-height: 32px;
     }
     .thinking .dot {
       width: 8px; height: 8px;
@@ -756,15 +782,15 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     /* ── Markdown Typography ────────── */
     .msg-content h1, .msg-content h2, .msg-content h3 {
-      margin: 20px 0 8px;
+      margin: 16px 0 8px;
       color: var(--accent);
       font-weight: 500;
     }
     .msg-content h1 { font-size: 1.4em; }
     .msg-content h2 { font-size: 1.2em; }
     .msg-content h3 { font-size: 1.05em; }
-    .msg-content p { margin-bottom: 10px; }
-    .msg-content ul, .msg-content ol { margin: 0 0 12px 20px; }
+    .msg-content p { margin-bottom: 16px; }
+    .msg-content ul, .msg-content ol { margin: 0 0 16px 24px; }
     .msg-content li { margin-bottom: 4px; }
     .msg-content strong { color: var(--text-primary); }
     .msg-content a { color: var(--accent); text-decoration: none; }
@@ -776,7 +802,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       font-family: var(--font-mono);
       background: var(--bg-tertiary);
       padding: 2px 6px;
-      border-radius: 6px;
+      border-radius: var(--shape-sm);
       font-size: 13px;
       color: #d2a8ff;
     }
@@ -802,7 +828,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 8px 14px;
+      padding: 8px 16px;
       background: var(--bg-tertiary);
       border-bottom: 1px solid var(--border-subtle);
       font-size: 12px;
@@ -821,8 +847,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       cursor: pointer;
       font-size: 12px;
       font-family: var(--font);
-      padding: 4px 10px;
-      border-radius: 6px;
+      padding: 4px 8px;
+      border-radius: var(--shape-sm);
       transition: all 0.15s;
       display: flex; align-items: center; gap: 4px;
     }
@@ -833,12 +859,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .msg-content table {
       border-collapse: collapse;
       width: 100%;
-      margin: 12px 0;
+      margin: 16px 0;
       font-size: 14px;
     }
     .msg-content th, .msg-content td {
       border: 1px solid var(--border-subtle);
-      padding: 8px 14px;
+      padding: 8px 16px;
       text-align: left;
     }
     .msg-content th { background: var(--bg-tertiary); color: var(--accent); font-weight: 500; }
@@ -848,7 +874,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       border-left: 3px solid var(--accent);
       color: var(--text-secondary);
       padding-left: 16px;
-      margin: 12px 0;
+      margin: 16px 0;
       font-style: italic;
     }
 
@@ -856,7 +882,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .meta {
       font-size: 11px;
       color: var(--text-tertiary);
-      margin-top: 12px;
+      margin-top: 8px;
       display: flex; align-items: center; gap: 6px;
     }
     .meta::before {
@@ -869,7 +895,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       position: absolute;
       bottom: 0;
       left: 0; right: 0;
-      padding: 12px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+      padding: 16px;
       background: linear-gradient(transparent, var(--bg-primary) 30%);
       z-index: 10;
     }
@@ -878,11 +904,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       margin: 0 auto;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 28px;
+      border-radius: var(--shape-xl);
       display: flex;
       align-items: center;
-      padding: 4px 8px 4px 12px;
-      transition: border-color 0.2s, box-shadow 0.2s;
+      padding: 4px 8px 4px 16px;
+      transition: border-color var(--duration-short) var(--motion-standard), box-shadow var(--duration-short) var(--motion-standard);
     }
     .attach-btn {
       background: transparent;
@@ -892,10 +918,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       width: 36px; height: 36px;
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      transition: background 0.15s, color 0.15s;
+      transition: background var(--duration-short) var(--motion-standard), color var(--duration-short);
       flex-shrink: 0;
     }
-    .attach-btn:hover { background: var(--surface-hover); color: var(--accent); }
+    .attach-btn:hover { background: rgba(207,188,255,0.08); color: var(--accent); }
     .attach-preview {
       max-width: var(--max-width);
       margin: 0 auto 8px;
@@ -905,12 +931,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       padding: 8px 12px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 16px;
+      border-radius: var(--shape-lg);
     }
     .attach-thumb {
       position: relative;
       width: 64px; height: 64px;
-      border-radius: 10px;
+      border-radius: var(--shape-sm);
       overflow: hidden;
       background: var(--bg-tertiary);
       display: flex; align-items: center; justify-content: center;
@@ -969,10 +995,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       display: flex; align-items: center; justify-content: center;
       cursor: pointer;
       font-size: 18px;
-      transition: all 0.2s;
+      transition: all var(--duration-short) var(--motion-standard);
       flex-shrink: 0;
     }
-    #send:hover { background: #aecbfa; transform: scale(1.05); }
+    #send:hover { background: #e8def8; transform: scale(1.05); }
     #send:disabled { background: var(--bg-tertiary); color: var(--text-tertiary); cursor: not-allowed; transform: none; }
 
     /* ── Welcome State ───────────────── */
@@ -985,14 +1011,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       gap: 16px;
       padding: 40px;
       text-align: center;
-      animation: fadeIn 0.6s ease;
+      animation: fadeIn var(--duration-long) var(--motion-decelerate);
     }
     .welcome-icon {
       width: 64px; height: 64px;
-      background: linear-gradient(135deg, #a855f7, #7c3aed, #6366f1);
       border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      font-size: 28px;
     }
     .welcome h2 {
       font-size: 28px;
@@ -1016,6 +1040,14 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       cursor: pointer;
       transition: all 0.2s;
       font-family: var(--font);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      line-height: 1;
+    }
+    .suggestion svg {
+      flex-shrink: 0;
+      vertical-align: middle;
     }
     .suggestion:hover {
       background: var(--surface-hover);
@@ -1033,16 +1065,20 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     <div class="sidebar-nav" id="sidebarNav">
       <div class="sidebar-group-label">Dashboard</div>
       <div class="sidebar-item sidebar-nav-item" data-page="tools">
-        <span class="sidebar-item-title">🛠️ Tools & Plugins</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474a2.5 2.5 0 1 1 3.014 3.015a1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474a2.5 2.5 0 1 0-3.014 3.015a1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474a2.5 2.5 0 1 1-3.014-3.015a1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474a2.5 2.5 0 1 0 3.014-3.015a1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></svg>
+        <span class="sidebar-item-title">Tools & Plugins</span>
       </div>
       <div class="sidebar-item sidebar-nav-item" data-page="memory">
-        <span class="sidebar-item-title">🧠 Memory</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
+        <span class="sidebar-item-title">Memory</span>
       </div>
       <div class="sidebar-item sidebar-nav-item" data-page="reminders">
-        <span class="sidebar-item-title">⏰ Reminders</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0m-10.47-5.674A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
+        <span class="sidebar-item-title">Reminders</span>
       </div>
       <div class="sidebar-item sidebar-nav-item" data-page="personas">
-        <span class="sidebar-item-title">🎭 Personas</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11h.01M14 6h.01M18 6h.01M6.5 13.1h.01M22 5c0 9-4 12-6 12s-6-3-6-12q0-3 6-3c6 0 6 1 6 3"/><path d="M17.4 9.9c-.8.8-2 .8-2.8 0m-4.5-2.8C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6c4.5 7.8 9.5 8.4 11.2 7.4c.9-.5 1.9-2.1 1.9-4.7"/><path d="M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"/></svg>
+        <span class="sidebar-item-title">Personas</span>
       </div>
     </div>
     <div class="sidebar-group-label" style="margin-top:4px">Conversations</div>
@@ -1054,9 +1090,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
   <div class="main">
     <header>
       <button class="menu-btn" id="menuBtn" title="Toggle sidebar">
-        <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
       </button>
-      <div class="logo"><svg viewBox="0 0 24 24"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z"/><path d="M18.5 12.5c0 3.59-2.76 5-5 5 2.24 0 5 1.41 5 5 0-3.59 2.76-5 5-5-2.76 0-5-1.41-5-5z"/></svg></div>
+      <div class="logo"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="alG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="24" cy="24" r="23" fill="url(#alG)"/><g fill="white"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(7 7) scale(1.15)"/><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(23 25) scale(0.51)"/></g></svg></div>
       <h1>Alice</h1>
       <div class="status-badge" id="status">
         <span class="status-dot"></span>
@@ -1070,14 +1106,14 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     <div id="messages">
       <div class="welcome" id="welcome">
-        <div class="welcome-icon"><svg viewBox="0 0 24 24"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z"/><path d="M18.5 12.5c0 3.59-2.76 5-5 5 2.24 0 5 1.41 5 5 0-3.59 2.76-5 5-5-2.76 0-5-1.41-5-5z"/></svg></div>
-        <h2>Hi, I'm Alice</h2>
+        <div class="welcome-icon"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="awG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="24" cy="24" r="23" fill="url(#awG)"/><g fill="white"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(7 7) scale(1.15)"/><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(23 25) scale(0.51)"/></g></svg></div>
+        <h2>Hi, I’m Alice</h2>
         <p>Your personal AI agent. I can write code, search the web, manage files, and much more.</p>
         <div class="suggestions">
-          <button class="suggestion" data-msg="What tools do you have?">🛠️ What can you do?</button>
-          <button class="suggestion" data-msg="Show me the git status of this project">📊 Git status</button>
-          <button class="suggestion" data-msg="Search my memory for recent topics">🧠 Search memory</button>
-          <button class="suggestion" data-msg="Set a reminder in 5 minutes to take a break">⏰ Set reminder</button>
+          <button class="suggestion" data-msg="What tools do you have?"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></svg> What can you do?</button>
+          <button class="suggestion" data-msg="Show me the git status of this project"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/></svg> Git status</button>
+          <button class="suggestion" data-msg="Search my memory for recent topics"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18V5m3 8a4.17 4.17 0 0 1-3-4a4.17 4.17 0 0 1-3 4m8.598-6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/></svg> Search memory</button>
+          <button class="suggestion" data-msg="Set a reminder in 5 minutes to take a break"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Set reminder</button>
         </div>
       </div>
     </div>
@@ -1089,10 +1125,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       <div id="attachPreview" class="attach-preview" style="display:none;"></div>
       <div class="input-container">
         <button id="attachBtn" class="attach-btn" title="Attach file">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6l-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
         </button>
-        <textarea id="input" placeholder="Message Alice..." autofocus autocomplete="off" rows="1"></textarea>
-        <button id="send">➤</button>
+        <textarea id="input" placeholder="Message Alice…" autofocus autocomplete="off" rows="1"></textarea>
+        <button id="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11zm7.318-19.539l-10.94 10.939"/></svg></button>
       </div>
       <input type="file" id="fileInput" accept="image/*,.pdf,.txt,.csv,.json,.md" multiple style="display:none;" />
     </div>
@@ -1100,7 +1136,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
   <script>
     // White SVG sparkle icon for avatars
-    const SPARKLE_SVG = '<svg viewBox="0 0 24 24"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z"/><path d="M18.5 12.5c0 3.59-2.76 5-5 5 2.24 0 5 1.41 5 5 0-3.59 2.76-5 5-5-2.76 0-5-1.41-5-5z"/></svg>';
+    const SPARKLE_SVG = '<svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="avG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="24" cy="24" r="23" fill="url(#avG)"/><g fill="white"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(7 7) scale(1.15)"/><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(23 25) scale(0.51)"/></g></svg>';
 
     // Use marked-highlight extension for syntax highlighting
     if (typeof markedHighlight !== 'undefined') {
@@ -1120,12 +1156,45 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       if (data.picture) window.__userPicture = data.picture;
     }).catch(() => {});
 
-    const ws = new WebSocket('ws://' + location.host);
+    var ws;
+    var wsRetryDelay = 1000;
+    function connectWS() {
+      ws = new WebSocket('ws://' + location.host);
+      ws.onopen = () => {
+        wsRetryDelay = 1000;
+        var status = document.getElementById('status');
+        status.innerHTML = '<span class="status-dot"></span> Online';
+        status.style.color = 'var(--success)';
+        status.style.background = 'rgba(129,201,149,0.1)';
+        send.disabled = false;
+      };
+      ws.onmessage = wsOnMessage;
+      ws.onerror = (err) => console.error('WebSocket error:', err);
+      ws.onclose = () => {
+        var status = document.getElementById('status');
+        status.innerHTML = '<span class="status-dot" style="background:#f28b82;animation:none"></span> Offline';
+        status.style.color = '#f28b82';
+        status.style.background = 'rgba(242,139,130,0.1)';
+        send.disabled = true;
+        // Auto-retry with backoff
+        setTimeout(() => { if (document.visibilityState !== 'hidden') connectWS(); }, wsRetryDelay);
+        wsRetryDelay = Math.min(wsRetryDelay * 2, 8000);
+      };
+    }
+    // Reconnect when app comes back to foreground
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && (!ws || ws.readyState > 1)) {
+        connectWS();
+      }
+    });
+
     const messages = document.getElementById('messages');
     const input = document.getElementById('input');
     const send = document.getElementById('send');
     const welcome = document.getElementById('welcome');
     const clearBtn = document.getElementById('clearBtn');
+
+    connectWS();
 
     function hideWelcome() {
       if (welcome) welcome.style.display = 'none';
@@ -1343,7 +1412,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     let currentStreamText = '';
     let thinkingRow = null;
 
-    ws.onmessage = (e) => {
+    function wsOnMessage(e) {
       const data = JSON.parse(e.data);
 
       if (data.type === 'token') {
@@ -1411,21 +1480,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         : '';
       addMsg(data.text || data.error || 'No response', 'agent', meta);
       send.disabled = false;
-    };
-
-    ws.onopen = () => {
-      // Show thinking when sending
-      const origSend = sendMessage;
-    };
-
-    ws.onerror = (err) => console.error('WebSocket error:', err);
-    ws.onclose = () => {
-      const status = document.getElementById('status');
-      status.innerHTML = '<span class="status-dot" style="background:#f28b82;animation:none"></span> Offline';
-      status.style.color = '#f28b82';
-      status.style.background = 'rgba(242,139,130,0.1)';
-      send.disabled = true;
-    };
+    }
 
     send.addEventListener('click', () => {
       sendMessage();
@@ -1464,8 +1519,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     function showWelcome() {
       messages.innerHTML = \`
         <div class="welcome" id="welcome">
-          <div class="welcome-icon"><svg viewBox="0 0 24 24"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z"/><path d="M18.5 12.5c0 3.59-2.76 5-5 5 2.24 0 5 1.41 5 5 0-3.59 2.76-5 5-5-2.76 0-5-1.41-5-5z"/></svg></div>
-          <h2>Hi, I'm Alice</h2>
+          <div class="welcome-icon"><svg viewBox="0 0 48 48" fill="none"><defs><linearGradient id="asG" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0%" stop-color="#a855f7"/><stop offset="50%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs><circle cx="24" cy="24" r="23" fill="url(#asG)"/><g fill="white"><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(7 7) scale(1.15)"/><path d="M10 0C10 7.18 4.48 10 0 10c4.48 0 10 2.82 10 10 0-7.18 5.52-10 10-10-5.52 0-10-2.82-10-10z" transform="translate(23 25) scale(0.51)"/></g></svg></div>
+          <h2>Hi, I’m Alice</h2>
           <p>Your personal AI agent. I can write code, search the web, manage files, and much more.</p>
           <div class="suggestions">
             <button class="suggestion" data-msg="What tools do you have?">\ud83d\udee0\ufe0f What can you do?</button>
