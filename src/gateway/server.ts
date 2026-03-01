@@ -1857,6 +1857,15 @@ bindSuggestions();
 
 // Load sessions on startup
 loadSessions();
+
+// Register Service Worker for PWA
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').then(() => {
+    console.log('Service Worker registered');
+  }).catch(err => {
+    console.warn('SW registration failed:', err);
+  });
+}
 <\/script>
   </body>
   </html>`;
