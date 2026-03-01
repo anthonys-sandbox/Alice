@@ -6,7 +6,7 @@ import type { ToolDefinition } from './registry.js';
 const log = createLogger('Browser');
 
 // ── Singleton browser session ─────────────────────────────────
-// Stays alive between tool calls so Toby can navigate, click,
+// Stays alive between tool calls so Alice can navigate, click,
 // type, and screenshot in sequence — like a real user.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,7 +30,7 @@ async function getBrowser(): Promise<any> {
     if (!browser || !browser.connected) {
         log.info('Launching browser...');
         // Dynamic import so puppeteer is only loaded when actually needed.
-        // Toby starts fine even if puppeteer/Chromium is not installed.
+        // Alice starts fine even if puppeteer/Chromium is not installed.
         const { default: puppeteer } = await import('puppeteer');
         browser = await puppeteer.launch({
             headless: true,

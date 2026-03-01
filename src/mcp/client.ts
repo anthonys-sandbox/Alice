@@ -23,7 +23,7 @@ interface MCPConnection {
 
 /**
  * Manages connections to multiple MCP servers.
- * Discovers their tools and registers them in Toby's tool registry.
+ * Discovers their tools and registers them in Alice's tool registry.
  */
 export class MCPManager {
     private connections: Map<string, MCPConnection> = new Map();
@@ -65,7 +65,7 @@ export class MCPManager {
             });
 
             const client = new Client(
-                { name: 'toby-agent', version: '1.0.0' },
+                { name: 'alice-agent', version: '1.0.0' },
                 { capabilities: {} }
             );
 
@@ -92,7 +92,7 @@ export class MCPManager {
     }
 
     /**
-     * Discover tools from an MCP server and register them in Toby's registry.
+     * Discover tools from an MCP server and register them in Alice's registry.
      */
     private async discoverAndRegisterTools(serverName: string, client: Client): Promise<string[]> {
         const result = await client.listTools();

@@ -1,7 +1,7 @@
 /**
  * GravityClaw Integration Tools
  *
- * Bridges Toby to GravityClaw's SQLite memory database and connected services:
+ * Bridges Alice to GravityClaw's SQLite memory database and connected services:
  * - gc_memory_query  — search/read from GravityClaw SQLite
  * - gc_memory_save   — write key/value to GravityClaw SQLite
  * - gc_todoist       — Todoist task management
@@ -9,7 +9,7 @@
  * - gc_gmail_read    — Gmail message reading
  * - gc_github        — GitHub repo status and commits
  *
- * All tools are auto-registered in Toby's tool registry on import.
+ * All tools are auto-registered in Alice's tool registry on import.
  */
 
 import { resolve, join } from 'path';
@@ -131,7 +131,7 @@ registerTool({
 
 registerTool({
     name: 'gc_memory_save',
-    description: 'Save a memory to the GravityClaw SQLite database. Use this to persist important facts, decisions, or context that should be accessible across both Toby and GravityClaw.',
+    description: 'Save a memory to the GravityClaw SQLite database. Use this to persist important facts, decisions, or context that should be accessible across both Alice and GravityClaw.',
     parameters: {
         type: 'object',
         properties: {

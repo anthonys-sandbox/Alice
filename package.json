@@ -1,11 +1,11 @@
 {
-  "name": "toby",
+  "name": "alice",
   "version": "1.0.0",
   "description": "A self-hosted AI agent that runs locally on your Mac, communicates via Google Chat, and uses the Gemini API",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "toby": "./dist/index.js"
+    "alice": "./dist/index.js"
   },
   "scripts": {
     "dev": "NODE_EXTRA_CA_CERTS=./system-ca.pem tsx watch src/index.ts",

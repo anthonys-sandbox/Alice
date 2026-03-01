@@ -1,7 +1,7 @@
 {
-    "chatProvider": "gemini",
+    "chatProvider": "ollama",
     "gemini": {
-        "model": "gemini-2.0-flash"
+        "model": "gemini-3-flash-preview"
     },
     "ollama": {
         "model": "qwen3:8b",
@@ -21,15 +21,5 @@
     },
     "logging": {
         "level": "info"
-    },
-    "mcp": {
-        "servers": [
-            {
-                "name": "notebooklm",
-                "command": "/Users/TylerBarnes/.local/bin/notebooklm-mcp",
-                "args": [],
-                "enabled": true
-            }
-        ]
     }
 }

@@ -139,7 +139,7 @@ export async function appendFacts(memoryDir: string, facts: string[]): Promise<n
         if (existsSync(filePath)) {
             existing = readFileSync(filePath, 'utf-8');
         } else {
-            existing = '# Long-Term Memory\n\nFacts, patterns, and knowledge curated by Toby over time.\n';
+            existing = '# Long-Term Memory\n\nFacts, patterns, and knowledge curated by Alice over time.\n';
         }
 
         const existingLower = existing.toLowerCase();
@@ -196,7 +196,7 @@ const FILE_MAP: Record<string, string> = {
 
 const FILE_DEFAULTS: Record<string, string> = {
     user: '# User Context\n\n## About the User\n\n## Preferences\n\n## Active Projects\n\n(Updated by the agent as it learns)\n',
-    memory: '# Long-Term Memory\n\nFacts, patterns, and knowledge curated by Toby over time.\n',
+    memory: '# Long-Term Memory\n\nFacts, patterns, and knowledge curated by Alice over time.\n',
 };
 
 export async function updateMemory(memoryDir: string, updates: MemoryUpdate[]): Promise<number> {

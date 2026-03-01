@@ -23,6 +23,8 @@
 - Prefers opening images in a new window
 - AI team expansions/creative workflow checks reminder (pending)
 - The "AI team expansions/creative workflow checks" reminder (requested in preferences) is still pending.
+- Base path for local GitHub repositories: /Users/AnthonyTackett/Documents/GitHub/
+- Generated images for local GitHub projects are stored in a 'generated_images' subdirectory within the project's root.
 
 ## Active Projects
 - Creative Lab: AI agents, automation, agentic workflows

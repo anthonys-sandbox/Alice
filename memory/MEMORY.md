@@ -53,3 +53,4 @@
 - Recurring workflow involves automated heartbeat checks and potential custom reminders
 - Current toolset lacks functions to execute the listed monitoring tasks
 - The JIRA tool is experiencing deprecated API errors and needs updating to use the new API.
+- Project: GravityClaw (GitHub repository)

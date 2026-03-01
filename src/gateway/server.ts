@@ -96,7 +96,7 @@ export class Gateway {
 
       try {
         if (event.type === 'ADDED_TO_SPACE') {
-          res.json({ text: '✨ Toby is online! Send me a message and I\'ll get to work.' });
+          res.json({ text: '✨ Alice is online! Send me a message and I\'ll get to work.' });
           return;
         }
 
@@ -225,7 +225,7 @@ export class Gateway {
 
         let md = `# ${title}\n\n*Exported: ${new Date().toLocaleString()}*\n*Created: ${date}*\n\n---\n\n`;
         for (const m of messages) {
-          const role = m.role === 'user' ? '**You**' : '**Toby**';
+          const role = m.role === 'user' ? '**You**' : '**Alice**';
           const text = m.parts?.map((p: any) => p.text || '').join('') || '';
           if (text.trim()) {
             md += `### ${role}\n\n${text.trim()}\n\n---\n\n`;
@@ -447,7 +447,7 @@ export class Gateway {
 
     return new Promise((resolve) => {
       this.server.listen(port, host, async () => {
-        log.info(`🚀 Toby Gateway running at http://${host}:${port}`);
+        log.info(`🚀 Alice Gateway running at http://${host}:${port}`);
         log.info(`📡 WebSocket at ws://${host}:${port}`);
         log.info(`🌐 Web UI at http://${host}:${port}/`);
 
@@ -525,12 +525,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
-  <title>Toby</title>
-  <meta name="description" content="Toby — Personal AI Assistant">
+  <title>Alice</title>
+  <meta name="description" content="Alice — Personal AI Assistant">
   <meta name="theme-color" content="#131314">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Toby">
+  <meta name="apple-mobile-web-app-title" content="Alice">
   <link rel="icon" type="image/png" href="/alice-icon-512.png">
   <link rel="apple-touch-icon" href="/alice-icon-512.png">
   <link rel="manifest" href="/manifest.json">
@@ -871,11 +871,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       flex-shrink: 0;
       margin-top: 0;
     }
-    .avatar.toby {
+    .avatar.alice {
       background: transparent;
       overflow: hidden;
     }
-    .avatar.toby img {
+    .avatar.alice img {
       width: 100%; height: 100%;
       object-fit: cover;
       border-radius: 50%;
@@ -1407,8 +1407,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       <button class="menu-btn" id="menuBtn" title="Toggle sidebar">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 12h16M4 19h16"/></svg>
       </button>
-      <div class="logo"><img src="/alice-icon-512.png" alt="Toby" width="36" height="36" style="border-radius:50%"></div>
-      <h1>Toby</h1>
+      <div class="logo"><img src="/alice-icon-512.png" alt="Alice" width="36" height="36" style="border-radius:50%"></div>
+      <h1>Alice</h1>
       <div class="status-badge" id="status">
         <span class="status-dot"></span>
         Online
@@ -1421,8 +1421,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     <div id="messages">
       <div class="welcome" id="welcome">
-        <div class="welcome-icon"><img src="/alice-icon-512.png" alt="Toby" style="width:80px;height:80px;border-radius:50%"></div>
-        <h2>Hi, I’m Toby</h2>
+        <div class="welcome-icon"><img src="/alice-icon-512.png" alt="Alice" style="width:80px;height:80px;border-radius:50%"></div>
+        <h2>Hi, I’m Alice</h2>
         <p>Your personal AI agent. I can write code, search the web, manage files, and much more.</p>
         <div class="suggestions">
           <button class="suggestion" data-msg="What tools do you have?"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></svg> What can you do?</button>
@@ -1443,7 +1443,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         <button id="attachBtn" class="attach-btn" title="Attach file">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 6l-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551"/></svg>
         </button>
-        <textarea id="input" placeholder="Message Toby…" autofocus autocomplete="off" rows="1"></textarea>
+        <textarea id="input" placeholder="Message Alice…" autofocus autocomplete="off" rows="1"></textarea>
         <button id="micBtn" class="attach-btn" title="Voice dictation" style="display:none;">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
         </button>
@@ -1464,7 +1464,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
   <script>
     // White SVG sparkle icon for avatars
-    const SPARKLE_SVG = '<img src="/alice-icon-512.png" alt="Toby">';
+    const SPARKLE_SVG = '<img src="/alice-icon-512.png" alt="Alice">';
 
     // Use marked-highlight extension for syntax highlighting
     if (typeof markedHighlight !== 'undefined') {
@@ -1535,7 +1535,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
       if (type === 'agent') {
         const avatar = document.createElement('div');
-        avatar.className = 'avatar toby';
+        avatar.className = 'avatar alice';
         avatar.innerHTML = SPARKLE_SVG;
         row.appendChild(avatar);
       }
@@ -1611,7 +1611,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       row.id = 'thinking-row';
 
       const avatar = document.createElement('div');
-      avatar.className = 'avatar toby';
+      avatar.className = 'avatar alice';
       avatar.innerHTML = SPARKLE_SVG;
       row.appendChild(avatar);
 
@@ -1756,7 +1756,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           currentStreamRow.className = 'msg-row agent';
 
           const avatar = document.createElement('div');
-          avatar.className = 'avatar toby';
+          avatar.className = 'avatar alice';
           avatar.innerHTML = SPARKLE_SVG;
           currentStreamRow.appendChild(avatar);
 
@@ -2021,8 +2021,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     function showWelcome() {
       messages.innerHTML = \`
         <div class="welcome" id="welcome">
-          <div class="welcome-icon"><img src="/alice-icon-512.png" alt="Toby" style="width:80px;height:80px;border-radius:50%"></div>
-          <h2>Hi, I’m Toby</h2>
+          <div class="welcome-icon"><img src="/alice-icon-512.png" alt="Alice" style="width:80px;height:80px;border-radius:50%"></div>
+          <h2>Hi, I’m Alice</h2>
           <p>Your personal AI agent. I can write code, search the web, manage files, and much more.</p>
           <div class="suggestions">
             <button class="suggestion" data-msg="What tools do you have?"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z"/></svg> What can you do?</button>
@@ -2111,7 +2111,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const res = await fetch('/api/reminders').then(r => r.json());
         let html = '<h2 style="color:var(--accent);margin-bottom:16px">Reminders</h2>';
         if (res.reminders.length === 0) {
-          html += '<p style="color:var(--text-secondary)">No active reminders. Ask Toby to set one!</p>';
+          html += '<p style="color:var(--text-secondary)">No active reminders. Ask Alice to set one!</p>';
         } else {
           res.reminders.forEach(r => {
             html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">';
@@ -2131,7 +2131,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       } else if (page === 'personas') {
         var html = '<h2 style="color:var(--accent);margin-bottom:16px">Personas</h2>';
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;border-left:3px solid var(--accent)">';
-        html += '<div style="font-weight:500;color:var(--text-primary);margin-bottom:6px">Toby (Default)</div>';
+        html += '<div style="font-weight:500;color:var(--text-primary);margin-bottom:6px">Alice (Default)</div>';
         html += '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">Your personal AI assistant with a warm, helpful personality. Manages reminders, searches memory, and helps with coding tasks.</div></div>';
         html += '<p style="color:var(--text-tertiary);margin-top:16px;font-size:13px">More personas coming soon.</p>';
         showDashboardView(html);

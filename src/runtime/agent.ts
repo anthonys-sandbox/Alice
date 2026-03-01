@@ -864,20 +864,43 @@ export class Agent {
         const hasGemini = this.config.gemini.apiKey || hasCliCredentials();
         if (hasGemini) {
             const authLabel = hasCliCredentials() && this.config.gemini.auth !== 'api-key' ? 'Ultra' : 'API';
-            models.push({
-                id: 'gemini-2.5-flash-preview-05-20',
-                name: `Gemini 2.5 Flash (${authLabel})`,
-                provider: 'gemini',
-                toolCapable: true,
-                capabilities: ['reasoning'],
-            });
-            models.push({
-                id: 'gemini-2.5-pro-preview-05-06',
-                name: `Gemini 2.5 Pro (${authLabel})`,
-                provider: 'gemini',
-                toolCapable: true,
-                capabilities: ['reasoning'],
-            });
+            models.push(
+                {
+                    id: 'gemini-3-flash-preview',
+                    name: `Gemini 3 Flash (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'gemini-3-pro-preview',
+                    name: `Gemini 3 Pro (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'gemini-3.1-pro-preview',
+                    name: `Gemini 3.1 Pro (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'gemini-2.5-flash',
+                    name: `Gemini 2.5 Flash (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'gemini-2.5-pro',
+                    name: `Gemini 2.5 Pro (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+            );
         }
 
         // ── OpenRouter free models ──

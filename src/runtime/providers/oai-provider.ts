@@ -31,7 +31,7 @@ interface OAITool {
 // ── Conversion helpers ────────────────────────────────────────
 
 /**
- * Convert Toby LLMMessage[] (Gemini format) → OpenAI messages.
+ * Convert Alice LLMMessage[] (Gemini format) → OpenAI messages.
  */
 function toOAIMessages(messages: LLMMessage[]): OAIMessage[] {
     const out: OAIMessage[] = [];
@@ -111,7 +111,7 @@ function toOAIMessages(messages: LLMMessage[]): OAIMessage[] {
 }
 
 /**
- * Convert Toby FunctionDeclaration[] → OpenAI tool format.
+ * Convert Alice FunctionDeclaration[] → OpenAI tool format.
  */
 function toOAITools(tools: FunctionDeclaration[]): OAITool[] {
     return tools.map(t => ({
