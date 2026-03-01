@@ -19,7 +19,8 @@ const OAUTH_CREDS_PATH = join(homedir(), '.gemini', 'oauth_creds.json');
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
 // The Gemini CLI's public OAuth client ID (hardcoded in the CLI source, visible in the OAuth URL)
-const CLI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdi135j.apps.googleusercontent.com';
+const CLI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
+const CLI_CLIENT_SECRET = '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';
 
 // Token refresh buffer — refresh 5 minutes before expiry
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -89,6 +90,7 @@ function readCreds(): OAuthCreds | null {
 async function refreshAccessToken(creds: OAuthCreds): Promise<CachedToken> {
     const body = new URLSearchParams({
         client_id: CLI_CLIENT_ID,
+        client_secret: CLI_CLIENT_SECRET,
         refresh_token: creds.refresh_token,
         grant_type: 'refresh_token',
     });

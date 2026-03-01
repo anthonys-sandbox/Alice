@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A self-hosted AI agent that runs locally on your Mac.</strong><br>
-  Chat via a beautiful web UI or Google Chat. Powered by Gemini &amp; Ollama.
+  Chat via a beautiful web UI or Google Chat. Powered by Gemini, Ollama &amp; OpenRouter.
 </p>
 
 <p align="center">
@@ -98,6 +98,9 @@ OLLAMA_VISION_MODEL=qwen3-vl  # Auto-used when images are attached
 
 # For image generation, add a Gemini API key (free tier available)
 GEMINI_API_KEY=your_key_here  # Get from https://aistudio.google.com/apikey
+
+# For Google AI Ultra (free with subscription) — see "Gemini CLI Auth" below
+# GEMINI_AUTH=cli
 ```
 
 ### 4. Start Alice
@@ -113,6 +116,30 @@ Open **http://localhost:18790** in your browser. That's it! 🎉
 ```bash
 npx tsx src/index.ts chat
 ```
+
+---
+
+## Gemini CLI Auth (Google Ultra Subscription)
+
+If you have a **Google AI Ultra** or **Google One AI Premium** subscription, you can route Alice's requests through the same Code Assist API used by the [Gemini CLI](https://github.com/google-gemini/gemini-cli) — **no separate API billing needed**.
+
+### Setup
+
+1. **Install the Gemini CLI:**
+   ```bash
+   npm install -g @google/gemini-cli
+   gemini
+   ```
+2. **Log in** when prompted — this saves OAuth credentials to `~/.gemini/oauth_creds.json`
+3. **Set the auth mode** in your `.env`:
+   ```bash
+   CHAT_PROVIDER=gemini
+   GEMINI_AUTH=cli
+   GEMINI_MODEL=gemini-2.5-flash-preview-05-20
+   ```
+4. **Start Alice** — she'll automatically use your Ultra subscription quota
+
+Tokens refresh automatically. If you log out of the CLI, Alice falls back to API key mode.
 
 ---
 
@@ -236,13 +263,15 @@ Alice uses a layered configuration system:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CHAT_PROVIDER` | `ollama` | LLM provider: `ollama` (local) or `gemini` (cloud) |
+| `CHAT_PROVIDER` | `ollama` | LLM provider: `ollama`, `gemini`, or `openrouter` |
 | `GEMINI_API_KEY` | — | Gemini API key ([get one](https://aistudio.google.com/apikey)) |
+| `GEMINI_AUTH` | `apikey` | Gemini auth mode: `apikey` or `cli` (Google Ultra) |
 | `GEMINI_MODEL` | `gemini-3-flash-preview` | Gemini model name |
 | `OLLAMA_MODEL` | `qwen3:8b` | Ollama text model (reasoning + tool calling) |
 | `OLLAMA_VISION_MODEL` | `qwen3-vl` | Ollama vision model (auto-used when images attached) |
 | `OLLAMA_HOST` | `127.0.0.1` | Ollama server host |
 | `OLLAMA_PORT` | `11434` | Ollama server port |
+| `OPENROUTER_API_KEY` | — | OpenRouter API key ([get one](https://openrouter.ai/settings/keys)) |
 | `RELAY_SHEET_ID` | — | Google Sheet ID for Chat relay |
 | `GOOGLE_CLIENT_ID` | — | OAuth client ID for Sheet access |
 | `GOOGLE_CLIENT_SECRET` | — | OAuth client secret |
@@ -282,6 +311,8 @@ Alice has 16 built-in tools she can use during conversations:
 | `web_fetch` | Fetch and extract text from a URL |
 | `read_pdf` | Extract text from PDF files |
 | `generate_image` | Generate images with Gemini |
+| `browse_page` | Navigate and extract content from web pages |
+| `screenshot` | Take a screenshot of a web page |
 | `git_status` | Show git repository status |
 | `git_diff` | Show file diffs (staged or unstaged) |
 | `git_commit` | Stage and commit changes |
@@ -416,8 +447,10 @@ alice/
 │   ├── runtime/
 │   │   ├── agent.ts           # Core ReAct agentic loop
 │   │   ├── providers/
-│   │   │   ├── gemini.ts      # Gemini API provider
-│   │   │   └── oai-provider.ts # OpenAI-compatible provider (Ollama)
+│   │   │   ├── gemini.ts      # Gemini API provider (API key + CLI auth)
+│   │   │   ├── gemini-cli-auth.ts # Gemini CLI OAuth token manager
+│   │   │   ├── code-assist-client.ts # Code Assist API client (Ultra subscription)
+│   │   │   └── oai-provider.ts # OpenAI-compatible provider (Ollama/OpenRouter)
 │   │   └── tools/registry.ts  # Built-in tool definitions
 │   ├── channels/
 │   │   └── google-chat.ts     # Google Chat adapter (Sheet polling)

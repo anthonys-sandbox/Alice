@@ -164,6 +164,22 @@ function buildCodeAssistRequest(
 
     if (tools && tools.length > 0) {
         vertexRequest.tools = tools;
+        // Explicitly enable function calling mode
+        vertexRequest.toolConfig = {
+            functionCallingConfig: {
+                mode: 'AUTO',
+            },
+        };
+        // Debug: log tool names being sent
+        const toolNames = tools.flatMap(t =>
+            (t.functionDeclarations || []).map((fd: any) => fd.name)
+        );
+        log.debug('Tools included in request', {
+            toolCount: toolNames.length,
+            tools: toolNames.slice(0, 10).join(', '),
+        });
+    } else {
+        log.debug('No tools included in request');
     }
 
     return {
