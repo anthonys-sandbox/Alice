@@ -284,8 +284,15 @@ export class Agent {
         let totalChars = 0;
         for (const msg of messages) {
             for (const part of msg.parts) {
-                if ('text' in part && part.text) totalChars += part.text.length;
-                else totalChars += JSON.stringify(part).length;
+                if ('text' in part && part.text) {
+                    totalChars += part.text.length;
+                } else if ('inlineData' in part) {
+                    // Images are sent as binary — don't count base64 chars as text tokens.
+                    // Vision models typically use ~500 tokens per image regardless of size.
+                    totalChars += 2000; // ~500 tokens × 4 chars/token
+                } else {
+                    totalChars += JSON.stringify(part).length;
+                }
             }
         }
         return Math.ceil(totalChars / 4);
