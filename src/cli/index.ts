@@ -32,7 +32,7 @@ program
 
         console.log(chalk.magenta(`
    ╔══════════════════════════════════════╗
-   ║        ✨  T  O  B  Y              ║
+   ║       ✨  A  L  I  C  E            ║
    ║     Personal AI Agent Runtime       ║
    ╚══════════════════════════════════════╝
     `));

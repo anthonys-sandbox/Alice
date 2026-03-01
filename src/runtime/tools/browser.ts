@@ -1,3 +1,4 @@
+import puppeteer, { Browser, Page } from 'puppeteer';
 import { resolve, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { createLogger } from '../../utils/logger.js';
@@ -9,10 +10,8 @@ const log = createLogger('Browser');
 // Stays alive between tool calls so Alice can navigate, click,
 // type, and screenshot in sequence — like a real user.
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let browser: any = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let page: any = null;
+let browser: Browser | null = null;
+let page: Page | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -26,12 +25,9 @@ function resetIdleTimer(): void {
     }, IDLE_TIMEOUT_MS);
 }
 
-async function getBrowser(): Promise<any> {
+async function getBrowser(): Promise<Browser> {
     if (!browser || !browser.connected) {
         log.info('Launching browser...');
-        // Dynamic import so puppeteer is only loaded when actually needed.
-        // Alice starts fine even if puppeteer/Chromium is not installed.
-        const { default: puppeteer } = await import('puppeteer');
         browser = await puppeteer.launch({
             headless: true,
             args: [
@@ -46,12 +42,12 @@ async function getBrowser(): Promise<any> {
     return browser;
 }
 
-async function getPage(): Promise<any> {
+async function getPage(): Promise<Page> {
     const b = await getBrowser();
     if (!page || page.isClosed()) {
         const pages = await b.pages();
         page = pages.length > 0 ? pages[0] : await b.newPage();
-        await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 2 });
+        await page.setViewport({ width: 1280, height: 800 });
     }
     return page;
 }
@@ -83,7 +79,7 @@ export const browsePageTool: ToolDefinition = {
             const p = await getPage();
             log.info(`Navigating to ${args.url}`);
             await p.goto(args.url, {
-                waitUntil: 'networkidle2',
+                waitUntil: 'domcontentloaded',
                 timeout: NAV_TIMEOUT_MS,
             });
 
@@ -144,8 +140,6 @@ export const screenshotTool: ToolDefinition = {
                 if (!element) return `Error: Element not found: ${args.selector}`;
                 await element.screenshot({ path: outputPath });
             } else {
-                // Wait briefly for any late-loading content
-                await new Promise(r => setTimeout(r, 1000));
                 await p.screenshot({
                     path: outputPath,
                     fullPage: args.full_page ?? false,

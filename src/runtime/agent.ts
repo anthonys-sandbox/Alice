@@ -1,6 +1,6 @@
 import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type FunctionDeclaration } from './providers/gemini.js';
-import { hasCliCredentials } from './providers/gemini-cli-auth.js';
 import { OAIProvider } from './providers/oai-provider.js';
+import { hasCliCredentials } from './providers/gemini-cli-auth.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
 import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, type MemoryUpdate } from '../memory/index.js';
 import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
@@ -32,22 +32,6 @@ export interface AgentResponse {
     iterations: number;
 }
 
-// Known model families that support tool/function calling
-const TOOL_CAPABLE_FAMILIES = new Set([
-    'qwen3', 'qwen2.5', 'qwen2', 'llama3', 'llama3.1', 'llama3.2', 'llama3.3',
-    'mistral', 'mixtral', 'command-r', 'firefunction', 'granite',
-    'nemotron', 'hermes', 'deepseek-r1',
-]);
-
-export interface ModelInfo {
-    id: string;
-    name: string;
-    provider: 'ollama' | 'gemini' | 'openrouter';
-    size?: string;
-    toolCapable: boolean;
-    capabilities?: string[];  // e.g. ['vision', 'reasoning']
-}
-
 export class Agent {
     private provider: ChatProvider;
     private config: AliceConfig;
@@ -55,8 +39,8 @@ export class Agent {
     private systemPrompt: string = '';
     private sessionStore: SessionStore;
     private currentSessionId: string;
-    private activeProvider: 'ollama' | 'gemini' | 'openrouter';
-    private activeModel: string;
+    public activeModel!: string;
+    public activeProvider!: string;
 
     constructor(config: AliceConfig) {
         this.config = config;
@@ -64,8 +48,8 @@ export class Agent {
         if (config.chatProvider === 'gemini') {
             log.info('Using Gemini as chat provider');
             this.provider = new GeminiProvider(config);
-            this.activeProvider = 'gemini';
             this.activeModel = config.gemini.model;
+            this.activeProvider = 'gemini';
         } else {
             // ollama (default)
             log.info('Using Ollama (local) as chat provider');
@@ -74,8 +58,8 @@ export class Agent {
                 baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
                 fallbackModel: config.ollama.fallbackModel,
             });
-            this.activeProvider = 'ollama';
             this.activeModel = config.ollama.model;
+            this.activeProvider = 'ollama';
         }
 
         // Initialize session persistence
@@ -483,12 +467,8 @@ export class Agent {
                 const isModelError = errorMessage.includes('400') || errorMessage.includes('invalid');
 
                 if (isRateLimit && iterations < this.config.agent.maxIterations) {
-                    // Parse "quota will reset after Xs" from API error
-                    const resetMatch = errorMessage.match(/reset after (\d+)s/);
-                    const resetSeconds = resetMatch ? parseInt(resetMatch[1], 10) : 0;
-                    const waitMs = resetSeconds > 0
-                        ? (resetSeconds + 2) * 1000
-                        : Math.min(Math.pow(2, iterations) * 1000, 30000);
+                    // Exponential backoff for rate limiting
+                    const waitMs = Math.pow(2, iterations) * 1000;
                     log.warn(`Rate limited, waiting ${waitMs}ms before retry`);
                     await new Promise(r => setTimeout(r, waitMs));
                     continue;
@@ -652,11 +632,7 @@ export class Agent {
                 const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
 
                 if (isRateLimit && iterations < this.config.agent.maxIterations) {
-                    const resetMatch = errorMessage.match(/reset after (\d+)s/);
-                    const resetSeconds = resetMatch ? parseInt(resetMatch[1], 10) : 0;
-                    const waitMs = resetSeconds > 0
-                        ? (resetSeconds + 2) * 1000
-                        : Math.min(Math.pow(2, iterations) * 1000, 30000);
+                    const waitMs = Math.pow(2, iterations) * 1000;
                     log.warn(`Rate limited, waiting ${waitMs}ms before retry`);
                     await new Promise(r => setTimeout(r, waitMs));
                     continue;
@@ -758,13 +734,12 @@ export class Agent {
     }
 
     /**
- * Get session status info for /status command.
- */
+     * Get session status info for /status command.
+     */
     getStatus(): {
         sessionId: string;
         messageCount: number;
         model: string;
-        provider: string;
         fallbackModel?: string;
         systemPromptChars: number;
         estimatedTokens: number;
@@ -774,9 +749,8 @@ export class Agent {
         return {
             sessionId: this.currentSessionId,
             messageCount: this.conversationHistory.length,
-            model: this.activeModel,
-            provider: this.activeProvider,
-            fallbackModel: this.activeProvider === 'ollama' ? this.config.ollama.fallbackModel : undefined,
+            model: this.config.ollama.model,
+            fallbackModel: this.config.ollama.fallbackModel,
             systemPromptChars: this.systemPrompt.length,
             estimatedTokens: Math.round(this.systemPrompt.length / 4) +
                 this.conversationHistory.reduce((sum, msg) => {
@@ -787,157 +761,6 @@ export class Agent {
         };
     }
 
-    /**
-     * Switch the active model (and provider if needed).
-     * Returns the new model name.
-     */
-    switchModel(providerName: 'ollama' | 'gemini' | 'openrouter', modelId: string): string {
-        if (providerName === this.activeProvider && providerName === 'ollama') {
-            // Same Ollama provider — just swap model
-            (this.provider as OAIProvider).setModel(modelId);
-        } else if (providerName === 'gemini') {
-            this.provider = new GeminiProvider({
-                ...this.config,
-                gemini: { ...this.config.gemini, model: modelId },
-            });
-        } else if (providerName === 'openrouter') {
-            this.provider = new OAIProvider({
-                model: modelId,
-                baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
-                apiKey: this.config.openRouter.apiKey,
-            });
-        } else {
-            // Ollama (from a different provider)
-            this.provider = new OAIProvider({
-                model: modelId,
-                baseUrl: `http://${this.config.ollama.host}:${this.config.ollama.port}/v1/chat/completions`,
-                fallbackModel: this.config.ollama.fallbackModel,
-            });
-        }
-
-        this.activeProvider = providerName;
-        this.activeModel = modelId;
-        log.info('Model switched', { provider: providerName, model: modelId });
-        return modelId;
-    }
-
-    /** Get the currently active model info. */
-    getActiveModel(): { provider: string; model: string } {
-        return { provider: this.activeProvider, model: this.activeModel };
-    }
-
-    /**
-     * Query available models from all providers.
-     * Ollama: fetches /api/tags. Gemini: returns known models if API key present.
-     * Only returns tool-capable models.
-     */
-    async getAvailableModels(): Promise<ModelInfo[]> {
-        const models: ModelInfo[] = [];
-
-        // ── Ollama models ──
-        try {
-            const url = `http://${this.config.ollama.host}:${this.config.ollama.port}/api/tags`;
-            const resp = await fetch(url, { signal: AbortSignal.timeout(5000) });
-            if (resp.ok) {
-                const data: any = await resp.json();
-                for (const m of data.models || []) {
-                    const name: string = m.name || m.model || '';
-                    const family = name.split(':')[0].toLowerCase();
-                    const isToolCapable = TOOL_CAPABLE_FAMILIES.has(family);
-                    if (isToolCapable) {
-                        const sizeGB = m.size ? (m.size / 1e9).toFixed(1) + 'GB' : undefined;
-                        models.push({
-                            id: name,
-                            name: name,
-                            provider: 'ollama',
-                            size: sizeGB,
-                            toolCapable: true,
-                        });
-                    }
-                }
-            }
-        } catch {
-            log.warn('Could not fetch Ollama models');
-        }
-
-        // ── Gemini models ──
-        const hasGemini = this.config.gemini.apiKey || hasCliCredentials();
-        if (hasGemini) {
-            const authLabel = hasCliCredentials() && this.config.gemini.auth !== 'api-key' ? 'Ultra' : 'API';
-            models.push(
-                {
-                    id: 'gemini-3-flash-preview',
-                    name: `Gemini 3 Flash (${authLabel})`,
-                    provider: 'gemini',
-                    toolCapable: true,
-                    capabilities: ['reasoning'],
-                },
-                {
-                    id: 'gemini-3-pro-preview',
-                    name: `Gemini 3 Pro (${authLabel})`,
-                    provider: 'gemini',
-                    toolCapable: true,
-                    capabilities: ['reasoning'],
-                },
-                {
-                    id: 'gemini-3.1-pro-preview',
-                    name: `Gemini 3.1 Pro (${authLabel})`,
-                    provider: 'gemini',
-                    toolCapable: true,
-                    capabilities: ['reasoning'],
-                },
-                {
-                    id: 'gemini-2.5-flash',
-                    name: `Gemini 2.5 Flash (${authLabel})`,
-                    provider: 'gemini',
-                    toolCapable: true,
-                    capabilities: ['reasoning'],
-                },
-                {
-                    id: 'gemini-2.5-pro',
-                    name: `Gemini 2.5 Pro (${authLabel})`,
-                    provider: 'gemini',
-                    toolCapable: true,
-                    capabilities: ['reasoning'],
-                },
-            );
-        }
-
-        // ── OpenRouter free models ──
-        if (this.config.openRouter.apiKey) {
-            try {
-                const resp = await fetch('https://openrouter.ai/api/v1/models', {
-                    signal: AbortSignal.timeout(8000),
-                });
-                if (resp.ok) {
-                    const data: any = await resp.json();
-                    for (const m of data.data || []) {
-                        const pricing = m.pricing || {};
-                        const isFree = parseFloat(pricing.prompt || '1') === 0 && parseFloat(pricing.completion || '1') === 0;
-                        const hasTools = m.supported_parameters?.includes('tools');
-                        if (!isFree || !hasTools) continue;
-
-                        const caps: string[] = [];
-                        const modality = m.architecture?.modality || '';
-                        if (modality.includes('image') || m.id?.includes('-vl')) caps.push('vision');
-                        if (m.supported_parameters?.includes('reasoning') || m.id?.includes('thinking')) caps.push('reasoning');
-
-                        models.push({
-                            id: m.id,
-                            name: (m.name || m.id).replace(/ \(free\)$/i, ''),
-                            provider: 'openrouter',
-                            toolCapable: true,
-                            capabilities: caps,
-                        });
-                    }
-                }
-            } catch {
-                log.warn('Could not fetch OpenRouter models');
-            }
-        }
-
-        return models;
-    }
     /**
      * Auto-generate a session title from the first user message.
      * Runs asynchronously in the background.
@@ -1110,5 +933,140 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
      */
     getSessionMessages(sessionId: string): LLMMessage[] {
         return this.sessionStore.loadMessages(sessionId);
+    }
+
+    /**
+     * List available models from all configured providers.
+     */
+    async listAvailableModels(): Promise<Array<{ id: string; name: string; provider: string; toolCapable: boolean; capabilities: string[] }>> {
+        const models: Array<{ id: string; name: string; provider: string; toolCapable: boolean; capabilities: string[] }> = [];
+
+        // ── Ollama models ──
+        try {
+            const resp = await fetch(`http://${this.config.ollama.host}:${this.config.ollama.port}/api/tags`, {
+                signal: AbortSignal.timeout(3000),
+            });
+            if (resp.ok) {
+                const data: any = await resp.json();
+                for (const m of data.models || []) {
+                    const isVision = m.name.includes('-vl') || m.name.includes('vision');
+                    models.push({
+                        id: m.name,
+                        name: `${m.name} (local)`,
+                        provider: 'ollama',
+                        toolCapable: true,
+                        capabilities: isVision ? ['vision'] : [],
+                    });
+                }
+            }
+        } catch {
+            log.warn('Could not fetch Ollama models');
+        }
+
+        // ── Gemini models ──
+        const hasGemini = this.config.gemini.apiKey || hasCliCredentials();
+        if (hasGemini) {
+            const authLabel = hasCliCredentials() && this.config.gemini.auth !== 'apikey' ? 'Ultra' : 'API';
+            models.push(
+                {
+                    id: 'gemini-3-flash-preview',
+                    name: `Gemini 3 Flash (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'gemini-3-pro-preview',
+                    name: `Gemini 3 Pro (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'gemini-3.1-pro-preview',
+                    name: `Gemini 3.1 Pro (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'gemini-2.5-flash',
+                    name: `Gemini 2.5 Flash (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'gemini-2.5-pro',
+                    name: `Gemini 2.5 Pro (${authLabel})`,
+                    provider: 'gemini',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+            );
+        }
+
+        // ── OpenRouter free models ──
+        if (this.config.openRouter.apiKey) {
+            try {
+                const resp = await fetch('https://openrouter.ai/api/v1/models', {
+                    signal: AbortSignal.timeout(8000),
+                });
+                if (resp.ok) {
+                    const data: any = await resp.json();
+                    for (const m of data.data || []) {
+                        const pricing = m.pricing || {};
+                        const isFree = parseFloat(pricing.prompt || '1') === 0 && parseFloat(pricing.completion || '1') === 0;
+                        const hasTools = m.supported_parameters?.includes('tools');
+                        if (!isFree || !hasTools) continue;
+                        const caps: string[] = [];
+                        const modality = m.architecture?.modality || '';
+                        if (modality.includes('image') || m.id?.includes('-vl')) caps.push('vision');
+                        if (m.supported_parameters?.includes('reasoning') || m.id?.includes('thinking')) caps.push('reasoning');
+                        models.push({
+                            id: m.id,
+                            name: m.name || m.id,
+                            provider: 'openrouter',
+                            toolCapable: true,
+                            capabilities: caps,
+                        });
+                    }
+                }
+            } catch {
+                log.warn('Could not fetch OpenRouter models');
+            }
+        }
+
+        return models;
+    }
+
+    /**
+     * Switch to a different model/provider at runtime.
+     */
+    switchModel(provider: string, model: string): void {
+        if (provider === 'gemini') {
+            const geminiConfig = { ...this.config, gemini: { ...this.config.gemini, model } };
+            this.provider = new GeminiProvider(geminiConfig);
+            this.activeModel = model;
+            this.activeProvider = 'gemini';
+        } else if (provider === 'openrouter') {
+            this.provider = new OAIProvider({
+                model,
+                baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+                apiKey: this.config.openRouter.apiKey,
+            });
+            this.activeModel = model;
+            this.activeProvider = 'openrouter';
+        } else {
+            this.provider = new OAIProvider({
+                model,
+                baseUrl: `http://${this.config.ollama.host}:${this.config.ollama.port}/v1/chat/completions`,
+                fallbackModel: this.config.ollama.fallbackModel,
+            });
+            this.activeModel = model;
+            this.activeProvider = 'ollama';
+        }
+        log.info('Model switched', { provider, model });
+        this.refreshContext();
     }
 }

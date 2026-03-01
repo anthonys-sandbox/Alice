@@ -10,7 +10,6 @@
 - Home Directory: /Users/AnthonyTackett
 - Disk Usage: 23% utilization (10GiB used of 926GiB total) — within safe limits
 - System Status: No critical crashes detected in dev servers; Heartbeat scheduler is active and triggered automated check
-- AnthonyTackett took a screenshot of Google's homepage and saved it to /Users/AnthonyTackett/Documents/GitHub/GravityClaw/generated_images/screenshot_1772381614676.png
 
 ## Preferences
 - Prefers direct, actionable responses
@@ -20,11 +19,6 @@
 - Prefers modern, polished UI designs
 - Prioritizes AI as a productivity tool for professional work
 - Reminder requested for AI team expansions or creative workflow checks
-- Prefers opening images in a new window
-- AI team expansions/creative workflow checks reminder (pending)
-- The "AI team expansions/creative workflow checks" reminder (requested in preferences) is still pending.
-- Base path for local GitHub repositories: /Users/AnthonyTackett/Documents/GitHub/
-- Generated images for local GitHub projects are stored in a 'generated_images' subdirectory within the project's root.
 
 ## Active Projects
 - Creative Lab: AI agents, automation, agentic workflows

@@ -742,7 +742,7 @@ export function toGeminiFunctionDeclarations() {
     const CORE_TOOLS = new Set([
         'bash', 'read_file', 'write_file', 'edit_file',
         'web_search', 'search_memory', 'set_reminder', 'generate_image',
-        'browse_page', 'screenshot',
+        'browse_page',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name))

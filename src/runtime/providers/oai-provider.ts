@@ -126,16 +126,6 @@ function toOAITools(tools: FunctionDeclaration[]): OAITool[] {
 
 // ── Provider class ────────────────────────────────────────────
 
-/** Strip Qwen3 <think>...</think> blocks from response text. */
-function stripThinking(text: string | null | undefined): string | null {
-    if (!text) return text ?? null;
-    // Remove complete think blocks
-    const stripped = text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-    // If the model opened a think block but never closed it, drop everything after <think>
-    const partial = stripped.replace(/<think>[\s\S]*/g, '').trim();
-    return partial || null;
-}
-
 /**
  * Generic OpenAI-compatible provider (works with Ollama, vLLM, LiteLLM, etc.).
  * Accepts LLMMessage[] and FunctionDeclaration[], returns LLMResponse.
@@ -178,7 +168,7 @@ export class OAIProvider {
         const body: any = {
             model: this.model,
             messages: oaiMessages,
-            max_tokens: 8192,
+            max_tokens: 4096,
         };
 
         const oaiTools = toOAITools(functionDeclarations);
@@ -262,14 +252,14 @@ export class OAIProvider {
                     log.debug('Response received', { hasText: !!message.content, functionCallCount: functionCalls.length });
 
                     return {
-                        text: stripThinking(message.content) || null,
+                        text: message.content || null,
                         functionCalls: functionCalls.length > 0 ? functionCalls : null,
                         rawParts,
                         rawResponse: data,
                     };
                 }
 
-                const text = stripThinking(message.content);
+                const text = message.content || null;
                 const rawParts: LLMPart[] = text ? [{ text }] : [];
 
                 log.debug('Response received', { hasText: !!text, functionCallCount: 0 });
@@ -303,7 +293,7 @@ export class OAIProvider {
         const body: any = {
             model: this.model,
             messages: oaiMessages,
-            max_tokens: 8192,
+            max_tokens: 4096,
             stream: true,
         };
 
@@ -391,6 +381,9 @@ export class OAIProvider {
             reader.releaseLock();
         }
 
+        // Clean qwen3 <think> blocks from the accumulated text
+        const cleanText = fullText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
         // Build response
         if (toolCallChunks.size > 0) {
             const functionCalls = Array.from(toolCallChunks.values()).map(tc => ({
@@ -398,22 +391,20 @@ export class OAIProvider {
                 args: JSON.parse(tc.arguments || '{}'),
             }));
 
-            const cleanedText = stripThinking(fullText);
             const rawParts: LLMPart[] = [];
-            if (cleanedText) rawParts.push({ text: cleanedText });
+            if (cleanText) rawParts.push({ text: cleanText });
             for (const fc of functionCalls) {
                 rawParts.push({ functionCall: { name: fc.name, args: fc.args } });
             }
 
             return {
-                text: cleanedText || null,
+                text: cleanText || null,
                 functionCalls: functionCalls.length > 0 ? functionCalls : null,
                 rawParts,
                 rawResponse: null,
             };
         }
 
-        const cleanText = stripThinking(fullText);
         const rawParts: LLMPart[] = cleanText ? [{ text: cleanText }] : [];
         return { text: cleanText || null, functionCalls: null, rawParts, rawResponse: null };
     }

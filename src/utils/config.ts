@@ -8,7 +8,7 @@ export interface AliceConfig {
     gemini: {
         apiKey: string;
         model: string;
-        auth: 'api-key' | 'cli' | 'auto';
+        auth: 'apikey' | 'cli' | 'auto';
     };
     ollama: {
         host: string;
@@ -64,7 +64,7 @@ const DEFAULTS: AliceConfig = {
     gemini: {
         apiKey: '',
         model: 'gemini-3-flash-preview',
-        auth: 'auto' as const,
+        auth: 'auto',
     },
     ollama: {
         host: '127.0.0.1',
@@ -128,7 +128,6 @@ export function loadConfig(projectDir?: string): AliceConfig {
     // Environment variables override everything
     if (process.env.GEMINI_API_KEY) config.gemini.apiKey = process.env.GEMINI_API_KEY;
     if (process.env.GEMINI_MODEL) config.gemini.model = process.env.GEMINI_MODEL;
-    if (process.env.GEMINI_AUTH) config.gemini.auth = process.env.GEMINI_AUTH as AliceConfig['gemini']['auth'];
 
     if (process.env.CHAT_PROVIDER) config.chatProvider = process.env.CHAT_PROVIDER as AliceConfig['chatProvider'];
     if (process.env.OLLAMA_HOST) config.ollama.host = process.env.OLLAMA_HOST;
@@ -143,6 +142,7 @@ export function loadConfig(projectDir?: string): AliceConfig {
     if (process.env.GATEWAY_PORT) config.gateway.port = parseInt(process.env.GATEWAY_PORT, 10);
     if (process.env.HEARTBEAT_INTERVAL) config.heartbeat.intervalMinutes = parseInt(process.env.HEARTBEAT_INTERVAL, 10);
     if (process.env.LOG_LEVEL) config.logging.level = process.env.LOG_LEVEL as AliceConfig['logging']['level'];
+    if (process.env.GEMINI_AUTH) config.gemini.auth = process.env.GEMINI_AUTH as AliceConfig['gemini']['auth'];
     if (process.env.OPENROUTER_API_KEY) config.openRouter.apiKey = process.env.OPENROUTER_API_KEY;
 
     return config;
