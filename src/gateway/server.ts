@@ -855,6 +855,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       width: 100%;
       margin: 0 auto;
       animation: fadeIn var(--duration-medium) var(--motion-decelerate);
+      min-width: 0; /* prevent flex children from overflowing */
     }
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(8px); }
@@ -897,7 +898,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       font-size: 15px;
       line-height: 1.6;
       word-wrap: break-word;
+      overflow-wrap: anywhere;
       max-width: calc(var(--max-width) - 50px);
+      min-width: 0;
+      overflow: hidden;
     }
     .msg-row.user .msg-content {
       background: var(--user-bg);
@@ -945,9 +949,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .msg-content a:hover { text-decoration: underline; }
     .msg-content img {
       max-width: 100%;
+      height: auto;
       max-height: 400px;
       border-radius: var(--shape-lg);
       margin: 8px 0;
+      display: block;
       cursor: pointer;
       transition: transform var(--duration-short) var(--motion-decelerate);
     }
@@ -973,6 +979,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       overflow: hidden;
       margin: 12px 0;
       border: 1px solid var(--border-subtle);
+      max-width: 100%;
     }
     .msg-content pre code {
       background: transparent;
@@ -982,6 +989,27 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       line-height: 1.5;
       color: var(--text-primary);
       overflow-x: auto;
+      white-space: pre;
+      word-break: normal;
+    }
+    /* ── Tables ─────────────────────── */
+    .msg-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+      font-size: 14px;
+      display: block;
+      overflow-x: auto;
+    }
+    .msg-content th, .msg-content td {
+      padding: 8px 12px;
+      border: 1px solid var(--border-subtle);
+      text-align: left;
+      white-space: nowrap;
+    }
+    .msg-content th {
+      background: var(--bg-tertiary);
+      font-weight: 500;
     }
     .code-header {
       display: flex;
