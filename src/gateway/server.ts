@@ -2,6 +2,8 @@ import express from 'express';
 import { hostname } from 'os';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
+import { readdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { join, resolve } from 'path';
 import { Agent } from '../runtime/agent.js';
 import { GoogleChatAdapter } from '../channels/google-chat.js';
 import { startHeartbeat, stopHeartbeat } from '../scheduler/heartbeat.js';
@@ -248,9 +250,12 @@ export class Gateway {
     // List memory files
     this.app.get('/api/memory', (_req, res) => {
       try {
-        const { readdirSync, readFileSync } = require('fs');
-        const { join } = require('path');
-        const dir = this.config.memory.dir;
+        const dir = resolve(this.config.memory.dir);
+        if (!existsSync(dir)) {
+          log.warn('Memory directory not found', { dir });
+          res.json({ files: [] });
+          return;
+        }
         const files = readdirSync(dir)
           .filter((f: string) => f.endsWith('.md'))
           .map((f: string) => ({
@@ -258,15 +263,16 @@ export class Gateway {
             content: readFileSync(join(dir, f), 'utf-8'),
           }));
         res.json({ files });
-      } catch { res.json({ files: [] }); }
+      } catch (err: any) {
+        log.error('Failed to load memory files', { error: err.message });
+        res.json({ files: [] });
+      }
     });
 
     // Update a memory file
     this.app.put('/api/memory/:name', (req, res) => {
       try {
-        const { writeFileSync } = require('fs');
-        const { join } = require('path');
-        const filePath = join(this.config.memory.dir, `${req.params.name}.md`);
+        const filePath = join(resolve(this.config.memory.dir), `${req.params.name}.md`);
         writeFileSync(filePath, req.body.content || '', 'utf-8');
         this.agent.refreshContext();
         res.json({ status: 'saved' });
