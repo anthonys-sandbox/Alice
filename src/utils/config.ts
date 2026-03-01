@@ -62,7 +62,7 @@ const DEFAULTS: AliceConfig = {
     ollama: {
         host: '127.0.0.1',
         port: 11434,
-        model: 'qwen3:8b',
+        model: 'qwen3-vl',
     },
     googleChat: {
         sheetId: '',
