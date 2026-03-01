@@ -22,6 +22,7 @@
 - Reminder requested for AI team expansions or creative workflow checks
 - Prefers opening images in a new window
 - AI team expansions/creative workflow checks reminder (pending)
+- The "AI team expansions/creative workflow checks" reminder (requested in preferences) is still pending.
 
 ## Active Projects
 - Creative Lab: AI agents, automation, agentic workflows

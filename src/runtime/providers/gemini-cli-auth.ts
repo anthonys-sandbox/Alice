@@ -18,15 +18,23 @@ const log = createLogger('GeminiCLI');
 const OAUTH_CREDS_PATH = join(homedir(), '.gemini', 'oauth_creds.json');
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
+// The Gemini CLI's public OAuth client ID (hardcoded in the CLI source, visible in the OAuth URL)
+const CLI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdi135j.apps.googleusercontent.com';
+
 // Token refresh buffer — refresh 5 minutes before expiry
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
+/**
+ * Shape of ~/.gemini/oauth_creds.json as written by the Gemini CLI.
+ * Note: client_id is NOT stored in this file — the CLI hardcodes it.
+ */
 interface OAuthCreds {
-    client_id: string;
-    client_secret: string;
+    access_token: string;
     refresh_token: string;
-    // May also contain access_token, token_type, expiry_date etc.
-    [key: string]: any;
+    scope: string;
+    token_type: string;
+    id_token?: string;
+    expiry_date: number; // Unix timestamp in milliseconds
 }
 
 interface CachedToken {
@@ -58,14 +66,10 @@ function readCreds(): OAuthCreds | null {
 
     try {
         const raw = readFileSync(OAUTH_CREDS_PATH, 'utf-8');
-        const creds = JSON.parse(raw);
+        const creds = JSON.parse(raw) as OAuthCreds;
 
         if (!creds.refresh_token) {
             log.warn('CLI creds missing refresh_token');
-            return null;
-        }
-        if (!creds.client_id) {
-            log.warn('CLI creds missing client_id');
             return null;
         }
 
@@ -80,11 +84,11 @@ function readCreds(): OAuthCreds | null {
 
 /**
  * Exchange a refresh token for a fresh access token.
+ * Uses the Gemini CLI's public OAuth client ID (PKCE flow, no client_secret needed).
  */
 async function refreshAccessToken(creds: OAuthCreds): Promise<CachedToken> {
     const body = new URLSearchParams({
-        client_id: creds.client_id,
-        client_secret: creds.client_secret || '',
+        client_id: CLI_CLIENT_ID,
         refresh_token: creds.refresh_token,
         grant_type: 'refresh_token',
     });
@@ -115,17 +119,32 @@ async function refreshAccessToken(creds: OAuthCreds): Promise<CachedToken> {
 
 /**
  * Get a valid access token, refreshing if needed.
+ * First tries the existing access_token from the creds file,
+ * then refreshes via the OAuth endpoint if expired.
  * Returns null if CLI creds aren't available.
  */
 export async function getAccessToken(): Promise<string | null> {
     const creds = readCreds();
     if (!creds) return null;
 
-    // Return cached token if still valid
+    // Use cached token if still valid  
     if (cachedToken && cachedToken.expiresAt > Date.now() + REFRESH_BUFFER_MS) {
         return cachedToken.accessToken;
     }
 
+    // Try the existing access_token from the file if not expired
+    if (creds.access_token && creds.expiry_date > Date.now() + REFRESH_BUFFER_MS) {
+        cachedToken = {
+            accessToken: creds.access_token,
+            expiresAt: creds.expiry_date,
+        };
+        log.info('Using existing CLI access token', {
+            expiresIn: `${Math.round((creds.expiry_date - Date.now()) / 60000)}m`,
+        });
+        return cachedToken.accessToken;
+    }
+
+    // Token expired — refresh it
     try {
         cachedToken = await refreshAccessToken(creds);
         return cachedToken.accessToken;
@@ -146,3 +165,4 @@ export function invalidateTokens(): void {
     cachedCreds = null;
     log.info('CLI tokens invalidated — will re-read on next request');
 }
+
