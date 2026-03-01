@@ -332,7 +332,12 @@ export class OAIProvider {
                         // Text content
                         if (delta.content) {
                             fullText += delta.content;
-                            onToken(delta.content);
+                            // Filter out qwen3 <think> blocks from user-visible stream
+                            if (!fullText.includes('<think>') || fullText.includes('</think>')) {
+                                // Only emit content after </think> if there was a think block
+                                const cleanContent = delta.content.replace(/<\/?think>/g, '');
+                                if (cleanContent) onToken(cleanContent);
+                            }
                         }
 
                         // Tool call deltas (accumulated across chunks)
@@ -354,6 +359,9 @@ export class OAIProvider {
             reader.releaseLock();
         }
 
+        // Clean qwen3 <think> blocks from the accumulated text
+        const cleanText = fullText.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
         // Build response
         if (toolCallChunks.size > 0) {
             const functionCalls = Array.from(toolCallChunks.values()).map(tc => ({
@@ -362,20 +370,20 @@ export class OAIProvider {
             }));
 
             const rawParts: LLMPart[] = [];
-            if (fullText) rawParts.push({ text: fullText });
+            if (cleanText) rawParts.push({ text: cleanText });
             for (const fc of functionCalls) {
                 rawParts.push({ functionCall: { name: fc.name, args: fc.args } });
             }
 
             return {
-                text: fullText || null,
+                text: cleanText || null,
                 functionCalls: functionCalls.length > 0 ? functionCalls : null,
                 rawParts,
                 rawResponse: null,
             };
         }
 
-        const rawParts: LLMPart[] = fullText ? [{ text: fullText }] : [];
-        return { text: fullText || null, functionCalls: null, rawParts, rawResponse: null };
+        const rawParts: LLMPart[] = cleanText ? [{ text: cleanText }] : [];
+        return { text: cleanText || null, functionCalls: null, rawParts, rawResponse: null };
     }
 }

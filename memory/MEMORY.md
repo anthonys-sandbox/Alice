@@ -50,3 +50,12 @@ Facts, patterns, and knowledge curated by Alice over time.
 - The project's monitoring system checks for crashed dev servers and disk space usage (>90% threshold) during heartbeats
 - `df -h` command is executed in a bash environment for disk space monitoring
 - `df -h` failed with exit code 1, indicating potential command/environment issues
+
+## Learned 2026-03-01
+- Heartbeat scheduler triggers automated checks every 30 minutes
+- Disk space monitoring is a recurring task (root filesystem checked)
+- Root filesystem has 926 GiB total, 10 GiB used (23% utilization), 36 GiB available
+- `df -h` command used to assess disk space in bash environment
+- User may need to check other filesystems or proceed with disk-intensive tasks
+- Monitoring includes checking for crashed dev servers and disk space warnings
+- Heartbeat checklist includes both standard monitoring and customizable reminders

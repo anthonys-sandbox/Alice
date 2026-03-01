@@ -278,7 +278,11 @@ export class Agent {
             `Working directory: ${process.cwd()}`,
             `Platform: ${process.platform} (${process.arch})`,
             `</system_info>`,
+            '',
+            `/no_think`,
         ].filter(Boolean).join('\n\n');
+
+        log.info('System prompt built', { chars: this.systemPrompt.length, estimatedTokens: Math.round(this.systemPrompt.length / 4) });
 
         log.info('Context refreshed');
     }
