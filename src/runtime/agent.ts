@@ -428,7 +428,7 @@ export class Agent {
             `Working directory: ${process.cwd()}`,
             '',
             `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, set_reminder, generate_image, canvas, get_location) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
-            `IMPORTANT: When the user asks for charts, dashboards, visualizations, calculators, forms, or any interactive content, ALWAYS use the 'canvas' tool to push HTML directly inline in chat. Do NOT write HTML files and open them in the browser — use canvas instead.`,
+            `IMPORTANT: When the user asks for charts, dashboards, visualizations, calculators, forms, or any interactive content, ALWAYS use the 'canvas' tool to push HTML directly inline in chat. Do NOT use write_file to create HTML files — use the canvas tool ONLY. If you absolutely must save a file, write it to ~/.alice/canvas/ (never to the working directory).`,
             `/no_think`,
         ].filter(Boolean).join('\n');
 
