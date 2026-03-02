@@ -16,3 +16,7 @@
 - No new custom reminders found in the checklist
 - Disk Space Critical: /System/Volumes/Data is at 96% capacity (862Gi used of 926Gi).
 - Dev Server Down: Mission Control dashboard (port 3000) is unreachable. Gateway (port 18790) is active but cannot relay traffic to dashboard
+- Exploring OpenWeather MCP server for real-time weather data integration
+- System uses GravityClaw + Alice configuration; MCP mentioned as possible protocol
+- The user attempted to install the mcp-weather-free server but encountered an error where the repository lacks the specified subdirectory.
+- Recommended workflow: Clone the main repository first to inspect its structure, then verify if the weather server exists in the main repo.

@@ -19,6 +19,8 @@
 - Prioritizes modern, polished UI designs
 - Views AI as a productivity tool for professional work
 - Reminded about AI team expansions or creative workflow checks
+- Wants to integrate weather data via API or MCP into the workflow
+- Prefers using MCP servers for weather information
 
 ## Active Projects
 - Creative Lab: AI agents, automation, agentic workflows
