@@ -427,7 +427,8 @@ export class Agent {
             `Current date/time: ${currentDate}`,
             `Working directory: ${process.cwd()}`,
             '',
-            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, set_reminder, generate_image) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
+            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, set_reminder, generate_image, canvas, get_location) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
+            `IMPORTANT: When the user asks for charts, dashboards, visualizations, calculators, forms, or any interactive content, ALWAYS use the 'canvas' tool to push HTML directly inline in chat. Do NOT write HTML files and open them in the browser — use canvas instead.`,
             `/no_think`,
         ].filter(Boolean).join('\n');
 
