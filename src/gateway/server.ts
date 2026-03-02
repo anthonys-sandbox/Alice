@@ -238,10 +238,17 @@ export class Gateway {
     this.app.get('/api/sessions/:id', (req, res) => {
       const messages = this.agent.getSessionMessages(req.params.id);
       res.json({
-        messages: messages.map(m => ({
-          role: m.role,
-          text: m.parts.filter((p: any) => p.text).map((p: any) => p.text).join(''),
-        }))
+        messages: messages.map(m => {
+          const text = m.parts.filter((p: any) => p.text).map((p: any) => p.text).join('');
+          // Detect canvas messages by __canvas__ marker
+          if (text.startsWith('__canvas__')) {
+            try {
+              const payload = JSON.parse(text.slice('__canvas__'.length));
+              return { role: 'canvas', html: payload.html, title: payload.title };
+            } catch { return { role: m.role, text }; }
+          }
+          return { role: m.role, text };
+        })
       });
     });
 
@@ -257,10 +264,16 @@ export class Gateway {
       const messages = this.agent.getSessionMessages(req.params.id);
       res.json({
         sessionId: req.params.id,
-        messages: messages.map(m => ({
-          role: m.role,
-          text: m.parts.filter((p: any) => p.text).map((p: any) => p.text).join(''),
-        })),
+        messages: messages.map(m => {
+          const text = m.parts.filter((p: any) => p.text).map((p: any) => p.text).join('');
+          if (text.startsWith('__canvas__')) {
+            try {
+              const payload = JSON.parse(text.slice('__canvas__'.length));
+              return { role: 'canvas', html: payload.html, title: payload.title };
+            } catch { return { role: m.role, text }; }
+          }
+          return { role: m.role, text };
+        }),
       });
     });
 
@@ -1530,13 +1543,6 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       30% { transform: translateY(-6px); opacity: 1; }
     }
     /* ── Canvas inline bubble ── */
-    .msg-row.agent.canvas-row {
-      max-width: 100%;
-    }
-    .msg-row.agent.canvas-row .canvas-bubble {
-      flex: 1;
-      min-width: 0;
-    }
     .canvas-bubble {
       background: var(--bg-tertiary);
       border: 1px solid var(--border);
@@ -1944,6 +1950,66 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       consoleLog.scrollTop = consoleLog.scrollHeight;
     }
 
+    // Shared canvas bubble renderer — used by live WS events and session replay
+    function renderCanvasBubble(html, canvasTitle) {
+      hideWelcome();
+      const row = document.createElement('div');
+      row.className = 'msg-row agent';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'avatar alice';
+      avatar.innerHTML = SPARKLE_SVG;
+      row.appendChild(avatar);
+
+      const bubble = document.createElement('div');
+      bubble.className = 'canvas-bubble';
+
+      const titleBar = document.createElement('div');
+      titleBar.className = 'canvas-title-bar';
+      const title = document.createElement('div');
+      title.className = 'canvas-title';
+      title.textContent = canvasTitle || 'Canvas';
+      titleBar.appendChild(title);
+
+      const expandBtn = document.createElement('button');
+      expandBtn.className = 'canvas-expand-btn';
+      expandBtn.innerHTML = '⛶ Expand';
+      let isFullscreen = false;
+      expandBtn.addEventListener('click', function() {
+        isFullscreen = !isFullscreen;
+        bubble.classList.toggle('canvas-fullscreen', isFullscreen);
+        expandBtn.innerHTML = isFullscreen ? '✕ Close' : '⛶ Expand';
+        if (isFullscreen) {
+          const onEsc = function(e) {
+            if (e.key === 'Escape') {
+              isFullscreen = false;
+              bubble.classList.remove('canvas-fullscreen');
+              expandBtn.innerHTML = '⛶ Expand';
+              document.removeEventListener('keydown', onEsc);
+            }
+          };
+          document.addEventListener('keydown', onEsc);
+        }
+      });
+      titleBar.appendChild(expandBtn);
+      bubble.appendChild(titleBar);
+
+      const iframe = document.createElement('iframe');
+      iframe.className = 'canvas-iframe';
+      iframe.sandbox = 'allow-scripts allow-same-origin';
+      iframe.srcdoc = html;
+      iframe.addEventListener('load', function() {
+        try {
+          const h = iframe.contentDocument?.documentElement?.scrollHeight;
+          if (h && h > 0) iframe.style.height = Math.min(h + 16, 600) + 'px';
+        } catch(e) {}
+      });
+      bubble.appendChild(iframe);
+      row.appendChild(bubble);
+      messages.appendChild(row);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
     function hideWelcome() {
       if (welcome) welcome.style.display = 'none';
     }
@@ -2173,66 +2239,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
       // Canvas: render inline interactive HTML
       if (data.type === 'canvas') {
-        hideWelcome();
-        const row = document.createElement('div');
-        row.className = 'msg-row agent canvas-row';
-
-        const avatar = document.createElement('div');
-        avatar.className = 'avatar alice';
-        avatar.innerHTML = SPARKLE_SVG;
-        row.appendChild(avatar);
-
-        const bubble = document.createElement('div');
-        bubble.className = 'canvas-bubble';
-
-        // Title bar with expand button
-        const titleBar = document.createElement('div');
-        titleBar.className = 'canvas-title-bar';
-        const title = document.createElement('div');
-        title.className = 'canvas-title';
-        title.textContent = data.title || 'Canvas';
-        titleBar.appendChild(title);
-
-        const expandBtn = document.createElement('button');
-        expandBtn.className = 'canvas-expand-btn';
-        expandBtn.innerHTML = '⛶ Expand';
-        let isFullscreen = false;
-        expandBtn.addEventListener('click', function() {
-          isFullscreen = !isFullscreen;
-          bubble.classList.toggle('canvas-fullscreen', isFullscreen);
-          expandBtn.innerHTML = isFullscreen ? '✕ Close' : '⛶ Expand';
-          // ESC key to exit fullscreen
-          if (isFullscreen) {
-            const onEsc = function(e) {
-              if (e.key === 'Escape') {
-                isFullscreen = false;
-                bubble.classList.remove('canvas-fullscreen');
-                expandBtn.innerHTML = '⛶ Expand';
-                document.removeEventListener('keydown', onEsc);
-              }
-            };
-            document.addEventListener('keydown', onEsc);
-          }
-        });
-        titleBar.appendChild(expandBtn);
-        bubble.appendChild(titleBar);
-
-        const iframe = document.createElement('iframe');
-        iframe.className = 'canvas-iframe';
-        iframe.sandbox = 'allow-scripts allow-same-origin';
-        iframe.srcdoc = data.html;
-        // Auto-resize iframe height to fit content
-        iframe.addEventListener('load', function() {
-          try {
-            const h = iframe.contentDocument?.documentElement?.scrollHeight;
-            if (h && h > 0) iframe.style.height = Math.min(h + 16, 600) + 'px';
-          } catch(e) { /* cross-origin, use default height */ }
-        });
-        bubble.appendChild(iframe);
-        row.appendChild(bubble);
-
-        messages.appendChild(row);
-        messages.scrollTop = messages.scrollHeight;
+        renderCanvasBubble(data.html, data.title);
         return;
       }
 
@@ -2947,8 +2954,13 @@ async function switchToSession(id) {
       showWelcome();
     } else {
       data.messages.forEach(m => {
-        const type = m.role === 'user' ? 'user' : 'agent';
-        addMsg(m.text, type);
+        if (m.role === 'canvas') {
+          // Re-render canvas bubble from persisted data
+          renderCanvasBubble(m.html, m.title);
+        } else {
+          const type = m.role === 'user' ? 'user' : 'agent';
+          addMsg(m.text, type);
+        }
       });
     }
     loadSessions();

@@ -24,6 +24,7 @@
 - Prefers using MCP servers for weather information
 - Expects interactive content to be rendered using the canvas tool.
 - Enjoys interactive web-based games like Flappy Bird clones
+- Enjoys Flappy Bird style games
 
 ## Active Projects
 - Creative Lab: AI agents, automation, agentic workflows

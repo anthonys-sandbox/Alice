@@ -311,6 +311,11 @@ export class Agent {
             },
             execute: async (args: Record<string, any>) => {
                 this.lastCanvasPayload = { html: args.html, title: args.title || 'Canvas' };
+                // Persist canvas content to the session database
+                this.pushMessage({
+                    role: 'model',
+                    parts: [{ text: `__canvas__${JSON.stringify({ html: args.html, title: args.title || 'Canvas' })}` }],
+                });
                 return 'Canvas content pushed to user. They can see it inline in the chat.';
             },
         });
