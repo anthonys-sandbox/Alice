@@ -19,3 +19,4 @@
 - Current disk usage is at 23% (10GiB of 926GiB).
 - Used Chart.js for a simple bar chart project with monthly sales dummy data
 - Use the canvas tool for interactive content to ensure HTML renders inline for UI components.
+- Project: Flappy Bird game using HTML5 Canvas with spacebar/click controls and progressive difficulty

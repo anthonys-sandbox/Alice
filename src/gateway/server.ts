@@ -1530,6 +1530,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       30% { transform: translateY(-6px); opacity: 1; }
     }
     /* ── Canvas inline bubble ── */
+    .msg-row.agent.canvas-row {
+      max-width: 100%;
+    }
+    .msg-row.agent.canvas-row .canvas-bubble {
+      flex: 1;
+      min-width: 0;
+    }
     .canvas-bubble {
       background: var(--bg-tertiary);
       border: 1px solid var(--border);
@@ -1537,21 +1544,69 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       overflow: hidden;
       margin-top: 4px;
     }
+    .canvas-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
     .canvas-title {
       font-size: 11px;
       font-weight: 500;
       color: var(--text-tertiary);
-      padding: 8px 12px 4px;
       letter-spacing: 0.5px;
       text-transform: uppercase;
     }
+    .canvas-expand-btn {
+      background: none;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-tertiary);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: var(--shape-xs);
+      font-family: var(--font);
+      transition: all var(--duration-short) var(--motion-standard);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .canvas-expand-btn:hover {
+      background: var(--surface-hover);
+      color: var(--text-secondary);
+      border-color: var(--border);
+    }
     .canvas-iframe {
       width: 100%;
-      min-height: 200px;
-      max-height: 500px;
+      min-height: 300px;
+      max-height: 600px;
       border: none;
       background: #fff;
       border-radius: 0 0 var(--shape-md) var(--shape-md);
+    }
+    /* Fullscreen canvas */
+    .canvas-fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: var(--bg-primary);
+      border: none;
+      border-radius: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .canvas-fullscreen .canvas-title-bar {
+      padding: 12px 20px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+    .canvas-fullscreen .canvas-iframe {
+      flex: 1;
+      max-height: none;
+      min-height: 0;
+      border-radius: 0;
     }
     /* ── Queued message badge ── */
     .queued-badge {
@@ -2120,7 +2175,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       if (data.type === 'canvas') {
         hideWelcome();
         const row = document.createElement('div');
-        row.className = 'msg-row agent';
+        row.className = 'msg-row agent canvas-row';
 
         const avatar = document.createElement('div');
         avatar.className = 'avatar alice';
@@ -2130,12 +2185,37 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const bubble = document.createElement('div');
         bubble.className = 'canvas-bubble';
 
-        if (data.title) {
-          const title = document.createElement('div');
-          title.className = 'canvas-title';
-          title.textContent = data.title;
-          bubble.appendChild(title);
-        }
+        // Title bar with expand button
+        const titleBar = document.createElement('div');
+        titleBar.className = 'canvas-title-bar';
+        const title = document.createElement('div');
+        title.className = 'canvas-title';
+        title.textContent = data.title || 'Canvas';
+        titleBar.appendChild(title);
+
+        const expandBtn = document.createElement('button');
+        expandBtn.className = 'canvas-expand-btn';
+        expandBtn.innerHTML = '⛶ Expand';
+        let isFullscreen = false;
+        expandBtn.addEventListener('click', function() {
+          isFullscreen = !isFullscreen;
+          bubble.classList.toggle('canvas-fullscreen', isFullscreen);
+          expandBtn.innerHTML = isFullscreen ? '✕ Close' : '⛶ Expand';
+          // ESC key to exit fullscreen
+          if (isFullscreen) {
+            const onEsc = function(e) {
+              if (e.key === 'Escape') {
+                isFullscreen = false;
+                bubble.classList.remove('canvas-fullscreen');
+                expandBtn.innerHTML = '⛶ Expand';
+                document.removeEventListener('keydown', onEsc);
+              }
+            };
+            document.addEventListener('keydown', onEsc);
+          }
+        });
+        titleBar.appendChild(expandBtn);
+        bubble.appendChild(titleBar);
 
         const iframe = document.createElement('iframe');
         iframe.className = 'canvas-iframe';
@@ -2145,7 +2225,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         iframe.addEventListener('load', function() {
           try {
             const h = iframe.contentDocument?.documentElement?.scrollHeight;
-            if (h && h > 0) iframe.style.height = Math.min(h + 16, 500) + 'px';
+            if (h && h > 0) iframe.style.height = Math.min(h + 16, 600) + 'px';
           } catch(e) { /* cross-origin, use default height */ }
         });
         bubble.appendChild(iframe);

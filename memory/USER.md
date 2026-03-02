@@ -23,8 +23,10 @@
 - Wants to integrate weather data via API or MCP into the workflow
 - Prefers using MCP servers for weather information
 - Expects interactive content to be rendered using the canvas tool.
+- Enjoys interactive web-based games like Flappy Bird clones
 
 ## Active Projects
 - Creative Lab: AI agents, automation, agentic workflows
 - GravityClaw (Alice): Personal AI assistant runtime
 - Mission Control Dashboard
+- Developing a canvas-based Flappy Bird style game
