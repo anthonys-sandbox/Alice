@@ -40,14 +40,22 @@ program
         const gateway = new Gateway(config);
         await gateway.start();
 
-        // Auto-launch menubar app if it exists
+        // Auto-launch menubar app if it exists (skip if already running)
         let menubarProc: any = null;
         const menubarDir = new URL('../../menubar', import.meta.url).pathname;
         const { existsSync } = await import('fs');
         if (existsSync(menubarDir)) {
-            const { spawn } = await import('child_process');
+            const { spawn, execSync } = await import('child_process');
             const electronBin = new URL('../../menubar/node_modules/.bin/electron', import.meta.url).pathname;
-            if (existsSync(electronBin)) {
+
+            // Check if menubar is already running
+            let alreadyRunning = false;
+            try {
+                const procs = execSync('pgrep -f "menubar/node_modules/electron"', { encoding: 'utf-8' });
+                alreadyRunning = procs.trim().length > 0;
+            } catch { /* pgrep returns non-zero if no match — that's fine */ }
+
+            if (existsSync(electronBin) && !alreadyRunning) {
                 menubarProc = spawn(electronBin, ['.'], {
                     cwd: menubarDir,
                     stdio: 'ignore',
@@ -55,6 +63,8 @@ program
                 });
                 menubarProc.on('error', () => { }); // Silently ignore if it fails
                 console.log(chalk.gray('   🖥️  Menubar app launched'));
+            } else if (alreadyRunning) {
+                console.log(chalk.gray('   🖥️  Menubar app already running'));
             }
         }
 
