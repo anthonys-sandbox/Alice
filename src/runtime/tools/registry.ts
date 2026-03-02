@@ -735,8 +735,8 @@ export async function executeTool(name: string, args: Record<string, any>): Prom
 
 /**
  * Convert tools to Gemini function declarations format.
- * Only send essential tools to the model to minimize context overhead.
- * All tools remain registered and executable — just not advertised.
+ * Send core tools + all MCP tools to the model.
+ * Non-core built-in tools remain registered and executable — just not advertised.
  */
 export function toGeminiFunctionDeclarations() {
     const CORE_TOOLS = new Set([
@@ -745,7 +745,7 @@ export function toGeminiFunctionDeclarations() {
         'browse_page',
     ]);
     return ALL_TOOLS
-        .filter(tool => CORE_TOOLS.has(tool.name))
+        .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))
         .map(tool => ({
             name: tool.name,
             description: tool.description,

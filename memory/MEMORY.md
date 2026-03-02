@@ -20,3 +20,5 @@
 - System uses GravityClaw + Alice configuration; MCP mentioned as possible protocol
 - The user attempted to install the mcp-weather-free server but encountered an error where the repository lacks the specified subdirectory.
 - Recommended workflow: Clone the main repository first to inspect its structure, then verify if the weather server exists in the main repo.
+- Mission Control dashboard dev server uses port 3000
+- System Disk Space Critical: /System/Volumes/Data is at 96% capacity (862GiB used)
