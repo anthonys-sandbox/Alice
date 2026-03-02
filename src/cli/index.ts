@@ -40,9 +40,30 @@ program
         const gateway = new Gateway(config);
         await gateway.start();
 
+        // Auto-launch menubar app if it exists
+        let menubarProc: any = null;
+        const menubarDir = new URL('../../menubar', import.meta.url).pathname;
+        const { existsSync } = await import('fs');
+        if (existsSync(menubarDir)) {
+            const { spawn } = await import('child_process');
+            const electronBin = new URL('../../menubar/node_modules/.bin/electron', import.meta.url).pathname;
+            if (existsSync(electronBin)) {
+                menubarProc = spawn(electronBin, ['.'], {
+                    cwd: menubarDir,
+                    stdio: 'ignore',
+                    detached: false,
+                });
+                menubarProc.on('error', () => { }); // Silently ignore if it fails
+                console.log(chalk.gray('   🖥️  Menubar app launched'));
+            }
+        }
+
         // Handle graceful shutdown
         const shutdown = async () => {
             console.log(chalk.yellow('\n\nShutting down Alice...'));
+            if (menubarProc && !menubarProc.killed) {
+                menubarProc.kill();
+            }
             await gateway.stop();
             process.exit(0);
         };
