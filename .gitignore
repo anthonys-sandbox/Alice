@@ -23,3 +23,7 @@ Alice.app/
 scripts/transcribe
 scripts/Transcribe.app/
 generated_images/
+
+# Alice-generated canvas files
+barchart.html
+chart_component.html
