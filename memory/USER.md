@@ -26,3 +26,4 @@
 ## Active Projects
 - Creative Lab: AI agents, automation, agentic workflows
 - GravityClaw (Alice): Personal AI assistant runtime
+- Mission Control Dashboard

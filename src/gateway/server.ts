@@ -353,6 +353,11 @@ export class Gateway {
         }
 
         try {
+          // Send typing indicator before processing
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'typing' }));
+          }
+
           const response = await this.agent.processMessageStream(
             text,
             (token: string) => {
@@ -417,10 +422,32 @@ export class Gateway {
         return await this.agent.compactSession();
       }
 
+      case '/stats': {
+        const stats = this.agent.getSessionStats();
+        const durationMin = Math.round(stats.sessionDuration / 60000);
+        const lines = [
+          '📈 **Session Usage**',
+          `• Duration: ${durationMin} min`,
+          `• API calls: ${stats.apiCalls}`,
+          `• Tool calls: ${stats.toolCalls}`,
+          `• Provider: ${stats.activeProvider}` + (stats.usingFallback ? ' *(failover)*' : ''),
+          `• Model: ${stats.activeModel}`,
+        ];
+        const toolEntries = Object.entries(stats.toolsUsed).sort((a, b) => b[1] - a[1]);
+        if (toolEntries.length > 0) {
+          lines.push('', '**Tool Usage:**');
+          for (const [name, count] of toolEntries.slice(0, 10)) {
+            lines.push(`• \`${name}\`: ${count}`);
+          }
+        }
+        return lines.join('\n');
+      }
+
       case '/help': {
         return [
           '**Available Commands:**',
           '• `/status` — Session info (model, tokens, messages)',
+          '• `/stats` — Usage patterns (API calls, tools, duration)',
           '• `/new` or `/reset` — Start a fresh session',
           '• `/compact` — Summarize conversation to free context space',
           '• `/help` — Show this help',
@@ -1759,6 +1786,14 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     function wsOnMessage(e) {
       const data = JSON.parse(e.data);
+
+      // Server-sent typing indicator (shown while Alice processes)
+      if (data.type === 'typing') {
+        if (!thinkingRow) {
+          thinkingRow = showThinking();
+        }
+        return;
+      }
 
       if (data.type === 'token') {
         // Remove thinking indicator on first token

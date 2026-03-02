@@ -4,7 +4,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 export interface AliceConfig {
-    chatProvider: 'gemini' | 'ollama';
+    chatProvider: 'gemini' | 'ollama' | 'chatgpt';
     gemini: {
         apiKey: string;
         model: string;
@@ -57,6 +57,9 @@ export interface AliceConfig {
     openRouter: {
         apiKey: string;
     };
+    openai: {
+        model: string;
+    };
 }
 
 const DEFAULTS: AliceConfig = {
@@ -108,6 +111,9 @@ const DEFAULTS: AliceConfig = {
     },
     openRouter: {
         apiKey: '',
+    },
+    openai: {
+        model: 'gpt-4o',
     },
 };
 

@@ -13,3 +13,5 @@
 
 ## MCP Integrations
 - Weather MCP server (open-meteo-mcp-server) installed via npx. Provides 17 tools: weather_forecast, air_quality, marine_weather, geocoding, and regional forecast models. Free, no API key required.
+- Mission Control Dashboard runs on Port 3000
+- Mission Control Dashboard was found down during heartbeat check on port 3000

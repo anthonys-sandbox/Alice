@@ -1,6 +1,7 @@
 import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type FunctionDeclaration } from './providers/gemini.js';
 import { OAIProvider } from './providers/oai-provider.js';
 import { hasCliCredentials } from './providers/gemini-cli-auth.js';
+import { getOpenAIAccessToken, hasCodexCredentials } from './providers/openai-oauth.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
 import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, type MemoryUpdate } from '../memory/index.js';
 import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
@@ -34,6 +35,7 @@ export interface AgentResponse {
 
 export class Agent {
     private provider: ChatProvider;
+    private fallbackProvider?: ChatProvider;
     private config: AliceConfig;
     private conversationHistory: LLMMessage[] = [];
     private systemPrompt: string = '';
@@ -41,6 +43,15 @@ export class Agent {
     private currentSessionId: string;
     public activeModel!: string;
     public activeProvider!: string;
+    private usingFallback = false;
+
+    // Usage tracking
+    private sessionStats = {
+        apiCalls: 0,
+        toolCalls: 0,
+        toolsUsed: {} as Record<string, number>,
+        startTime: Date.now(),
+    };
 
     constructor(config: AliceConfig) {
         this.config = config;
@@ -50,6 +61,29 @@ export class Agent {
             this.provider = new GeminiProvider(config);
             this.activeModel = config.gemini.model;
             this.activeProvider = 'gemini';
+
+            // Fallback to Ollama if available
+            try {
+                this.fallbackProvider = new OAIProvider({
+                    model: config.ollama.model,
+                    baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
+                });
+                log.info('Fallback provider: Ollama', { model: config.ollama.model });
+            } catch {
+                log.debug('No fallback provider available');
+            }
+        } else if (config.chatProvider === 'chatgpt') {
+            log.info('Using ChatGPT Enterprise as chat provider');
+            this.provider = new OAIProvider({
+                model: config.openai?.model || 'gpt-4o',
+                baseUrl: 'https://api.openai.com/v1/chat/completions',
+                apiKey: 'placeholder-will-refresh',
+            });
+            this.activeModel = config.openai?.model || 'gpt-4o';
+            this.activeProvider = 'chatgpt';
+
+            // Set up dynamic token injection
+            this.setupChatGPTAuth();
         } else {
             // ollama (default)
             log.info('Using Ollama (local) as chat provider');
@@ -254,6 +288,23 @@ export class Agent {
         });
 
         this.refreshContext();
+    }
+
+    /**
+     * Set up ChatGPT OAuth — fetch access token and inject into provider.
+     */
+    private async setupChatGPTAuth(): Promise<void> {
+        try {
+            const token = await getOpenAIAccessToken();
+            if (token) {
+                (this.provider as any).apiKey = token;
+                log.info('ChatGPT OAuth token injected');
+            } else {
+                log.warn('No ChatGPT OAuth token found — install Codex CLI and log in: npx codex');
+            }
+        } catch (err: any) {
+            log.error('ChatGPT OAuth setup failed', { error: err.message });
+        }
     }
 
     /**
@@ -581,6 +632,7 @@ export class Agent {
                     functionDeclarations,
                     onToken
                 );
+                this.sessionStats.apiCalls++;
 
                 // Tool calls
                 if (response.functionCalls && response.functionCalls.length > 0) {
@@ -589,6 +641,8 @@ export class Agent {
                     for (const fc of response.functionCalls) {
                         log.info(`Tool call: ${fc.name}`, { args: Object.keys(fc.args) });
                         toolsUsed.push(fc.name);
+                        this.sessionStats.toolCalls++;
+                        this.sessionStats.toolsUsed[fc.name] = (this.sessionStats.toolsUsed[fc.name] || 0) + 1;
                     }
 
                     const results = await Promise.all(
@@ -632,8 +686,19 @@ export class Agent {
                 const errorMessage = err.message || String(err);
                 log.error('Error in agent loop', { error: errorMessage, iteration: iterations });
 
-                const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit');
+                const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Rate limited');
                 const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
+
+                // Model failover: switch to fallback provider on persistent rate limits
+                if (isRateLimit && this.fallbackProvider && !this.usingFallback) {
+                    log.warn('Rate limited — failing over to fallback provider', { from: this.activeProvider });
+                    this.provider = this.fallbackProvider;
+                    this.usingFallback = true;
+                    this.activeProvider = this.activeProvider === 'gemini' ? 'ollama' : 'gemini';
+                    this.activeModel = this.activeProvider === 'ollama' ? this.config.ollama.model : this.config.gemini.model;
+                    onToken('\n\n> ⚡ *Switched to ' + this.activeProvider + ' (failover)*\n\n');
+                    continue;
+                }
 
                 if (isRateLimit && iterations < this.config.agent.maxIterations) {
                     const waitMatch = errorMessage.match(/reset after (\d+)s/i);
@@ -763,6 +828,29 @@ export class Agent {
                     return sum + Math.round(text.length / 4);
                 }, 0),
             lastUsage: provider.lastUsage || undefined,
+        };
+    }
+
+    /**
+     * Get usage stats for the current session.
+     */
+    getSessionStats(): {
+        sessionDuration: number;
+        apiCalls: number;
+        toolCalls: number;
+        toolsUsed: Record<string, number>;
+        activeProvider: string;
+        activeModel: string;
+        usingFallback: boolean;
+    } {
+        return {
+            sessionDuration: Date.now() - this.sessionStats.startTime,
+            apiCalls: this.sessionStats.apiCalls,
+            toolCalls: this.sessionStats.toolCalls,
+            toolsUsed: { ...this.sessionStats.toolsUsed },
+            activeProvider: this.activeProvider,
+            activeModel: this.activeModel,
+            usingFallback: this.usingFallback,
         };
     }
 

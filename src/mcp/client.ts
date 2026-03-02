@@ -56,10 +56,17 @@ export class MCPManager {
         try {
             log.info(`Connecting to MCP server: ${config.name}`, { command: config.command });
 
+            // Resolve ${VAR} references in env values from process.env
+            const resolvedEnv: Record<string, string> = {};
+            for (const [key, val] of Object.entries(config.env || {})) {
+                const match = val.match(/^\$\{(\w+)\}$/);
+                resolvedEnv[key] = match ? (process.env[match[1]] || '') : val;
+            }
+
             const transport = new StdioClientTransport({
                 command: config.command,
                 args: config.args,
-                env: { ...process.env as Record<string, string>, ...(config.env || {}) },
+                env: { ...process.env as Record<string, string>, ...resolvedEnv },
                 cwd: config.cwd,
                 stderr: 'pipe',
             });
