@@ -22,6 +22,7 @@
 - Reminded about AI team expansions or creative workflow checks
 - Wants to integrate weather data via API or MCP into the workflow
 - Prefers using MCP servers for weather information
+- Expects interactive content to be rendered using the canvas tool.
 
 ## Active Projects
 - Creative Lab: AI agents, automation, agentic workflows

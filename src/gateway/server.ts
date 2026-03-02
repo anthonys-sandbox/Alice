@@ -2129,7 +2129,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         const iframe = document.createElement('iframe');
         iframe.className = 'canvas-iframe';
-        iframe.sandbox = 'allow-scripts';
+        iframe.sandbox = 'allow-scripts allow-same-origin';
         iframe.srcdoc = data.html;
         // Auto-resize iframe height to fit content
         iframe.addEventListener('load', function() {
