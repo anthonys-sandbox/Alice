@@ -723,7 +723,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         max-width: 80%;
         padding: 8px 16px;
       }
-      .header-btn { padding: 0; overflow: hidden; width: 40px; height: 40px; border-radius: 50%; font-size: 18px; display: flex; align-items: center; justify-content: center; white-space: nowrap; text-indent: -2px; }
+      .header-btn { padding: 0; overflow: hidden; width: 40px; height: 40px; border-radius: 50%; font-size: 0; display: flex; align-items: center; justify-content: center; }
+      .header-btn::before { content: '＋'; font-size: 20px; }
       .header-actions { flex-shrink: 0; }
     }
 
