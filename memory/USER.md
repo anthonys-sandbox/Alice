@@ -10,6 +10,7 @@
 - Home Directory: /Users/AnthonyTackett
 - Disk Usage: 23% utilization (10GiB used of 926GiB total)
 - System Status: No critical crashes detected; Heartbeat scheduler active
+- Lives in or is currently located in Kansas City, MO
 
 ## Preferences
 - Prefers direct, actionable responses

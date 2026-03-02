@@ -5,8 +5,8 @@
 <h1 align="center">✨ Alice</h1>
 
 <p align="center">
-  <strong>A self-hosted AI agent that runs locally on your Mac.</strong><br>
-  Chat via a beautiful web UI or Google Chat. Powered by Gemini, Ollama &amp; OpenRouter.
+  <strong>A self-hosted AI agent that runs on your Mac.</strong><br>
+  Chat via a beautiful web UI or Google Chat. Powered by Gemini (primary), Ollama &amp; OpenRouter.
 </p>
 
 <p align="center">
@@ -45,7 +45,7 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
                                                   │
 ┌──────────────┐     ┌──────────────┐     ┌───────▼───────┐
 │ Google Chat  │────▶│ Apps Script  │────▶│  LLM Provider │
-│  (Mobile)    │◀────│ (Sheet Queue)│     │ Ollama/Gemini │
+│  (Mobile)    │◀────│ (Sheet Queue)│     │Gemini/Ollama/OR│
 └──────────────┘     └──────────────┘     └───────────────┘
 ```
 
@@ -69,41 +69,42 @@ cd alice
 npm install
 ```
 
-### 2. Set Up Ollama (Local LLM — Free)
-
-```bash
-# Start the Ollama service
-ollama serve
-
-# Pull the text model (default brain — great balance of speed & quality)
-ollama pull qwen3:8b
-
-# Pull the vision model (used automatically when images are attached)
-ollama pull qwen3-vl
-```
-
-### 3. Configure Environment
+### 2. Configure Environment
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your settings:
+Edit `.env` with your settings. Alice supports three providers:
+
+#### Option A: Gemini with Google Ultra (Recommended — free with subscription)
 
 ```bash
-# Minimum viable config (Ollama only — no API keys needed!)
+CHAT_PROVIDER=gemini
+GEMINI_AUTH=cli
+GEMINI_MODEL=gemini-3-flash-preview
+```
+
+Requires one-time setup: `npm install -g @google/gemini-cli && gemini` (see [Gemini CLI Auth](#gemini-cli-auth-google-ultra-subscription))
+
+#### Option B: Gemini with API Key
+
+```bash
+CHAT_PROVIDER=gemini
+GEMINI_API_KEY=your_key_here  # Get from https://aistudio.google.com/apikey
+```
+
+#### Option C: Ollama (Local — free, private, offline-capable)
+
+```bash
 CHAT_PROVIDER=ollama
 OLLAMA_MODEL=qwen3:8b
 OLLAMA_VISION_MODEL=qwen3-vl  # Auto-used when images are attached
-
-# For image generation, add a Gemini API key (free tier available)
-GEMINI_API_KEY=your_key_here  # Get from https://aistudio.google.com/apikey
-
-# For Google AI Ultra (free with subscription) — see "Gemini CLI Auth" below
-# GEMINI_AUTH=cli
 ```
 
-### 4. Start Alice
+Requires Ollama: `brew install ollama && ollama serve && ollama pull qwen3:8b`
+
+### 3. Start Alice
 
 ```bash
 npx tsx src/index.ts start
@@ -111,7 +112,7 @@ npx tsx src/index.ts start
 
 Open **http://localhost:18790** in your browser. That's it! 🎉
 
-### 5. (Optional) Interactive Terminal Chat
+### 4. (Optional) Interactive Terminal Chat
 
 ```bash
 npx tsx src/index.ts chat
@@ -263,7 +264,7 @@ Alice uses a layered configuration system:
 
 | Variable | Default | Description |
 |---|---|---|
-| `CHAT_PROVIDER` | `ollama` | LLM provider: `ollama`, `gemini`, or `openrouter` |
+| `CHAT_PROVIDER` | `gemini` | LLM provider: `gemini`, `ollama`, or `openrouter` |
 | `GEMINI_API_KEY` | — | Gemini API key ([get one](https://aistudio.google.com/apikey)) |
 | `GEMINI_AUTH` | `apikey` | Gemini auth mode: `apikey` or `cli` (Google Ultra) |
 | `GEMINI_MODEL` | `gemini-3-flash-preview` | Gemini model name |
@@ -284,13 +285,22 @@ Alice uses a layered configuration system:
 
 ```json
 {
-    "chatProvider": "ollama",
-    "ollama": { "model": "qwen3:8b", "visionModel": "qwen3-vl" },
+    "chatProvider": "gemini",
     "gemini": { "model": "gemini-3-flash-preview" },
+    "ollama": { "model": "qwen3:8b", "visionModel": "qwen3-vl" },
     "gateway": { "host": "0.0.0.0", "port": 18790 },
     "heartbeat": { "enabled": true, "intervalMinutes": 30 },
     "agent": { "maxIterations": 25, "timeoutMs": 300000 },
-    "logging": { "level": "info" }
+    "logging": { "level": "info" },
+    "mcp": {
+        "servers": [
+            {
+                "name": "weather",
+                "command": "npx",
+                "args": ["-y", "open-meteo-mcp-server"]
+            }
+        ]
+    }
 }
 ```
 
@@ -298,7 +308,7 @@ Alice uses a layered configuration system:
 
 ## Tools
 
-Alice has 17 built-in tools she can use during conversations:
+Alice has built-in tools plus any MCP-provided tools she can use during conversations:
 
 | Tool | Description |
 |---|---|
@@ -456,17 +466,24 @@ Alice supports MCP servers for extended tool integrations. Configure them in `al
     "mcp": {
         "servers": [
             {
-                "name": "my-server",
-                "command": "/path/to/mcp-server",
-                "args": ["--flag"],
-                "enabled": true
+                "name": "weather",
+                "command": "npx",
+                "args": ["-y", "open-meteo-mcp-server"]
             }
         ]
     }
 }
 ```
 
-MCP tools are discovered automatically at startup and made available to the agent.
+MCP tools are discovered automatically at startup and registered as callable functions. The agent sees all MCP tools alongside built-in tools.
+
+> **Note:** MCP tool schemas are automatically sanitized for Gemini compatibility (e.g., numeric enum values are converted to strings).
+
+### Included MCP Servers
+
+| Server | Package | Tools | Description |
+|---|---|---|---|
+| `weather` | `open-meteo-mcp-server` | 17 | Weather forecasts, air quality, marine, flood, geocoding (free, no API key) |
 
 ---
 

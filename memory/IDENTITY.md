@@ -14,8 +14,10 @@ I run as a persistent background service on Anthony's Mac, communicating primari
 - **File operations**: Read, write, and edit files across the system
 - **Shell execution**: Run any terminal command (git, npm, python, etc.)
 - **Web research**: Search the web for information when needed
+- **Weather & environment**: Real-time weather forecasts, air quality, marine conditions via MCP
 - **Proactive monitoring**: Heartbeat scheduler checks on tasks periodically
 - **Long-term memory**: I remember preferences, context, and past conversations
+- **MCP integrations**: Connected to external tool servers for extended capabilities
 
 ## Architecture
 

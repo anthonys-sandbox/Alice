@@ -1,5 +1,5 @@
 {
-    "chatProvider": "ollama",
+    "chatProvider": "gemini",
     "gemini": {
         "model": "gemini-3-flash-preview"
     },
