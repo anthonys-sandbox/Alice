@@ -367,11 +367,11 @@ export class Agent {
      * Keeps the most recent messages and compresses the rest into a summary.
      */
     private trimContextIfNeeded(): void {
-        // Token budget: qwen3:8b has 32K context, leave room for system prompt + response
-        const MAX_CONTEXT_TOKENS = 24000; // ~75% of 32K
-        const KEEP_RECENT = 20; // Always keep the last N messages
+        // Token budget: leave room for system prompt + response + tools
+        const MAX_CONTEXT_TOKENS = 24000;
+        const MIN_KEEP = 4; // Always keep at least the last few messages
 
-        const tokenEstimate = this.estimateTokens(this.conversationHistory);
+        let tokenEstimate = this.estimateTokens(this.conversationHistory);
         if (tokenEstimate <= MAX_CONTEXT_TOKENS) return;
 
         log.warn('Context approaching token limit, trimming', {
@@ -380,24 +380,36 @@ export class Agent {
             messageCount: this.conversationHistory.length,
         });
 
-        if (this.conversationHistory.length <= KEEP_RECENT) return;
+        // Aggressively trim: drop oldest messages until under budget
+        // Keep dropping until we're under the token limit
+        let keepCount = Math.min(this.conversationHistory.length, 10);
+        while (keepCount > MIN_KEEP) {
+            const recent = this.conversationHistory.slice(-keepCount);
+            const est = this.estimateTokens(recent);
+            if (est <= MAX_CONTEXT_TOKENS) break;
+            keepCount = Math.max(MIN_KEEP, keepCount - 2);
+        }
 
-        // Summarize old messages
-        const oldMessages = this.conversationHistory.slice(0, -KEEP_RECENT);
-        const recentMessages = this.conversationHistory.slice(-KEEP_RECENT);
+        if (keepCount >= this.conversationHistory.length) {
+            // Can't trim further — just keep MIN_KEEP
+            keepCount = MIN_KEEP;
+        }
 
-        // Build a simple summary of the older context
+        const oldMessages = this.conversationHistory.slice(0, -keepCount);
+        const recentMessages = this.conversationHistory.slice(-keepCount);
+
+        // Build a brief summary
         const summaryParts: string[] = [];
-        for (const msg of oldMessages) {
+        for (const msg of oldMessages.slice(-5)) { // Only summarize last 5 dropped
             const textParts = msg.parts
                 .filter((p: any) => 'text' in p && p.text)
-                .map((p: any) => p.text?.slice(0, 100));
+                .map((p: any) => (p.text as string)?.slice(0, 80));
             if (textParts.length > 0) {
                 summaryParts.push(`[${msg.role}]: ${textParts.join(' ')}`);
             }
         }
 
-        const summaryText = `[Context summary — ${oldMessages.length} earlier messages compressed]\n${summaryParts.slice(0, 10).join('\n')}`;
+        const summaryText = `[Context summary — ${oldMessages.length} earlier messages removed]\n${summaryParts.join('\n')}`;
 
         this.conversationHistory = [
             { role: 'user', parts: [{ text: summaryText }] },
@@ -408,6 +420,7 @@ export class Agent {
         log.info('Context trimmed', {
             before: tokenEstimate,
             after: newEstimate,
+            kept: keepCount,
             messagesRemoved: oldMessages.length,
         });
     }
@@ -429,6 +442,8 @@ export class Agent {
         const functionDeclarations = toGeminiFunctionDeclarations();
         const toolsUsed: string[] = [];
         let iterations = 0;
+        let rateLimitRetries = 0;
+        const MAX_RATE_LIMIT_RETRIES = 5;
 
         const startTime = Date.now();
 
@@ -514,41 +529,49 @@ export class Agent {
                 log.error('Error in agent loop', { error: errorMessage, iteration: iterations });
 
                 // Categorize error for smarter handling
-                const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit');
+                const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Rate limited');
                 const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
-                const isModelError = errorMessage.includes('400') || errorMessage.includes('invalid');
+                const isModelError = errorMessage.includes('400') || errorMessage.includes('INVALID_ARGUMENT');
 
-                if (isRateLimit && iterations < this.config.agent.maxIterations) {
-                    // Parse wait time from error (e.g., "quota will reset after 24s")
+                if (isRateLimit) {
+                    rateLimitRetries++;
+                    if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+                        const errMsg = `Rate limited after ${rateLimitRetries} retries. Please wait a moment and try again.`;
+                        this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
+                        return { text: errMsg, toolsUsed, iterations };
+                    }
                     const waitMatch = errorMessage.match(/reset after (\d+)s/i);
                     const waitMs = waitMatch ? (parseInt(waitMatch[1], 10) + 1) * 1000 : 5000;
-                    log.warn(`Rate limited, waiting ${waitMs}ms before retry`);
+                    log.warn(`Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${waitMs}ms`);
                     await new Promise(r => setTimeout(r, waitMs));
+                    iterations--; // Don't count rate limit retries as iterations
                     continue;
                 }
 
                 if (isTimeout) {
-                    // Timeout errors — don't retry, just report
                     const timeoutMsg = `The request timed out. The model or service may be under load. Please try again.`;
                     this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
                     return { text: timeoutMsg, toolsUsed, iterations };
                 }
 
-                // For other errors, give the model context to self-correct if iterations remain
+                if (isModelError) {
+                    // 400/invalid errors can't self-correct — fail fast
+                    const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
+                    log.error('Non-recoverable model error, failing fast');
+                    this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
+                    return { text: errMsg, toolsUsed, iterations };
+                }
+
+                // For other errors, give the model one chance to self-correct
                 if (iterations >= this.config.agent.maxIterations) {
                     const errorMsg = `I encountered an error after ${iterations} attempts: ${errorMessage}. Please try again.`;
                     this.pushMessage({ role: 'model', parts: [{ text: errorMsg }] });
                     return { text: errorMsg, toolsUsed, iterations };
                 }
 
-                // Inject error context for self-correction
-                const recoveryHint = isModelError
-                    ? `The previous request was malformed. Please simplify the approach and try again.`
-                    : `An error occurred: ${errorMessage}. Adjusting approach and retrying.`;
-
                 this.pushMessage({
                     role: 'model',
-                    parts: [{ text: recoveryHint }],
+                    parts: [{ text: `An error occurred: ${errorMessage}. Adjusting approach and retrying.` }],
                 });
             }
         }
@@ -598,6 +621,8 @@ export class Agent {
         const functionDeclarations = toGeminiFunctionDeclarations();
         const toolsUsed: string[] = [];
         let iterations = 0;
+        let rateLimitRetries = 0;
+        const MAX_RATE_LIMIT_RETRIES = 5;
         const startTime = Date.now();
 
         while (iterations < this.config.agent.maxIterations) {
@@ -689,6 +714,7 @@ export class Agent {
 
                 const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Rate limited');
                 const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
+                const isModelError = errorMessage.includes('400') || errorMessage.includes('INVALID_ARGUMENT');
 
                 // Model failover: switch to fallback provider on persistent rate limits
                 if (isRateLimit && this.fallbackProvider && !this.usingFallback) {
@@ -701,11 +727,18 @@ export class Agent {
                     continue;
                 }
 
-                if (isRateLimit && iterations < this.config.agent.maxIterations) {
+                if (isRateLimit) {
+                    rateLimitRetries++;
+                    if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+                        const errMsg = `Rate limited after ${rateLimitRetries} retries. Please wait a moment and try again.`;
+                        this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
+                        return { text: errMsg, toolsUsed, iterations };
+                    }
                     const waitMatch = errorMessage.match(/reset after (\d+)s/i);
                     const waitMs = waitMatch ? (parseInt(waitMatch[1], 10) + 1) * 1000 : 5000;
-                    log.warn(`Rate limited, waiting ${waitMs}ms before retry`);
+                    log.warn(`Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${waitMs}ms`);
                     await new Promise(r => setTimeout(r, waitMs));
+                    iterations--; // Don't count rate limit retries as iterations
                     continue;
                 }
 
@@ -713,6 +746,14 @@ export class Agent {
                     const timeoutMsg = `The request timed out. Please try again.`;
                     this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
                     return { text: timeoutMsg, toolsUsed, iterations };
+                }
+
+                if (isModelError) {
+                    // 400/invalid errors can't self-correct — fail fast
+                    const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
+                    log.error('Non-recoverable model error, failing fast');
+                    this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
+                    return { text: errMsg, toolsUsed, iterations };
                 }
 
                 if (iterations >= this.config.agent.maxIterations) {
