@@ -248,7 +248,7 @@ export class Gateway {
             } catch { return { role: m.role, text }; }
           }
           return { role: m.role, text };
-        })
+        }).filter((m: any) => m.role === 'canvas' || (m.text && m.text.trim()))
       });
     });
 
@@ -273,7 +273,7 @@ export class Gateway {
             } catch { return { role: m.role, text }; }
           }
           return { role: m.role, text };
-        }),
+        }).filter((m: any) => m.role === 'canvas' || (m.text && m.text.trim())),
       });
     });
 
