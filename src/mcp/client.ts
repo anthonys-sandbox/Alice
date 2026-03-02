@@ -99,6 +99,21 @@ export class MCPManager {
     }
 
     /**
+     * Remove keys that Gemini's API doesn't accept (e.g. $schema) from tool parameter schemas.
+     */
+    private sanitizeSchema(schema: any): any {
+        if (!schema || typeof schema !== 'object') return schema;
+        if (Array.isArray(schema)) return schema.map(s => this.sanitizeSchema(s));
+
+        const clean: any = {};
+        for (const [key, value] of Object.entries(schema)) {
+            if (key === '$schema') continue; // Gemini rejects this field
+            clean[key] = this.sanitizeSchema(value);
+        }
+        return clean;
+    }
+
+    /**
      * Discover tools from an MCP server and register them in Alice's registry.
      */
     private async discoverAndRegisterTools(serverName: string, client: Client): Promise<string[]> {
@@ -112,7 +127,7 @@ export class MCPManager {
             registerTool({
                 name: aliceToolName,
                 description: `[MCP:${serverName}] ${tool.description || tool.name}`,
-                parameters: tool.inputSchema || { type: 'object', properties: {}, required: [] },
+                parameters: this.sanitizeSchema(tool.inputSchema) || { type: 'object', properties: {}, required: [] },
                 execute: async (args: Record<string, any>) => {
                     try {
                         const callResult = await client.callTool({
