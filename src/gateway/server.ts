@@ -2,8 +2,10 @@ import express from 'express';
 import { hostname } from 'os';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { readdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
+import { readdirSync, readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
+import { execFile } from 'child_process';
+import { tmpdir } from 'os';
 import { Agent } from '../runtime/agent.js';
 import { GoogleChatAdapter } from '../channels/google-chat.js';
 import { startHeartbeat, stopHeartbeat } from '../scheduler/heartbeat.js';
@@ -55,8 +57,68 @@ export class Gateway {
 
   private setupRoutes(): void {
     // Health check
-    this.app.get('/health', (_req, res) => {
+    const healthHandler = (_req: any, res: any) => {
       res.json({ status: 'ok', uptime: process.uptime() });
+    };
+    this.app.get('/health', healthHandler);
+    this.app.get('/api/health', healthHandler);
+
+    // Speech-to-text transcription via native macOS SFSpeechRecognizer
+    this.app.post('/api/transcribe', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+      try {
+        const audioBuffer = req.body as Buffer;
+        if (!audioBuffer || audioBuffer.length === 0) {
+          res.status(400).json({ error: 'No audio data received' });
+          return;
+        }
+
+        const ts = Date.now();
+        const wavFile = join(tmpdir(), `alice-audio-${ts}.wav`);
+        const outFile = join(tmpdir(), `alice-transcribe-${ts}.txt`);
+        writeFileSync(wavFile, audioBuffer);
+
+        const transcribeApp = new URL('../../scripts/Transcribe.app', import.meta.url).pathname;
+        if (!existsSync(transcribeApp)) {
+          try { unlinkSync(wavFile); } catch { }
+          res.status(500).json({ error: 'Transcribe app not found' });
+          return;
+        }
+
+        // Launch Transcribe.app with args: <audio-file> <output-file>
+        execFile('/usr/bin/open', [transcribeApp, '--args', wavFile, outFile], (openErr) => {
+          if (openErr) {
+            try { unlinkSync(wavFile); } catch { }
+            res.status(500).json({ error: 'Failed to launch transcriber' });
+            return;
+          }
+
+          // Poll for output file (app writes result and exits)
+          let attempts = 0;
+          const maxAttempts = 50; // 25 seconds
+          const poller = setInterval(() => {
+            attempts++;
+            if (existsSync(outFile)) {
+              clearInterval(poller);
+              const result = readFileSync(outFile, 'utf-8').trim();
+              try { unlinkSync(wavFile); } catch { }
+              try { unlinkSync(outFile); } catch { }
+
+              if (result.startsWith('ERROR:')) {
+                res.status(500).json({ error: result.slice(7) });
+              } else {
+                res.json({ text: result });
+              }
+            } else if (attempts >= maxAttempts) {
+              clearInterval(poller);
+              try { unlinkSync(wavFile); } catch { }
+              res.status(500).json({ error: 'Transcription timed out' });
+            }
+          }, 500);
+        });
+      } catch (err: any) {
+        log.warn('Transcribe endpoint error', { error: err.message });
+        res.status(500).json({ error: err.message });
+      }
     });
 
     // Web UI (simple chat interface)
@@ -1405,12 +1467,15 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     }
     /* ── Mic recording state ── */
     .mic-recording {
-      color: var(--error) !important;
+      color: #ef4444 !important;
       animation: micPulse 1.5s ease-in-out infinite;
+      filter: drop-shadow(0 0 6px rgba(239,68,68,0.5));
     }
+    .mic-recording .mic-icon-idle { display: none; }
+    .mic-recording .mic-icon-stop { display: block !important; }
     @keyframes micPulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(1.1); }
     }
   </style>
 </head>
@@ -1491,7 +1556,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         </button>
         <textarea id="input" placeholder="Message Alice…" autofocus autocomplete="off" rows="1"></textarea>
         <button id="micBtn" class="attach-btn" title="Voice dictation" style="display:none;">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+          <svg class="mic-icon-idle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+          <svg class="mic-icon-stop" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
         </button>
         <button id="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11zm7.318-19.539l-10.94 10.939"/></svg></button>
         </div>
@@ -1979,68 +2045,221 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     loadModels();
 
-    // ── Voice Dictation (Web Speech API) ──
+    // ── Voice Dictation (Native bridge + Web Speech API + Server fallback) ──
     const micBtn = document.getElementById('micBtn');
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition && micBtn) {
+    const isElectron = navigator.userAgent.includes('Electron');
+    const SpeechRecognition = !isElectron ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+    const hasNativeSpeech = window._nativeSpeech && window._nativeSpeech.available;
+    const hasServerTranscribe = true; // /api/transcribe is always available
+    
+    if ((hasNativeSpeech || SpeechRecognition || hasServerTranscribe) && micBtn) {
       micBtn.style.display = '';
       let recognition = null;
       let isListening = false;
 
-      micBtn.addEventListener('click', () => {
-        if (isListening) {
-          recognition.stop();
-          return;
-        }
+      const micIdle = micBtn.querySelector('.mic-icon-idle');
+      const micStop = micBtn.querySelector('.mic-icon-stop');
+      
+      function setMicRecording() {
+        isListening = true;
+        if (micIdle) micIdle.style.display = 'none';
+        if (micStop) micStop.style.display = 'block';
+        micBtn.classList.add('mic-recording');
+        micBtn.title = 'Stop dictation';
+      }
+      function setMicIdle() {
+        isListening = false;
+        if (micIdle) micIdle.style.display = 'block';
+        if (micStop) micStop.style.display = 'none';
+        micBtn.classList.remove('mic-recording');
+        micBtn.title = 'Voice dictation';
+      }
 
-        recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'en-US';
+      if (hasNativeSpeech) {
+        // ── Path 1: Native macOS SFSpeechRecognizer (via Alice.app bridge) ──
+        let preExisting = '';
+        let finalText = '';
+        
+        window._nativeSpeech.onStart = () => { /* icon already set on click */ };
 
-        // Snapshot what's already in the input BEFORE dictation starts
-        const preExisting = input.value;
-        let finalTranscript = '';
-
-        recognition.onstart = () => {
-          isListening = true;
-          micBtn.classList.add('mic-recording');
-          micBtn.title = 'Stop dictation';
-        };
-
-        recognition.onresult = (event) => {
-          let interim = '';
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
-              finalTranscript += event.results[i][0].transcript + ' ';
-            } else {
-              interim += event.results[i][0].transcript;
-            }
-          }
-          // Always rebuild from snapshot + accumulated transcript
+        window._nativeSpeech.onResult = (text, isFinal) => {
           const base = preExisting ? preExisting + ' ' : '';
-          input.value = base + finalTranscript + (interim ? interim + ' …' : '');
+          if (isFinal) {
+            finalText = text;
+            input.value = base + finalText;
+          } else {
+            input.value = base + text + ' …';
+          }
           input.style.height = 'auto';
           input.style.height = Math.min(input.scrollHeight, 160) + 'px';
         };
 
-        recognition.onend = () => {
-          isListening = false;
-          micBtn.classList.remove('mic-recording');
-          micBtn.title = 'Voice dictation';
-          // Clean up trailing ellipsis
+        window._nativeSpeech.onEnd = () => {
+          setMicIdle();
           input.value = input.value.replace(/\\s*…$/, '').trim();
           input.focus();
         };
 
-        recognition.onerror = (event) => {
-          console.warn('Speech recognition error:', event.error);
-          isListening = false;
-          micBtn.classList.remove('mic-recording');
+        window._nativeSpeech.onError = (error) => {
+          console.warn('Native speech error:', error);
+          setMicIdle();
         };
 
-        recognition.start();
-      });
+        micBtn.addEventListener('click', () => {
+          if (isListening) {
+            window._nativeSpeech.stop();
+            setMicIdle();
+            return;
+          }
+          preExisting = input.value;
+          finalText = '';
+          setMicRecording();
+          window._nativeSpeech.start();
+        });
+      } else if (SpeechRecognition) {
+        // ── Path 2: Web Speech API (Chrome/Safari) ──
+        micBtn.addEventListener('click', () => {
+          if (isListening) {
+            recognition.stop();
+            return;
+          }
+
+          recognition = new SpeechRecognition();
+          recognition.continuous = true;
+          recognition.interimResults = true;
+          recognition.lang = 'en-US';
+
+          const preExisting = input.value;
+          let finalTranscript = '';
+
+          recognition.onstart = () => { setMicRecording(); };
+
+          recognition.onresult = (event) => {
+            let interim = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+              if (event.results[i].isFinal) {
+                finalTranscript += event.results[i][0].transcript + ' ';
+              } else {
+                interim += event.results[i][0].transcript;
+              }
+            }
+            const base = preExisting ? preExisting + ' ' : '';
+            input.value = base + finalTranscript + (interim ? interim + ' …' : '');
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+          };
+
+          recognition.onend = () => {
+            setMicIdle();
+            input.value = input.value.replace(/\\s*…$/, '').trim();
+            input.focus();
+          };
+
+          recognition.onerror = (event) => {
+            console.warn('Speech recognition error:', event.error);
+            setMicIdle();
+          };
+
+          recognition.start();
+        });
+      } else {
+        // ── Path 3: getUserMedia + WAV recording + server transcription (Electron/menubar) ──
+        let audioCtx = null;
+        let sourceNode = null;
+        let processorNode = null;
+        let audioStream = null;
+        let pcmChunks = [];
+
+        function encodeWAV(samples, sampleRate) {
+          const buffer = new ArrayBuffer(44 + samples.length * 2);
+          const view = new DataView(buffer);
+          function writeStr(offset, str) { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); }
+          writeStr(0, 'RIFF');
+          view.setUint32(4, 36 + samples.length * 2, true);
+          writeStr(8, 'WAVE');
+          writeStr(12, 'fmt ');
+          view.setUint32(16, 16, true);
+          view.setUint16(20, 1, true); // PCM
+          view.setUint16(22, 1, true); // mono
+          view.setUint32(24, sampleRate, true);
+          view.setUint32(28, sampleRate * 2, true); // byte rate
+          view.setUint16(32, 2, true); // block align
+          view.setUint16(34, 16, true); // bits per sample
+          writeStr(36, 'data');
+          view.setUint32(40, samples.length * 2, true);
+          for (let i = 0; i < samples.length; i++) {
+            const s = Math.max(-1, Math.min(1, samples[i]));
+            view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+          }
+          return new Blob([buffer], { type: 'audio/wav' });
+        }
+
+        micBtn.addEventListener('click', async () => {
+          if (isListening) {
+            // Stop recording
+            if (processorNode) processorNode.disconnect();
+            if (sourceNode) sourceNode.disconnect();
+            if (audioStream) audioStream.getTracks().forEach(t => t.stop());
+            if (audioCtx) audioCtx.close();
+            setMicIdle();
+
+            if (pcmChunks.length === 0) return;
+
+            const preExisting = micBtn._preExisting || '';
+            const totalLen = pcmChunks.reduce((a, c) => a + c.length, 0);
+            const merged = new Float32Array(totalLen);
+            let offset = 0;
+            for (const chunk of pcmChunks) { merged.set(chunk, offset); offset += chunk.length; }
+
+            const wavBlob = encodeWAV(merged, 16000);
+            input.value = preExisting + (preExisting ? ' ' : '') + '⏳ Transcribing…';
+
+            try {
+              const resp = await fetch('/api/transcribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/octet-stream' },
+                body: wavBlob
+              });
+              const data = await resp.json();
+              if (data.text) {
+                input.value = preExisting + (preExisting ? ' ' : '') + data.text;
+              } else {
+                input.value = preExisting;
+                console.warn('Transcription returned no text:', data);
+              }
+            } catch (err) {
+              input.value = preExisting;
+              console.warn('Transcription failed:', err);
+            }
+            input.style.height = 'auto';
+            input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+            input.focus();
+            return;
+          }
+
+          try {
+            audioStream = await navigator.mediaDevices.getUserMedia({ audio: { sampleRate: 16000, channelCount: 1, echoCancellation: true } });
+            pcmChunks = [];
+            micBtn._preExisting = input.value;
+
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            sourceNode = audioCtx.createMediaStreamSource(audioStream);
+            processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+
+            processorNode.onaudioprocess = (e) => {
+              const data = e.inputBuffer.getChannelData(0);
+              pcmChunks.push(new Float32Array(data));
+            };
+
+            sourceNode.connect(processorNode);
+            processorNode.connect(audioCtx.destination);
+            setMicRecording();
+          } catch (err) {
+            console.warn('Microphone access denied:', err);
+            setMicIdle();
+          }
+        });
+      }
     }
 
     // ── Sidebar ──────────────────────────

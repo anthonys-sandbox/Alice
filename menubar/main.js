@@ -3,10 +3,11 @@ const path = require('path');
 const http = require('http');
 
 const ALICE_URL = 'http://localhost:18790/';
-const HEALTH_CHECK_INTERVAL = 5000; // Check every 5 seconds
+const HEALTH_URL = 'http://localhost:18790/health';
+const HEALTH_CHECK_INTERVAL = 3000;
 
 const mb = menubar({
-    index: ALICE_URL,
+    index: false, // Don't load a URL on startup — we'll handle it ourselves
     icon: path.join(__dirname, 'iconTemplate.png'),
     preloadWindow: true,
     showDockIcon: false,
@@ -30,7 +31,7 @@ let healthCheckTimer = null;
  */
 function checkAliceHealth() {
     return new Promise((resolve) => {
-        const req = http.get('http://localhost:18790/api/health', { timeout: 2000 }, (res) => {
+        const req = http.get(HEALTH_URL, { timeout: 2000 }, (res) => {
             resolve(res.statusCode === 200);
         });
         req.on('error', () => resolve(false));
@@ -76,11 +77,11 @@ function showOfflinePage() {
                     justify-content: center;
                     height: 100vh;
                     margin: 0;
-                    background: #1a1a2e;
+                    background: #131314;
                     color: #e0e0ff;
                 }
                 h2 { margin-bottom: 8px; }
-                p { color: #8888aa; margin-bottom: 20px; }
+                p { color: #8888aa; margin-bottom: 20px; font-size: 13px; }
                 .spinner {
                     width: 24px; height: 24px;
                     border: 3px solid #333;
@@ -92,27 +93,38 @@ function showOfflinePage() {
             </style>
         </head>
         <body>
-            <h2>✨ Alice is offline</h2>
-            <p>Waiting for Alice to come back...</p>
+            <h2>✨ Alice</h2>
+            <p>Waiting for Alice to come online...</p>
             <div class="spinner"></div>
         </body>
         </html>
     `);
 }
 
-mb.on('ready', () => {
+mb.on('ready', async () => {
     console.log('✨ Alice menu bar app ready');
-    isAliceOnline = true;
+
+    // Show offline page first, then check health
+    showOfflinePage();
+    isAliceOnline = false;
+
+    // Do an immediate health check
+    const online = await checkAliceHealth();
+    if (online) {
+        console.log('✨ Alice is online, loading UI...');
+        isAliceOnline = true;
+        mb.window.loadURL(ALICE_URL);
+    }
+
+    // Start periodic health monitoring
     startHealthCheck();
 
     // If launched by Alice (parent process), quit when parent dies
     if (process.ppid && process.ppid > 1) {
         const parentCheckTimer = setInterval(() => {
             try {
-                // Check if parent process still exists (signal 0 = no-op, just checks)
                 process.kill(process.ppid, 0);
             } catch {
-                // Parent is gone — quit
                 console.log('Parent process gone, quitting menubar');
                 clearInterval(parentCheckTimer);
                 mb.app.quit();
@@ -127,6 +139,15 @@ mb.on('after-create-window', () => {
         console.log(`Connection failed (${errorCode}): ${errorDescription}`);
         isAliceOnline = false;
         showOfflinePage();
+    });
+
+    // Auto-grant microphone permission for voice dictation
+    mb.window.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+        if (permission === 'media' || permission === 'microphone') {
+            callback(true);
+        } else {
+            callback(false);
+        }
     });
 });
 

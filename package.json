@@ -8,8 +8,10 @@
     "alice": "./dist/index.js"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.ts",
+    "alice": "tsx watch --ignore './memory/**' --ignore './generated_images/**' --ignore './menubar/**' --ignore './*.json' --ignore './dist/**' --ignore './*.db*' src/index.ts start",
+    "alice:chat": "tsx src/index.ts chat",
+    "dev": "tsx watch --ignore './memory/**' --ignore './generated_images/**' --ignore './menubar/**' --ignore './*.json' --ignore './dist/**' --ignore './*.db*' src/index.ts",
+    "start": "node dist/index.js start",
     "build": "tsc",
     "chat": "tsx src/index.ts chat",
     "test": "vitest run",

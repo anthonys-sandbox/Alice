@@ -6,12 +6,15 @@
 
 <p align="center">
   <strong>A self-hosted AI agent that runs on your Mac.</strong><br>
-  Chat via a beautiful web UI or Google Chat. Powered by Gemini (primary), Ollama &amp; OpenRouter.
+  Native macOS app, menubar quick-access, web UI, or Google Chat. Powered by Gemini (primary), Ollama &amp; OpenRouter.
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick Start</a> •
-  <a href="#google-chat-integration">Google Chat Setup</a> •
+  <a href="#native-macos-app">Native App</a> •
+  <a href="#menubar-app">Menubar</a> •
+  <a href="#voice-dictation">Voice</a> •
+  <a href="#google-chat-integration">Google Chat</a> •
   <a href="#configuration">Configuration</a> •
   <a href="#tools">Tools</a> •
   <a href="#memory-system">Memory</a> •
@@ -24,7 +27,10 @@
 
 Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 
-- 💬 **Chat** via a slick web UI with streaming responses and syntax highlighting
+- 🖥️ **Native macOS app** — a standalone `.app` with its own window, powered by WKWebView
+- 📌 **Menubar quick-access** — Electron-based menubar app for instant access without switching windows
+- 💬 **Web UI** — slick browser-based chat with streaming responses and syntax highlighting
+- 🎤 **Voice dictation** — speak to Alice using on-device speech recognition (no cloud, no API keys)
 - 🔧 **Use tools** — read/write files, run shell commands, search the web, generate images, manage git repos
 - 🧠 **Remember** things about you across conversations using a markdown-based memory system
 - 👁️ **See images** — attach images and Alice automatically switches to a vision model to understand them
@@ -37,16 +43,18 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 ## Architecture
 
 ```
-┌──────────────┐     ┌──────────────┐     ┌───────────────┐
-│  Web UI      │────▶│   Gateway    │────▶│    Agent      │
-│  (Browser)   │◀────│  (Express +  │◀────│  (ReAct Loop) │
-│              │ WS  │   WebSocket) │     │               │
-└──────────────┘     └──────────────┘     └───────┬───────┘
-                                                  │
-┌──────────────┐     ┌──────────────┐     ┌───────▼───────┐
-│ Google Chat  │────▶│ Apps Script  │────▶│  LLM Provider │
-│  (Mobile)    │◀────│ (Sheet Queue)│     │Gemini/Ollama/OR│
-└──────────────┘     └──────────────┘     └───────────────┘
+┌──────────────┐
+│  Alice.app   │──┐
+│  (Native)    │  │   ┌──────────────┐     ┌───────────────┐
+└──────────────┘  ├──▶│   Gateway    │────▶│    Agent      │
+┌──────────────┐  │   │  (Express +  │◀────│  (ReAct Loop) │
+│  Menubar App │──┤   │   WebSocket) │     │               │
+│  (Electron)  │  │   └──────────────┘     └───────┬───────┘
+└──────────────┘  │                                │
+┌──────────────┐  │   ┌──────────────┐     ┌───────▼───────┐
+│  Web UI      │──┘   │ Google Chat  │────▶│  LLM Provider │
+│  (Browser)   │      │  (Mobile)    │◀────│Gemini/Ollama/OR│
+└──────────────┘      └──────────────┘     └───────────────┘
 ```
 
 ---
@@ -116,6 +124,75 @@ Open **http://localhost:18790** in your browser. That's it! 🎉
 
 ```bash
 npx tsx src/index.ts chat
+```
+
+---
+
+## Native macOS App
+
+Alice includes a standalone native macOS app (`Alice.app`) built with Swift and WKWebView. Double-click it to launch — it starts the server automatically and presents the web UI in a native window with:
+
+- **Transparent titlebar** — clean, frameless look
+- **Native speech recognition** — uses `SFSpeechRecognizer` for on-device voice dictation
+- **Auto-reconnect** — shows a loading screen while Alice boots, connects automatically when ready
+- **Health monitoring** — polls the server every 2 seconds and recovers if Alice restarts
+
+### Building the App
+
+The app source is at `Alice.app/Contents/MacOS/AliceLauncher.swift`. To compile:
+
+```bash
+swiftc -o Alice.app/Contents/MacOS/alice \
+  Alice.app/Contents/MacOS/AliceLauncher.swift \
+  -framework Cocoa -framework WebKit -framework Speech -framework AVFoundation -O
+```
+
+> The compiled `.app` bundle is in `.gitignore` — the Swift source file is tracked.
+
+---
+
+## Menubar App
+
+Alice also runs as a **menubar app** for quick access without switching windows. Built with Electron, it lives in your macOS menu bar and drops down a chat panel on click.
+
+### Starting the Menubar
+
+The menubar app launches automatically when Alice starts via `npx tsx src/index.ts start`, or you can run it independently:
+
+```bash
+cd menubar && npm install && npx electron .
+```
+
+The menubar app connects to the same Alice server instance as the web UI and native app.
+
+---
+
+## Voice Dictation
+
+Alice supports **voice dictation** across all interfaces — click the microphone button next to the input field to speak instead of type.
+
+### How It Works
+
+Voice dictation uses a three-tier system that automatically selects the best available method:
+
+| Surface | Technology | Type |
+|---|---|---|
+| **Alice.app** (native) | `SFSpeechRecognizer` via Swift bridge | Real-time streaming, fully on-device |
+| **Chrome / Safari** | Web Speech API | Real-time streaming |
+| **Menubar (Electron)** | `getUserMedia` → server-side transcription | Record-then-transcribe |
+
+- **Native app**: Uses Apple's `SFSpeechRecognizer` directly through a WKWebView ↔ Swift bridge. Transcription happens entirely on-device with no cloud dependency.
+- **Web browsers**: Uses the standard Web Speech API (`webkitSpeechRecognition`). Works in Chrome and Safari.
+- **Menubar**: Electron's Web Speech API is non-functional on macOS, so the menubar records raw PCM audio via the Web Audio API, constructs a WAV file client-side, and sends it to Alice's `/api/transcribe` endpoint. The server launches `Transcribe.app` (a headless macOS helper app) which uses `SFSpeechRecognizer` for on-device transcription.
+
+### First-Time Setup
+
+macOS will prompt for **Microphone** and **Speech Recognition** permissions on first use. You must allow both. The transcription helper app needs to be compiled:
+
+```bash
+# Compile the transcription helper
+swiftc -o scripts/Transcribe.app/Contents/MacOS/transcribe \
+  scripts/transcribe.swift -framework Cocoa -framework Speech -O
 ```
 
 ---
@@ -401,7 +478,7 @@ npx tsx src/index.ts skills list
 ## CLI Reference
 
 ```bash
-# Start the gateway server (web UI + Google Chat polling)
+# Start the gateway server (web UI + menubar + Google Chat polling)
 npx tsx src/index.ts start [--port 18790] [--no-heartbeat]
 
 # Interactive terminal chat
@@ -491,10 +568,17 @@ MCP tools are discovered automatically at startup and registered as callable fun
 
 ```
 alice/
+├── Alice.app/                 # Native macOS app (compiled, in .gitignore)
+│   └── Contents/MacOS/
+│       ├── AliceLauncher.swift # Swift source — WKWebView + SFSpeechRecognizer bridge
+│       └── Info.plist         # App bundle metadata + permissions
+├── menubar/                   # Electron menubar app
+│   ├── main.js               # Electron main process
+│   └── package.json          # Menubar dependencies
 ├── src/
 │   ├── index.ts              # Entry point
 │   ├── cli/index.ts           # CLI commands (start, chat, skills, doctor)
-│   ├── gateway/server.ts      # Express server, WebSocket, web UI
+│   ├── gateway/server.ts      # Express server, WebSocket, web UI, /api/transcribe
 │   ├── runtime/
 │   │   ├── agent.ts           # Core ReAct agentic loop + model switcher
 │   │   ├── providers/
@@ -521,10 +605,12 @@ alice/
 │       ├── logger.ts          # Structured logger
 │       ├── markdown.ts        # Markdown/frontmatter parser
 │       └── oauth.ts           # Google OAuth token management
+├── scripts/
+│   ├── apps-script-relay.js   # Google Chat Apps Script relay
+│   ├── transcribe.swift       # Speech-to-text CLI source (SFSpeechRecognizer)
+│   └── Transcribe.app/       # Compiled helper app (in .gitignore)
 ├── memory/                    # Memory files (SOUL.md, USER.md, etc.)
 ├── skills/                    # Custom skill definitions
-├── scripts/
-│   └── apps-script-relay.js   # Google Chat Apps Script relay
 ├── public/                    # Static assets (icons, PWA manifest, service worker)
 ├── alice.config.json          # Project configuration
 ├── .env                       # Environment variables (secrets)

@@ -19,3 +19,7 @@ com.gravityclaw.agent.plist
 # Service account key
 alice-chat-sa.json
 menubar/node_modules
+Alice.app/
+scripts/transcribe
+scripts/Transcribe.app/
+generated_images/
