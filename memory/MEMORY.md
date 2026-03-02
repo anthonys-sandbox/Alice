@@ -17,3 +17,4 @@
 - Mission Control Dashboard was found down during heartbeat check on port 3000
 - The Mission Control Dashboard runs on port 3000.
 - Current disk usage is at 23% (10GiB of 926GiB).
+- Used Chart.js for a simple bar chart project with monthly sales dummy data

@@ -425,7 +425,13 @@ export class Gateway {
                 this.agent.clearCanvas();
               }
             },
-            attachments
+            attachments,
+            // Activity events — forwarded to client for the console panel
+            (action: string, detail?: string) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'activity', action, detail }));
+              }
+            }
           );
 
           // Check for canvas content after processing
@@ -1564,6 +1570,100 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: translateY(0); }
     }
+    /* ── Activity Console Panel ── */
+    .console-panel {
+      position: fixed;
+      right: 0;
+      top: 56px;
+      bottom: 0;
+      width: 380px;
+      background: #1a1a2e;
+      border-left: 1px solid rgba(255,255,255,0.08);
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+      animation: slideInRight 0.25s var(--motion-decelerate);
+    }
+    @keyframes slideInRight {
+      from { transform: translateX(100%); }
+      to { transform: translateX(0); }
+    }
+    .console-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #8b8fa3;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      background: #16162c;
+    }
+    .console-clear-btn, .console-close-btn {
+      background: none;
+      border: none;
+      color: #6b7280;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .console-clear-btn:hover, .console-close-btn:hover {
+      background: rgba(255,255,255,0.08);
+      color: #a0a4b8;
+    }
+    .console-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 12px;
+      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+      font-size: 11.5px;
+      line-height: 1.6;
+    }
+    .console-entry {
+      display: flex;
+      gap: 8px;
+      padding: 2px 0;
+      animation: fadeIn 0.15s ease;
+    }
+    .console-time {
+      color: #4a4e69;
+      flex-shrink: 0;
+    }
+    .console-action {
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .console-detail {
+      color: #c8cad0;
+      word-break: break-word;
+    }
+    /* Action color coding */
+    .action-llm_call { color: #818cf8; }
+    .action-llm_done { color: #6ee7b7; }
+    .action-tool_call { color: #93c5fd; }
+    .action-tool_done { color: #86efac; }
+    .action-rate_limit { color: #fbbf24; }
+    .action-failover { color: #f97316; }
+    .action-error { color: #f87171; }
+    .action-iteration { color: #6b7280; }
+    .action-fallback { color: #a78bfa; }
+    /* Shrink chat when console is open */
+    body.console-open #messages,
+    body.console-open .input-wrapper,
+    body.console-open #dashboardView {
+      margin-right: 380px;
+    }
+    @media (max-width: 768px) {
+      .console-panel { width: 100%; top: 56px; }
+      body.console-open #messages,
+      body.console-open .input-wrapper,
+      body.console-open #dashboardView {
+        display: none;
+      }
+    }
     /* ── Mic recording state ── */
     .mic-recording {
       color: #ef4444 !important;
@@ -1625,6 +1725,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       </div>
       <div class="header-spacer"></div>
       <div class="header-actions">
+        <button class="header-btn" id="consoleToggle" title="Toggle activity console">⚙<span class="btn-label"> Console</span></button>
         <button class="header-btn" id="newChatBtn">＋<span class="btn-label"> New Chat</span></button>
       </div>
     </header>
@@ -1641,6 +1742,18 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <button class="suggestion" data-msg="Set a reminder in 5 minutes to take a break"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Set reminder</button>
         </div>
       </div>
+    </div>
+
+    <!-- Activity Console Panel -->
+    <div id="consolePanel" class="console-panel" style="display: none;">
+      <div class="console-header">
+        <span>Activity Console</span>
+        <div style="display:flex;gap:8px;">
+          <button id="consoleClear" class="console-clear-btn">Clear</button>
+          <button id="consoleClose" class="console-close-btn">✕</button>
+        </div>
+      </div>
+      <div id="consoleLog" class="console-log"></div>
     </div>
 
     <div id="dashboardView" style="display:none; padding: 32px 24px; overflow-y: auto; flex: 1;">
@@ -1734,6 +1847,37 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     const clearBtn = document.getElementById('clearBtn');
 
     connectWS();
+
+    // ── Activity Console Panel ──
+    const consolePanel = document.getElementById('consolePanel');
+    const consoleLog = document.getElementById('consoleLog');
+    const consoleToggle = document.getElementById('consoleToggle');
+    const consoleClear = document.getElementById('consoleClear');
+    const consoleClose = document.getElementById('consoleClose');
+
+    function toggleConsole() {
+      const isOpen = consolePanel.style.display !== 'none';
+      consolePanel.style.display = isOpen ? 'none' : 'flex';
+      document.body.classList.toggle('console-open', !isOpen);
+    }
+    consoleToggle.addEventListener('click', toggleConsole);
+    consoleClose.addEventListener('click', toggleConsole);
+    consoleClear.addEventListener('click', () => { consoleLog.innerHTML = ''; });
+
+    function addActivity(action, detail) {
+      const entry = document.createElement('div');
+      entry.className = 'console-entry';
+      const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const icon = {
+        llm_call: '🧠', llm_done: '✅', tool_call: '🔧', tool_done: '✅',
+        rate_limit: '⏳', failover: '⚡', error: '❌', iteration: '🔄', fallback: '🔀'
+      }[action] || '📋';
+      entry.innerHTML = '<span class=\"console-time\">' + time + '</span>' +
+        '<span class=\"console-action action-' + action + '\">' + icon + ' ' + action + '</span>' +
+        '<span class=\"console-detail\">' + (detail || '') + '</span>';
+      consoleLog.appendChild(entry);
+      consoleLog.scrollTop = consoleLog.scrollHeight;
+    }
 
     function hideWelcome() {
       if (welcome) welcome.style.display = 'none';
@@ -1999,6 +2143,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         messages.appendChild(row);
         messages.scrollTop = messages.scrollHeight;
+        return;
+      }
+
+      // Activity console events
+      if (data.type === 'activity') {
+        addActivity(data.action, data.detail);
         return;
       }
 

@@ -687,10 +687,13 @@ export class Agent {
     async processMessageStream(
         userMessage: string,
         onToken: (token: string) => void,
-        attachments: Array<{ name: string; type: string; data: string }> = []
+        attachments: Array<{ name: string; type: string; data: string }> = [],
+        onActivity?: (action: string, detail?: string) => void
     ): Promise<AgentResponse> {
+        const emit = onActivity || (() => { });
+
         if (!this.provider.generateContentStream) {
-            // Fallback: run non-streaming, emit full text at once
+            emit('fallback', 'Provider does not support streaming, using non-streaming mode');
             const result = await this.processMessage(userMessage);
             if (result.text) onToken(result.text);
             return result;
@@ -730,6 +733,7 @@ export class Agent {
             }
 
             iterations++;
+            emit('iteration', `Iteration ${iterations}/${this.config.agent.maxIterations}`);
 
             try {
                 // Trim context if approaching token budget
@@ -748,6 +752,8 @@ export class Agent {
                     }
                 }
 
+                emit('llm_call', `Calling ${this.activeProvider} (${this.activeModel})`);
+                const llmStart = Date.now();
                 const response = await this.provider.generateContentStream!(
                     this.systemPrompt,
                     this.conversationHistory,
@@ -755,6 +761,7 @@ export class Agent {
                     onToken
                 );
                 this.sessionStats.apiCalls++;
+                emit('llm_done', `LLM responded in ${((Date.now() - llmStart) / 1000).toFixed(1)}s`);
 
                 // Tool calls
                 if (response.functionCalls && response.functionCalls.length > 0) {
@@ -765,11 +772,15 @@ export class Agent {
                         toolsUsed.push(fc.name);
                         this.sessionStats.toolCalls++;
                         this.sessionStats.toolsUsed[fc.name] = (this.sessionStats.toolsUsed[fc.name] || 0) + 1;
+                        emit('tool_call', `${fc.name}(${Object.keys(fc.args).join(', ')})`);
                     }
 
+                    const toolStart = Date.now();
                     const results = await Promise.all(
                         response.functionCalls.map(fc => executeTool(fc.name, fc.args))
                     );
+                    const toolMs = Date.now() - toolStart;
+                    emit('tool_done', `${response.functionCalls.length} tool(s) completed in ${(toolMs / 1000).toFixed(1)}s`);
 
                     const responseParts: LLMPart[] = response.functionCalls.map((fc, i) => ({
                         functionResponse: {
@@ -814,11 +825,13 @@ export class Agent {
 
                 // Model failover: switch to fallback provider on persistent rate limits
                 if (isRateLimit && this.fallbackProvider && !this.usingFallback) {
+                    emit('failover', `Rate limited on ${this.activeProvider} — switching to fallback`);
                     log.warn('Rate limited — failing over to fallback provider', { from: this.activeProvider });
                     this.provider = this.fallbackProvider;
                     this.usingFallback = true;
                     this.activeProvider = this.activeProvider === 'gemini' ? 'ollama' : 'gemini';
                     this.activeModel = this.activeProvider === 'ollama' ? this.config.ollama.model : this.config.gemini.model;
+                    emit('failover', `Now using ${this.activeProvider} (${this.activeModel})`);
                     onToken('\n\n> ⚡ *Switched to ' + this.activeProvider + ' (failover)*\n\n');
                     continue;
                 }
@@ -826,12 +839,14 @@ export class Agent {
                 if (isRateLimit) {
                     rateLimitRetries++;
                     if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+                        emit('error', `Rate limited after ${rateLimitRetries} retries — giving up`);
                         const errMsg = `Rate limited after ${rateLimitRetries} retries. Please wait a moment and try again.`;
                         this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
                         return { text: errMsg, toolsUsed, iterations };
                     }
                     const waitMatch = errorMessage.match(/reset after (\d+)s/i);
                     const waitMs = waitMatch ? (parseInt(waitMatch[1], 10) + 1) * 1000 : 5000;
+                    emit('rate_limit', `Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${(waitMs / 1000).toFixed(0)}s`);
                     log.warn(`Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${waitMs}ms`);
                     await new Promise(r => setTimeout(r, waitMs));
                     iterations--; // Don't count rate limit retries as iterations
@@ -839,13 +854,14 @@ export class Agent {
                 }
 
                 if (isTimeout) {
+                    emit('error', 'Request timed out');
                     const timeoutMsg = `The request timed out. Please try again.`;
                     this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
                     return { text: timeoutMsg, toolsUsed, iterations };
                 }
 
                 if (isModelError) {
-                    // 400/invalid errors can't self-correct — fail fast
+                    emit('error', `Model error: ${errorMessage.slice(0, 100)}`);
                     const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
                     log.error('Non-recoverable model error, failing fast');
                     this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
