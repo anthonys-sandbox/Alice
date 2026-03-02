@@ -1130,6 +1130,40 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
             }
         }
 
+        // ── ChatGPT / OpenAI models (via Codex CLI OAuth) ──
+        if (hasCodexCredentials()) {
+            models.push(
+                {
+                    id: 'gpt-4o',
+                    name: 'GPT-4o (Enterprise)',
+                    provider: 'chatgpt',
+                    toolCapable: true,
+                    capabilities: ['vision', 'reasoning'],
+                },
+                {
+                    id: 'gpt-4o-mini',
+                    name: 'GPT-4o Mini (Enterprise)',
+                    provider: 'chatgpt',
+                    toolCapable: true,
+                    capabilities: [],
+                },
+                {
+                    id: 'o3-mini',
+                    name: 'o3-mini (Enterprise)',
+                    provider: 'chatgpt',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+                {
+                    id: 'o4-mini',
+                    name: 'o4-mini (Enterprise)',
+                    provider: 'chatgpt',
+                    toolCapable: true,
+                    capabilities: ['reasoning'],
+                },
+            );
+        }
+
         return models;
     }
 
@@ -1150,6 +1184,15 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
             });
             this.activeModel = model;
             this.activeProvider = 'openrouter';
+        } else if (provider === 'chatgpt') {
+            this.provider = new OAIProvider({
+                model,
+                baseUrl: 'https://api.openai.com/v1/chat/completions',
+                apiKey: 'placeholder',
+            });
+            this.activeModel = model;
+            this.activeProvider = 'chatgpt';
+            this.setupChatGPTAuth();
         } else {
             this.provider = new OAIProvider({
                 model,

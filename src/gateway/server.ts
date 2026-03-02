@@ -1162,6 +1162,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .model-picker-btn .provider-dot.ollama { background: #34d399; }
     .model-picker-btn .provider-dot.gemini { background: #60a5fa; }
     .model-picker-btn .provider-dot.openrouter { background: #f472b6; }
+    .model-picker-btn .provider-dot.chatgpt { background: #10b981; }
     .model-picker-btn .chevron {
       transition: transform 0.2s;
       font-size: 8px;
