@@ -723,8 +723,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         max-width: 80%;
         padding: 8px 16px;
       }
-      .header-btn { padding: 0; overflow: hidden; width: 40px; height: 40px; border-radius: 50%; font-size: 0; display: flex; align-items: center; justify-content: center; }
-      .header-btn::before { content: '＋'; font-size: 20px; }
+      .header-btn { padding: 0; width: 40px; height: 40px; border-radius: 50%; font-size: 18px; display: flex; align-items: center; justify-content: center; }
+      .header-btn .btn-label { display: none; }
       .header-actions { flex-shrink: 0; }
     }
 
@@ -1432,7 +1432,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       </div>
       <div class="header-spacer"></div>
       <div class="header-actions">
-        <button class="header-btn" id="newChatBtn">＋ New Chat</button>
+        <button class="header-btn" id="newChatBtn">＋<span class="btn-label"> New Chat</span></button>
       </div>
     </header>
 
