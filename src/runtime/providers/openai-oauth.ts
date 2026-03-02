@@ -173,6 +173,18 @@ export async function getOpenAIAccessToken(): Promise<string | null> {
 }
 
 /**
+ * Synchronous version — reads the access token from file without refresh.
+ * Used in constructor where async isn't available.
+ * Returns null if no valid token file exists.
+ */
+export function getOpenAIAccessTokenSync(): string | null {
+    const creds = readCreds();
+    if (!creds?.access_token) return null;
+    log.info('Using Codex CLI access token (sync read)');
+    return creds.access_token;
+}
+
+/**
  * Invalidate cached tokens (e.g., after an API error suggesting token is bad).
  */
 export function invalidateOpenAITokens(): void {

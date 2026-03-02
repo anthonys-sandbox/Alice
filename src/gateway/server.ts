@@ -1238,6 +1238,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .model-option .model-dot.ollama { background: #34d399; }
     .model-option .model-dot.gemini { background: #60a5fa; }
     .model-option .model-dot.openrouter { background: #f472b6; }
+    .model-option .model-dot.chatgpt { background: #10b981; }
     .model-caps {
       display: flex;
       gap: 3px;
@@ -1910,6 +1911,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         { key: 'ollama', label: 'Local' },
         { key: 'gemini', label: 'Gemini' },
         { key: 'openrouter', label: 'OpenRouter' },
+        { key: 'chatgpt', label: 'ChatGPT' },
       ];
       let html = '';
       groups.forEach(g => {

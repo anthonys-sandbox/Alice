@@ -1,7 +1,7 @@
 import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type FunctionDeclaration } from './providers/gemini.js';
 import { OAIProvider } from './providers/oai-provider.js';
 import { hasCliCredentials } from './providers/gemini-cli-auth.js';
-import { getOpenAIAccessToken, hasCodexCredentials } from './providers/openai-oauth.js';
+import { getOpenAIAccessToken, getOpenAIAccessTokenSync, hasCodexCredentials } from './providers/openai-oauth.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
 import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, type MemoryUpdate } from '../memory/index.js';
 import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
@@ -74,16 +74,17 @@ export class Agent {
             }
         } else if (config.chatProvider === 'chatgpt') {
             log.info('Using ChatGPT Enterprise as chat provider');
+            const oauthToken = getOpenAIAccessTokenSync();
             this.provider = new OAIProvider({
                 model: config.openai?.model || 'gpt-4o',
                 baseUrl: 'https://api.openai.com/v1/chat/completions',
-                apiKey: 'placeholder-will-refresh',
+                apiKey: oauthToken || undefined,
             });
             this.activeModel = config.openai?.model || 'gpt-4o';
             this.activeProvider = 'chatgpt';
-
-            // Set up dynamic token injection
-            this.setupChatGPTAuth();
+            if (!oauthToken) {
+                log.warn('No ChatGPT OAuth token found — install Codex CLI and log in: npx @openai/codex');
+            }
         } else {
             // ollama (default)
             log.info('Using Ollama (local) as chat provider');
@@ -1185,14 +1186,14 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
             this.activeModel = model;
             this.activeProvider = 'openrouter';
         } else if (provider === 'chatgpt') {
+            const token = getOpenAIAccessTokenSync();
             this.provider = new OAIProvider({
                 model,
                 baseUrl: 'https://api.openai.com/v1/chat/completions',
-                apiKey: 'placeholder',
+                apiKey: token || undefined,
             });
             this.activeModel = model;
             this.activeProvider = 'chatgpt';
-            this.setupChatGPTAuth();
         } else {
             this.provider = new OAIProvider({
                 model,
