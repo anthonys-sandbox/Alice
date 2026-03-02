@@ -1577,12 +1577,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       top: 56px;
       bottom: 0;
       width: 380px;
-      background: #1a1a2e;
-      border-left: 1px solid rgba(255,255,255,0.08);
+      background: var(--bg-secondary);
+      border-left: 1px solid var(--border-subtle);
       display: flex;
       flex-direction: column;
       z-index: 100;
-      animation: slideInRight 0.25s var(--motion-decelerate);
+      animation: slideInRight var(--duration-medium) var(--motion-decelerate);
     }
     @keyframes slideInRight {
       from { transform: translateX(100%); }
@@ -1592,64 +1592,74 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 10px 14px;
-      font-size: 12px;
+      padding: 12px 16px;
+      font-family: var(--font);
+      font-size: 11px;
       font-weight: 600;
-      color: #8b8fa3;
+      color: var(--text-tertiary);
       text-transform: uppercase;
       letter-spacing: 1px;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
-      background: #16162c;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-primary);
     }
     .console-clear-btn, .console-close-btn {
       background: none;
-      border: none;
-      color: #6b7280;
+      border: 1px solid transparent;
+      color: var(--text-tertiary);
       cursor: pointer;
-      font-size: 12px;
-      padding: 2px 6px;
-      border-radius: 4px;
+      font-family: var(--font);
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: var(--shape-sm);
+      transition: all var(--duration-short) var(--motion-standard);
     }
     .console-clear-btn:hover, .console-close-btn:hover {
-      background: rgba(255,255,255,0.08);
-      color: #a0a4b8;
+      background: var(--surface-hover);
+      color: var(--text-secondary);
+      border-color: var(--border-subtle);
     }
     .console-log {
       flex: 1;
       overflow-y: auto;
-      padding: 8px 12px;
-      font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
-      font-size: 11.5px;
-      line-height: 1.6;
+      padding: 10px 14px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.7;
     }
+    .console-log::-webkit-scrollbar { width: 4px; }
+    .console-log::-webkit-scrollbar-track { background: transparent; }
+    .console-log::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 2px; }
     .console-entry {
       display: flex;
       gap: 8px;
-      padding: 2px 0;
-      animation: fadeIn 0.15s ease;
+      padding: 3px 0;
+      border-bottom: 1px solid var(--border-subtle);
+      animation: fadeIn 0.15s var(--motion-decelerate);
     }
+    .console-entry:last-child { border-bottom: none; }
     .console-time {
-      color: #4a4e69;
+      color: var(--text-tertiary);
       flex-shrink: 0;
+      opacity: 0.6;
     }
     .console-action {
       font-weight: 600;
       flex-shrink: 0;
     }
     .console-detail {
-      color: #c8cad0;
+      color: var(--text-secondary);
       word-break: break-word;
     }
-    /* Action color coding */
-    .action-llm_call { color: #818cf8; }
-    .action-llm_done { color: #6ee7b7; }
-    .action-tool_call { color: #93c5fd; }
-    .action-tool_done { color: #86efac; }
-    .action-rate_limit { color: #fbbf24; }
-    .action-failover { color: #f97316; }
-    .action-error { color: #f87171; }
-    .action-iteration { color: #6b7280; }
-    .action-fallback { color: #a78bfa; }
+    /* Action color coding — M3 palette harmonized */
+    .action-llm_call { color: var(--accent); }
+    .action-llm_done { color: var(--success); }
+    .action-tool_call { color: #93b4ff; }
+    .action-tool_done { color: var(--success); }
+    .action-rate_limit { color: #f5d97e; }
+    .action-failover { color: #ffb86c; }
+    .action-error { color: var(--error); }
+    .action-iteration { color: var(--text-tertiary); }
+    .action-fallback { color: var(--accent); }
     /* Shrink chat when console is open */
     body.console-open #messages,
     body.console-open .input-wrapper,
