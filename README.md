@@ -39,6 +39,10 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 - ⏰ **Reminders & file watchers** — schedule tasks with cron expressions or relative times
 - 💓 **Heartbeat** — periodic self-checks with reporting to Google Chat
 - 🦀 **Skills** — extend Alice with custom skill files
+- 🎨 **Canvas** — Alice can push interactive HTML/JS dashboards, charts, and forms inline in chat
+- 📋 **Message queue** — send multiple messages while Alice is busy; they queue and process in order
+- 🌐 **Persistent browser** — Chromium with saved cookies and login sessions across restarts
+- 📍 **Location services** — Alice can request your device location for weather, directions, etc.
 
 ## Architecture
 
@@ -407,16 +411,17 @@ Alice has built-in tools plus any MCP-provided tools she can use during conversa
 | `clipboard_read` | Read system clipboard |
 | `clipboard_write` | Write to system clipboard |
 
-### Browser Tools (Puppeteer)
+### Browser Tools (Persistent Chromium)
 
-These tools enable full browser automation:
+These tools enable full browser automation with a **persistent browser profile** at `~/.alice/browser-profile/`. Cookies, login sessions, and browsing history survive across Alice restarts.
 
 | Tool | Description |
 |---|---|
-| `browse_page` | Navigate to a URL and extract page content |
+| `browse_page` | Navigate to a URL and extract page content (cookies persist) |
 | `screenshot` | Take a screenshot of the current browser page |
 | `click_element` | Click an element by CSS selector |
 | `type_text` | Type text into an input field |
+| `browser_clear_data` | Wipe the persistent browser profile (cookies, cache, sessions) |
 
 ### Dynamic Tools (registered at startup)
 
@@ -429,6 +434,8 @@ These tools enable full browser automation:
 | `watch_file` | Watch a file/directory for changes |
 | `install_skill` | Install a new skill from a directory |
 | `switch_persona` | Switch Alice's personality |
+| `canvas` | Push interactive HTML/JS content inline in chat (dashboards, charts, forms) |
+| `get_location` | Get the user's device location (lat/lng via browser Geolocation API) |
 
 ---
 

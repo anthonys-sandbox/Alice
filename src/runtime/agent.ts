@@ -53,6 +53,15 @@ export class Agent {
         startTime: Date.now(),
     };
 
+    // Canvas: holds the last canvas payload pushed by the canvas tool
+    private lastCanvasPayload: { html: string; title: string } | null = null;
+
+    // Location: resolver for async geolocation requests via WebSocket
+    private locationResolver: {
+        resolve: (value: string) => void;
+        timer: ReturnType<typeof setTimeout>;
+    } | null = null;
+
     constructor(config: AliceConfig) {
         this.config = config;
 
@@ -288,7 +297,93 @@ export class Agent {
             },
         });
 
+        // Register canvas tool — push interactive HTML/JS inline into chat
+        registerTool({
+            name: 'canvas',
+            description: 'Push interactive HTML/JS content to the user inline in chat. Use for dashboards, forms, visualizations, charts, interactive demos, calculators, games. The HTML renders in a sandboxed iframe within the chat.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    html: { type: 'string', description: 'Complete HTML document to render (can include inline CSS and JS)' },
+                    title: { type: 'string', description: 'Title shown above the canvas' },
+                },
+                required: ['html'],
+            },
+            execute: async (args: Record<string, any>) => {
+                this.lastCanvasPayload = { html: args.html, title: args.title || 'Canvas' };
+                return 'Canvas content pushed to user. They can see it inline in the chat.';
+            },
+        });
+
+        // Register location tool — request device location via browser Geolocation API
+        registerTool({
+            name: 'get_location',
+            description: 'Get the user\'s current device location (latitude, longitude). Requires browser permission. Use for weather, local search, directions, nearby places, etc.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                return this.requestLocation();
+            },
+        });
+
         this.refreshContext();
+    }
+
+    // ── Canvas Methods ────────────────────────────────────────
+
+    /**
+     * Get the last canvas payload (called by Gateway after each agent iteration).
+     */
+    getLastCanvas(): { html: string; title: string } | null {
+        return this.lastCanvasPayload;
+    }
+
+    /**
+     * Clear the canvas payload after it's been sent to the client.
+     */
+    clearCanvas(): void {
+        this.lastCanvasPayload = null;
+    }
+
+    // ── Location Methods ────────────────────────────────────────
+
+    /**
+     * Request location from the client. Returns a Promise that resolves
+     * when the Gateway receives a location response from the WebSocket.
+     * Times out after 15 seconds.
+     */
+    requestLocation(): Promise<string> {
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                this.locationResolver = null;
+                resolve('Location unavailable — the request timed out. The user may have denied the location permission or the browser does not support geolocation.');
+            }, 15000);
+
+            this.locationResolver = { resolve, timer };
+        });
+    }
+
+    /**
+     * Called by the Gateway when a location response arrives from the client.
+     */
+    resolveLocation(lat: number | null, lng: number | null, accuracy: number | null, error?: string): void {
+        if (!this.locationResolver) return;
+
+        clearTimeout(this.locationResolver.timer);
+        const { resolve } = this.locationResolver;
+        this.locationResolver = null;
+
+        if (error || lat === null || lng === null) {
+            resolve(`Location unavailable: ${error || 'unknown error'}`);
+        } else {
+            resolve(`User's location: latitude ${lat}, longitude ${lng} (accuracy: ${Math.round(accuracy || 0)} meters)`);
+        }
+    }
+
+    /**
+     * Check if a location request is pending (used by Gateway to send WebSocket request).
+     */
+    hasLocationRequest(): boolean {
+        return this.locationResolver !== null;
     }
 
     /**

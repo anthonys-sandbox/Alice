@@ -1,20 +1,22 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
 import { resolve, join } from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, rmSync } from 'fs';
+import { homedir } from 'os';
 import { createLogger } from '../../utils/logger.js';
 import type { ToolDefinition } from './registry.js';
 
 const log = createLogger('Browser');
 
 // ── Singleton browser session ─────────────────────────────────
-// Stays alive between tool calls so Alice can navigate, click,
-// type, and screenshot in sequence — like a real user.
+// Persistent Chromium instance with saved cookies, sessions,
+// and browsing history across Alice restarts.
 
 let browser: Browser | null = null;
 let page: Page | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const PROFILE_DIR = join(homedir(), '.alice', 'browser-profile');
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes (longer for persistent sessions)
 const NAV_TIMEOUT_MS = 30_000;           // 30 seconds per navigation
 
 function resetIdleTimer(): void {
@@ -27,9 +29,13 @@ function resetIdleTimer(): void {
 
 async function getBrowser(): Promise<Browser> {
     if (!browser || !browser.connected) {
-        log.info('Launching browser...');
+        // Ensure profile directory exists
+        if (!existsSync(PROFILE_DIR)) mkdirSync(PROFILE_DIR, { recursive: true });
+
+        log.info('Launching browser with persistent profile', { profileDir: PROFILE_DIR });
         browser = await puppeteer.launch({
             headless: true,
+            userDataDir: PROFILE_DIR,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -65,7 +71,7 @@ async function closeBrowser(): Promise<void> {
 
 export const browsePageTool: ToolDefinition = {
     name: 'browse_page',
-    description: 'Navigate to a URL and return the page text content. Use this to read web pages, documentation, or search results. Returns the visible text, page title, and current URL.',
+    description: 'Navigate to a URL and return the page text content. Use this to read web pages, documentation, or search results. Returns the visible text, page title, and current URL. The browser maintains cookies and login sessions across calls.',
     parameters: {
         type: 'object',
         properties: {
@@ -225,4 +231,23 @@ export const typeTextTool: ToolDefinition = {
     },
 };
 
-export const browserTools = [browsePageTool, screenshotTool, clickElementTool, typeTextTool];
+export const browserClearDataTool: ToolDefinition = {
+    name: 'browser_clear_data',
+    description: 'Clear the persistent browser profile (cookies, cache, login sessions, history). Use when login sessions are stale or you want a fresh browser state.',
+    parameters: { type: 'object', properties: {}, required: [] },
+    async execute() {
+        try {
+            await closeBrowser();
+            if (existsSync(PROFILE_DIR)) {
+                rmSync(PROFILE_DIR, { recursive: true, force: true });
+            }
+            log.info('Browser profile cleared', { profileDir: PROFILE_DIR });
+            return 'Browser data cleared. Next browse_page will start with a fresh profile.';
+        } catch (err: any) {
+            return `Error clearing browser data: ${err.message}`;
+        }
+    },
+};
+
+export const browserTools = [browsePageTool, screenshotTool, clickElementTool, typeTextTool, browserClearDataTool];
+

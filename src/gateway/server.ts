@@ -385,23 +385,11 @@ export class Gateway {
     this.wss.on('connection', (ws: WebSocket) => {
       log.info('WebSocket client connected');
 
-      ws.on('message', async (data: Buffer) => {
-        const raw = data.toString();
-        log.debug('WebSocket message received', { length: raw.length });
+      // Per-connection message queue
+      let processing = false;
+      const queue: Array<{ text: string; attachments: Array<{ name: string; type: string; data: string }> }> = [];
 
-        // Parse JSON payload (or plain text for backward compat)
-        let text = raw;
-        let attachments: Array<{ name: string; type: string; data: string }> = [];
-        try {
-          const parsed = JSON.parse(raw);
-          if (parsed.text !== undefined) {
-            text = parsed.text;
-            attachments = parsed.attachments || [];
-          }
-        } catch {
-          // Plain text message — no attachments
-        }
-
+      const processMessage = async (text: string, attachments: Array<{ name: string; type: string; data: string }>) => {
         // --- Chat command handling ---
         const trimmed = text.trim().toLowerCase();
         if (trimmed.startsWith('/')) {
@@ -426,9 +414,27 @@ export class Gateway {
               if (ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'token', text: token }));
               }
+              // Check if agent is waiting for location
+              if (this.agent.hasLocationRequest() && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'location_request' }));
+              }
+              // Check for canvas during streaming (tool may push mid-conversation)
+              const midCanvas = this.agent.getLastCanvas();
+              if (midCanvas && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'canvas', html: midCanvas.html, title: midCanvas.title }));
+                this.agent.clearCanvas();
+              }
             },
             attachments
           );
+
+          // Check for canvas content after processing
+          const canvas = this.agent.getLastCanvas?.();
+          if (canvas && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'canvas', html: canvas.html, title: canvas.title }));
+            this.agent.clearCanvas?.();
+          }
+
           // Send final done message with metadata
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
@@ -439,12 +445,64 @@ export class Gateway {
             }));
           }
         } catch (err: any) {
-          ws.send(JSON.stringify({ type: 'done', error: err.message }));
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'done', error: err.message }));
+          }
         }
+      };
+
+      const drainQueue = async () => {
+        while (queue.length > 0 && ws.readyState === WebSocket.OPEN) {
+          const next = queue.shift()!;
+          await processMessage(next.text, next.attachments);
+        }
+        processing = false;
+      };
+
+      ws.on('message', async (data: Buffer) => {
+        const raw = data.toString();
+        log.debug('WebSocket message received', { length: raw.length });
+
+        // Parse JSON payload (or plain text for backward compat)
+        let text = raw;
+        let attachments: Array<{ name: string; type: string; data: string }> = [];
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.text !== undefined) {
+            text = parsed.text;
+            attachments = parsed.attachments || [];
+          }
+          // Handle location response from client
+          if (parsed.type === 'location') {
+            this.agent.resolveLocation?.(parsed.lat, parsed.lng, parsed.accuracy);
+            return;
+          }
+          if (parsed.type === 'location_error') {
+            this.agent.resolveLocation?.(null, null, null, parsed.error);
+            return;
+          }
+        } catch {
+          // Plain text message — no attachments
+        }
+
+        // If already processing, queue the message
+        if (processing) {
+          queue.push({ text, attachments });
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'queued', position: queue.length }));
+          }
+          log.debug('Message queued', { position: queue.length });
+          return;
+        }
+
+        processing = true;
+        await processMessage(text, attachments);
+        await drainQueue();
       });
 
       ws.on('close', () => {
         log.info('WebSocket client disconnected');
+        queue.length = 0;
       });
     });
   }
@@ -1465,6 +1523,47 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
       30% { transform: translateY(-6px); opacity: 1; }
     }
+    /* ── Canvas inline bubble ── */
+    .canvas-bubble {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--shape-md);
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .canvas-title {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      padding: 8px 12px 4px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .canvas-iframe {
+      width: 100%;
+      min-height: 200px;
+      max-height: 500px;
+      border: none;
+      background: #fff;
+      border-radius: 0 0 var(--shape-md) var(--shape-md);
+    }
+    /* ── Queued message badge ── */
+    .queued-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--text-tertiary);
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--surface-hover);
+      margin-top: 4px;
+      animation: fadeIn 0.3s var(--motion-decelerate);
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
     /* ── Mic recording state ── */
     .mic-recording {
       color: #ef4444 !important;
@@ -1859,6 +1958,88 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       if (data.type === 'typing') {
         if (!thinkingRow) {
           thinkingRow = showThinking();
+        }
+        return;
+      }
+
+      // Canvas: render inline interactive HTML
+      if (data.type === 'canvas') {
+        hideWelcome();
+        const row = document.createElement('div');
+        row.className = 'msg-row agent';
+
+        const avatar = document.createElement('div');
+        avatar.className = 'avatar alice';
+        avatar.innerHTML = SPARKLE_SVG;
+        row.appendChild(avatar);
+
+        const bubble = document.createElement('div');
+        bubble.className = 'canvas-bubble';
+
+        if (data.title) {
+          const title = document.createElement('div');
+          title.className = 'canvas-title';
+          title.textContent = data.title;
+          bubble.appendChild(title);
+        }
+
+        const iframe = document.createElement('iframe');
+        iframe.className = 'canvas-iframe';
+        iframe.sandbox = 'allow-scripts';
+        iframe.srcdoc = data.html;
+        // Auto-resize iframe height to fit content
+        iframe.addEventListener('load', function() {
+          try {
+            const h = iframe.contentDocument?.documentElement?.scrollHeight;
+            if (h && h > 0) iframe.style.height = Math.min(h + 16, 500) + 'px';
+          } catch(e) { /* cross-origin, use default height */ }
+        });
+        bubble.appendChild(iframe);
+        row.appendChild(bubble);
+
+        messages.appendChild(row);
+        messages.scrollTop = messages.scrollHeight;
+        return;
+      }
+
+      // Queued: show badge on the last user message
+      if (data.type === 'queued') {
+        const userRows = messages.querySelectorAll('.msg-row.user');
+        const lastUserRow = userRows[userRows.length - 1];
+        if (lastUserRow && !lastUserRow.querySelector('.queued-badge')) {
+          const badge = document.createElement('div');
+          badge.className = 'queued-badge';
+          badge.textContent = '⏳ Queued' + (data.position > 1 ? ' (#' + data.position + ')' : '');
+          lastUserRow.appendChild(badge);
+        }
+        return;
+      }
+
+      // Location request: get browser geolocation and send back
+      if (data.type === 'location_request') {
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            function(pos) {
+              ws.send(JSON.stringify({
+                type: 'location',
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+                accuracy: pos.coords.accuracy
+              }));
+            },
+            function(err) {
+              ws.send(JSON.stringify({
+                type: 'location_error',
+                error: err.message || 'Location permission denied'
+              }));
+            },
+            { enableHighAccuracy: true, timeout: 10000 }
+          );
+        } else {
+          ws.send(JSON.stringify({
+            type: 'location_error',
+            error: 'Geolocation API not available in this browser'
+          }));
         }
         return;
       }
