@@ -39,10 +39,11 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 - ⏰ **Reminders & file watchers** — schedule tasks with cron expressions or relative times
 - 💓 **Heartbeat** — periodic self-checks with reporting to Google Chat
 - 🦀 **Skills** — extend Alice with custom skill files
-- 🎨 **Canvas** — Alice can push interactive HTML/JS dashboards, charts, and forms inline in chat
+- 🎨 **Canvas** — Alice pushes interactive HTML/JS inline in chat (charts, games, dashboards); persists across restarts, supports CDN libraries (Chart.js etc.), and has a fullscreen expand mode
 - 📋 **Message queue** — send multiple messages while Alice is busy; they queue and process in order
 - 🌐 **Persistent browser** — Chromium with saved cookies and login sessions across restarts
 - 📍 **Location services** — Alice can request your device location for weather, directions, etc.
+- 🖥️ **Activity console** — live backend visibility panel showing LLM calls, tool usage, rate limits, errors, and timing
 
 ## Architecture
 
@@ -434,7 +435,7 @@ These tools enable full browser automation with a **persistent browser profile**
 | `watch_file` | Watch a file/directory for changes |
 | `install_skill` | Install a new skill from a directory |
 | `switch_persona` | Switch Alice's personality |
-| `canvas` | Push interactive HTML/JS content inline in chat (dashboards, charts, forms) |
+| `canvas` | Push interactive HTML/JS content inline in chat; persists in SQLite, supports fullscreen expand |
 | `get_location` | Get the user's device location (lat/lng via browser Geolocation API) |
 
 ---

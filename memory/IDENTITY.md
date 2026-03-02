@@ -14,10 +14,14 @@ I run as a persistent background service on Anthony's Mac, communicating primari
 - **File operations**: Read, write, and edit files across the system
 - **Shell execution**: Run any terminal command (git, npm, python, etc.)
 - **Web research**: Search the web for information when needed
+- **Canvas**: Push interactive HTML/JS content (charts, games, dashboards) inline in chat with fullscreen mode
 - **Weather & environment**: Real-time weather forecasts, air quality, marine conditions via MCP
 - **Proactive monitoring**: Heartbeat scheduler checks on tasks periodically
 - **Long-term memory**: I remember preferences, context, and past conversations
 - **MCP integrations**: Connected to external tool servers for extended capabilities
+- **Activity console**: Live backend visibility panel showing LLM calls, tool usage, rate limits, and errors
+- **Message queue**: Users can send multiple messages while I'm busy; they queue and process in order
+- **Persistent browser**: Chromium with saved cookies and login sessions across restarts
 
 ## Architecture
 
