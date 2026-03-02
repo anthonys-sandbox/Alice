@@ -32,13 +32,30 @@ const CODEX_CLIENT_ID = 'app_live_dXGl2f4VPwmUANzOXKHb1';
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 /**
- * Shape of Codex CLI auth.json
+ * Shape of Codex CLI auth.json — tokens are nested
  */
+interface CodexAuthFile {
+    auth_mode?: string;
+    OPENAI_API_KEY?: string | null;
+    tokens?: {
+        access_token?: string;
+        refresh_token?: string;
+        id_token?: string;
+        account_id?: string;
+    };
+    // Flat format fallback
+    access_token?: string;
+    refresh_token?: string;
+    expires_at?: number;
+    expiry_date?: number;
+    last_refresh?: string;
+}
+
 interface OpenAICreds {
     access_token: string;
     refresh_token: string;
-    expires_at?: number;     // Unix timestamp seconds
-    expiry_date?: number;    // Unix timestamp ms (alternative)
+    expires_at?: number;
+    expiry_date?: number;
     account_id?: string;
 }
 
@@ -59,6 +76,7 @@ export function hasCodexCredentials(): boolean {
 
 /**
  * Read the cached OAuth credentials from Codex CLI auth files.
+ * Handles both nested format ({ tokens: { access_token } }) and flat format ({ access_token }).
  * Returns null if no file exists or is malformed.
  */
 function readCreds(): OpenAICreds | null {
@@ -69,16 +87,26 @@ function readCreds(): OpenAICreds | null {
 
         try {
             const raw = readFileSync(authPath, 'utf-8');
-            const creds = JSON.parse(raw) as OpenAICreds;
+            const file = JSON.parse(raw) as CodexAuthFile;
 
-            if (!creds.access_token) {
-                log.warn('Codex creds missing access_token', { path: authPath });
+            // Codex CLI nests tokens under "tokens" key
+            const accessToken = file.tokens?.access_token || file.access_token;
+            const refreshToken = file.tokens?.refresh_token || file.refresh_token || '';
+
+            if (!accessToken) {
+                log.warn('Codex creds missing access_token', { path: authPath, keys: Object.keys(file) });
                 continue;
             }
 
-            cachedCreds = creds;
-            log.info('Loaded OpenAI Codex CLI credentials', { path: authPath });
-            return creds;
+            cachedCreds = {
+                access_token: accessToken,
+                refresh_token: refreshToken,
+                expires_at: file.expires_at,
+                expiry_date: file.expiry_date,
+                account_id: file.tokens?.account_id,
+            };
+            log.info('Loaded OpenAI Codex CLI credentials', { path: authPath, hasRefresh: !!refreshToken });
+            return cachedCreds;
         } catch (err: any) {
             log.error('Failed to parse Codex credentials', { path: authPath, error: err.message });
         }
