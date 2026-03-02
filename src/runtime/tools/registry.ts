@@ -734,6 +734,45 @@ export async function executeTool(name: string, args: Record<string, any>): Prom
 }
 
 /**
+ * Recursively sanitize a JSON Schema for Gemini compatibility.
+ * - Converts numeric enum values to strings (Gemini requires TYPE_STRING for all enums)
+ * - Strips unsupported schema fields
+ */
+function sanitizeSchema(schema: any): any {
+    if (!schema || typeof schema !== 'object') return schema;
+
+    const result = { ...schema };
+
+    // Convert numeric enum values to strings
+    if (Array.isArray(result.enum)) {
+        result.enum = result.enum.map((v: any) => String(v));
+    }
+
+    // Recurse into properties
+    if (result.properties && typeof result.properties === 'object') {
+        const sanitized: Record<string, any> = {};
+        for (const [key, value] of Object.entries(result.properties)) {
+            sanitized[key] = sanitizeSchema(value);
+        }
+        result.properties = sanitized;
+    }
+
+    // Recurse into items (for arrays)
+    if (result.items) {
+        result.items = sanitizeSchema(result.items);
+    }
+
+    // Recurse into anyOf, oneOf, allOf
+    for (const key of ['anyOf', 'oneOf', 'allOf']) {
+        if (Array.isArray(result[key])) {
+            result[key] = result[key].map((s: any) => sanitizeSchema(s));
+        }
+    }
+
+    return result;
+}
+
+/**
  * Convert tools to Gemini function declarations format.
  * Send core tools + all MCP tools to the model.
  * Non-core built-in tools remain registered and executable — just not advertised.
@@ -749,6 +788,6 @@ export function toGeminiFunctionDeclarations() {
         .map(tool => ({
             name: tool.name,
             description: tool.description,
-            parameters: tool.parameters,
+            parameters: sanitizeSchema(tool.parameters),
         }));
 }
