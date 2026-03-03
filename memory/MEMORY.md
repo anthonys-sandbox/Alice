@@ -25,3 +25,7 @@
 - Project: Flappy Alice game created using canvas tool with physics and score counter
 - Tech stack: HTML5 Canvas, Spacebar/Click controls
 - Systems: Gateway and Mission Control local development services are operational
+- Mission Control Dashboard uses port 3000
+- Gateway service runs on port 18790
+- System uses a heartbeat scheduler every 30 minutes to check dev servers and disk space
+- fact here
