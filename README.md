@@ -15,6 +15,7 @@
   <a href="#menubar-app">Menubar</a> •
   <a href="#voice-dictation">Voice</a> •
   <a href="#google-chat-integration">Google Chat</a> •
+  <a href="#mission-control-dashboard">Dashboard</a> •
   <a href="#configuration">Configuration</a> •
   <a href="#tools">Tools</a> •
   <a href="#memory-system">Memory</a> •
@@ -46,6 +47,7 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 - 🌐 **Persistent browser** — Chromium with saved cookies and login sessions across restarts
 - 📍 **Location services** — Alice can request your device location for weather, directions, etc.
 - 🖥️ **Activity console** — live backend visibility panel showing LLM calls, tool usage, rate limits, errors, and timing
+- 📊 **Mission Control dashboard** — Command Center (system health, quick actions, cron jobs), Tools & Plugins (categorized + searchable), Memory (search + CRUD), Reminders (create/delete), Connections (providers + MCP servers with tool counts), Settings (runtime model switching)
 
 ## Architecture
 
@@ -333,6 +335,21 @@ On first run, a browser window will open for Google OAuth. Sign in and authorize
 2. Search for **Alice** in the app directory
 3. Send a message — you should see "✨ Thinking..." immediately
 4. Within a few seconds, Alice will respond directly in the chat
+
+---
+
+## Mission Control Dashboard
+
+The web UI includes a full-featured dashboard accessible via the sidebar. All pages are navigable from the left-hand nav.
+
+| Page | Description |
+|---|---|
+| **Command Center** | 6 stat cards (uptime, messages, tool calls, API calls, sessions, active model), System Health panel (provider/fallback/connection status), Quick Actions (run briefing, trigger heartbeat, git backup, refresh), Scheduled Jobs with run-now buttons, Top Tools bar chart |
+| **Tools & Plugins** | Auto-categorized by type (File System, Web, Browser, Memory, Scheduling, Git, etc). MCP tools are auto-grouped by server name. Collapsible sections with tool count badges and a search/filter bar |
+| **Memory** | Tabbed view of memory files (USER, MEMORY, SOUL, IDENTITY, HEARTBEAT). DB-backed items have add/delete with section grouping. Search bar filters items in real time |
+| **Reminders** | Full CRUD — create reminders with message + schedule (natural language or cron), view with CRON/ONE-SHOT type badges, delete individual reminders |
+| **Connections** | Split view: Providers (Gemini, Ollama) and MCP Servers with status dots, tool count badges, and connection details |
+| **Settings** | Runtime model switching via dropdown (grouped by provider), config summary grid, SOUL.md and IDENTITY.md editors with save buttons |
 
 ---
 
