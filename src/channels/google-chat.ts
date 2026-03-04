@@ -329,7 +329,9 @@ export class GoogleChatAdapter {
                 if (token) {
                     const chatUrl = `https://chat.googleapis.com/v1/${spaceName}/messages`;
                     const payload: any = { cardsV2 };
-                    if (fallbackText) payload.text = fallbackText;
+                    // Note: do NOT include `text` alongside cardsV2 — Google Chat
+                    // renders both, creating a duplicate plain-text bubble above the card.
+                    // fallbackText is only used if the card send fails entirely.
 
                     const chatRes = await fetch(chatUrl, {
                         method: 'POST',
