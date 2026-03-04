@@ -2,8 +2,20 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { parseMarkdownFile } from '../utils/markdown.js';
 import { createLogger } from '../utils/logger.js';
+import type { MemoryStore } from './memory-store.js';
 
 const log = createLogger('Memory');
+
+// Module-level MemoryStore instance (set by Agent on startup)
+let memoryStore: MemoryStore | null = null;
+
+export function setMemoryStore(store: MemoryStore): void {
+    memoryStore = store;
+}
+
+export function getMemoryStore(): MemoryStore | null {
+    return memoryStore;
+}
 
 export interface MemoryFile {
     name: string;
@@ -27,9 +39,9 @@ export function loadMemory(memoryDir: string): MemoryState {
 
     const state: MemoryState = {
         soul: loadFile(memoryDir, 'SOUL.md'),
-        user: loadFile(memoryDir, 'USER.md'),
+        user: memoryStore ? loadFromStore('user') : loadFile(memoryDir, 'USER.md'),
         identity: loadFile(memoryDir, 'IDENTITY.md'),
-        memory: loadFile(memoryDir, 'MEMORY.md'),
+        memory: memoryStore ? loadFromStore('memory') : loadFile(memoryDir, 'MEMORY.md'),
         heartbeat: loadFile(memoryDir, 'HEARTBEAT.md'),
     };
 
@@ -39,6 +51,20 @@ export function loadMemory(memoryDir: string): MemoryState {
     log.info(`Loaded ${loaded.length} memory files`, { files: loaded });
 
     return state;
+}
+
+/**
+ * Load memory content from the DB-backed MemoryStore.
+ * Reconstructs markdown for injection into the system prompt.
+ */
+function loadFromStore(file: string): MemoryFile | null {
+    if (!memoryStore) return null;
+    const markdown = memoryStore.toMarkdown(file);
+    return {
+        name: file === 'user' ? 'USER.md' : 'MEMORY.md',
+        frontmatter: {},
+        content: markdown,
+    };
 }
 
 function loadFile(dir: string, filename: string): MemoryFile | null {
@@ -192,6 +218,80 @@ const FILE_DEFAULTS: Record<string, string> = {
 };
 
 export async function updateMemory(memoryDir: string, updates: MemoryUpdate[]): Promise<number> {
+    // If MemoryStore is available, route through DB
+    if (memoryStore) {
+        return updateMemoryViaStore(memoryDir, updates);
+    }
+
+    // Legacy file-based fallback
+    return updateMemoryViaFiles(memoryDir, updates);
+}
+
+/**
+ * DB-backed memory update — routes add/update/remove through MemoryStore.
+ */
+async function updateMemoryViaStore(memoryDir: string, updates: MemoryUpdate[]): Promise<number> {
+    while (memoryWriteLock) {
+        await new Promise(r => setTimeout(r, 50));
+    }
+    memoryWriteLock = true;
+
+    let totalChanges = 0;
+
+    try {
+        for (const update of updates) {
+            const file = update.file; // 'user' or 'memory'
+            const cleaned = update.content.replace(/^[-•*]\s*/, '').trim();
+            if (cleaned.length < 5) continue;
+
+            if (update.action === 'remove' && update.match) {
+                const existing = memoryStore!.findByContent(file, update.match);
+                if (existing) {
+                    memoryStore!.deleteItem(existing.id);
+                    totalChanges++;
+                    log.info(`Removed from ${file} via DB`, { match: update.match, id: existing.id });
+                }
+            } else if (update.action === 'update' && update.match) {
+                const existing = memoryStore!.findByContent(file, update.match);
+                if (existing) {
+                    memoryStore!.updateItem(existing.id, cleaned);
+                    totalChanges++;
+                    log.info(`Updated in ${file} via DB`, { id: existing.id, old: update.match, new: cleaned });
+                } else {
+                    // Match not found — treat as add
+                    memoryStore!.addItem(file, update.section || '', cleaned);
+                    totalChanges++;
+                    log.info(`Added to ${file} via DB (update target not found)`, { content: cleaned });
+                }
+            } else if (update.action === 'add') {
+                try {
+                    memoryStore!.addItem(file, update.section || '', cleaned);
+                    totalChanges++;
+                } catch {
+                    // Duplicate — skip silently
+                }
+            }
+        }
+
+        // Sync DB to .md files for git diffability
+        if (totalChanges > 0) {
+            memoryStore!.syncToFile(memoryDir, 'memory');
+            memoryStore!.syncToFile(memoryDir, 'user');
+        }
+    } finally {
+        memoryWriteLock = false;
+    }
+
+    if (totalChanges > 0) {
+        log.info(`Memory updated via DB`, { changes: totalChanges });
+    }
+    return totalChanges;
+}
+
+/**
+ * Legacy file-based memory update (used when MemoryStore is not available).
+ */
+async function updateMemoryViaFiles(memoryDir: string, updates: MemoryUpdate[]): Promise<number> {
     while (memoryWriteLock) {
         await new Promise(r => setTimeout(r, 50));
     }
@@ -228,7 +328,6 @@ export async function updateMemory(memoryDir: string, updates: MemoryUpdate[]): 
                 if (cleaned.length < 5) continue;
 
                 if (update.action === 'remove' && update.match) {
-                    // Remove lines matching the target
                     const lines = content.split('\n');
                     const matchLower = update.match.toLowerCase();
                     const before = lines.length;
@@ -241,9 +340,7 @@ export async function updateMemory(memoryDir: string, updates: MemoryUpdate[]): 
                         totalChanges++;
                         log.info(`Removed from ${filename}`, { match: update.match });
                     }
-
                 } else if (update.action === 'update' && update.match) {
-                    // Find the line matching 'match' and replace it
                     const lines = content.split('\n');
                     const matchLower = update.match.toLowerCase();
                     let replaced = false;
@@ -257,7 +354,6 @@ export async function updateMemory(memoryDir: string, updates: MemoryUpdate[]): 
                             break;
                         }
                     }
-                    // If no match found, treat as an add
                     if (!replaced) {
                         content = addToSection(content, update.section, cleaned);
                         totalChanges++;
@@ -265,9 +361,7 @@ export async function updateMemory(memoryDir: string, updates: MemoryUpdate[]): 
                     } else {
                         content = lines.join('\n');
                     }
-
                 } else if (update.action === 'add') {
-                    // Check for duplicates before adding
                     const contentLower = content.toLowerCase();
                     const words = cleaned.toLowerCase().split(/\s+/);
                     const keyPhrase = words.slice(0, Math.min(6, words.length)).join(' ');

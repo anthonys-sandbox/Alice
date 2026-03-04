@@ -51,23 +51,25 @@
                     "mcp-google-calendar"
                 ],
                 "env": {
-                    "GOOGLE_OAUTH_CREDENTIALS": "./google-oauth.json"
+                    "GOOGLE_OAUTH_CREDENTIALS": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw/credentials.json"
                 },
-                "enabled": false
+                "cwd": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw",
+                "enabled": true
             },
             {
                 "name": "gmail",
                 "command": "npx",
                 "args": [
                     "-y",
-                    "mcp-gmail",
-                    "--scopes",
-                    "gmail.readonly,gmail.compose"
+                    "@gongrzhe/server-gmail-autoauth-mcp"
                 ],
                 "env": {
-                    "GOOGLE_OAUTH_CREDENTIALS": "./google-oauth.json"
+                    "GMAIL_OAUTH_PATH": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw/credentials.json",
+                    "GMAIL_CREDENTIALS_PATH": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw/gmail-tokens.json",
+                    "CREDENTIALS_PATH": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw/gmail-tokens.json"
                 },
-                "enabled": false
+                "cwd": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw",
+                "enabled": true
             },
             {
                 "name": "filesystem",
@@ -85,7 +87,7 @@
                     "-y",
                     "notebooklm-mcp"
                 ],
-                "enabled": false
+                "enabled": true
             }
         ]
     }

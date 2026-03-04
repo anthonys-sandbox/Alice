@@ -37,6 +37,8 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 - 📱 **Google Chat** — message Alice from your phone and she responds as a proper Chat app
 - 📲 **PWA** — install as an app on your phone or desktop for quick access
 - ⏰ **Reminders & file watchers** — schedule tasks with cron expressions or relative times
+- 📅 **Cron jobs** — persistent scheduled jobs stored in SQLite with a full management API
+- ☀️ **Morning briefing** — daily Cards v2 briefing to Google Chat with weather, calendar (AI summary + desk time), and inbox (AI highlights + action items)
 - 💓 **Heartbeat** — periodic self-checks with reporting to Google Chat
 - 🦀 **Skills** — extend Alice with custom skill files
 - 🎨 **Canvas** — Alice pushes interactive HTML/JS inline in chat (charts, games, dashboards); persists across restarts, supports CDN libraries (Chart.js etc.), and has a fullscreen expand mode
@@ -438,6 +440,14 @@ These tools enable full browser automation with a **persistent browser profile**
 | `canvas` | Push interactive HTML/JS content inline in chat; persists in SQLite, supports fullscreen expand |
 | `get_location` | Get the user's device location (lat/lng via browser Geolocation API) |
 
+### Cron Job Tools
+
+| Tool | Description |
+|---|---|
+| `create_cron_job` | Create a persistent scheduled job (name, cron expression, prompt) |
+| `list_cron_jobs` | List all active cron jobs |
+| `delete_cron_job` | Remove a cron job by ID |
+
 ---
 
 ## Memory System
@@ -569,6 +579,11 @@ MCP tools are discovered automatically at startup and registered as callable fun
 | Server | Package | Tools | Description |
 |---|---|---|---|
 | `weather` | `open-meteo-mcp-server` | 17 | Weather forecasts, air quality, marine, flood, geocoding (free, no API key) |
+| `gmail` | `@gongrzhe/server-gmail-autoauth-mcp` | 19 | Gmail read/send/search/filter (requires OAuth — see setup) |
+| `google-calendar` | `mcp-google-calendar` | 6 | Google Calendar events CRUD (requires OAuth) |
+| `filesystem` | `@anthropic/mcp-filesystem` | 14 | Read/write/search files in allowed directories |
+| `github` | `@anthropic/mcp-github` | 26 | GitHub repos, issues, PRs, code search |
+| `notebooklm` | `notebooklm-mcp` | 16 | Chat with Gemini through NotebookLM notebooks |
 
 ---
 
@@ -595,17 +610,20 @@ alice/
 │   │   │   ├── code-assist-client.ts # Code Assist API client (Ultra subscription)
 │   │   │   └── oai-provider.ts # OpenAI-compatible provider (Ollama/OpenRouter)
 │   │   └── tools/
-│   │       ├── registry.ts    # Built-in tool definitions
+│   │       ├── registry.ts    # Built-in tool definitions + cron job tools
 │   │       └── browser.ts     # Puppeteer browser automation tools
 │   ├── channels/
-│   │   └── google-chat.ts     # Google Chat adapter (Sheet polling)
+│   │   └── google-chat.ts     # Google Chat adapter (Sheet polling + Cards v2)
 │   ├── mcp/
-│   │   └── client.ts          # MCP server manager
+│   │   └── client.ts          # MCP server manager (schema sanitization)
 │   ├── memory/
 │   │   ├── index.ts           # Memory file loader
-│   │   └── sessions.ts        # SQLite session store
+│   │   ├── sessions.ts        # SQLite session store
+│   │   ├── embeddings.ts      # Embedding-based semantic memory search
+│   │   └── memory-store.ts    # Structured memory storage
 │   ├── scheduler/
 │   │   ├── heartbeat.ts       # Periodic heartbeat system
+│   │   ├── cron-jobs.ts       # Persistent cron job system + morning briefing
 │   │   └── task-scheduler.ts  # Reminders & file watchers
 │   ├── skills/loader.ts       # Skill file loader
 │   └── utils/

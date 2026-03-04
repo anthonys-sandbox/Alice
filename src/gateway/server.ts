@@ -14,6 +14,9 @@ import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
 import { formatForGoogleChat } from '../utils/markdown.js';
 import { MCPManager } from '../mcp/client.js';
+import { getMemoryStore } from '../memory/index.js';
+import { CronJobManager } from '../scheduler/cron-jobs.js';
+import { registerCronTools } from '../runtime/tools/registry.js';
 
 const log = createLogger('Gateway');
 
@@ -25,6 +28,7 @@ export class Gateway {
   private chat: GoogleChatAdapter;
   private config: AliceConfig;
   private mcp: MCPManager;
+  private cronJobs: CronJobManager;
 
   constructor(config: AliceConfig) {
     this.config = config;
@@ -50,6 +54,13 @@ export class Gateway {
         log.warn('MCP initialization had errors (non-fatal)', { error: err.message });
       });
     }
+
+    // Initialize cron job manager
+    const dataDir = join(resolve(config.memory.dir), 'data');
+    this.cronJobs = new CronJobManager(dataDir);
+    this.cronJobs.setAgent(this.agent);
+    this.cronJobs.setChat(this.chat);
+    registerCronTools(this.cronJobs);
 
     this.setupRoutes();
     this.setupWebSocket();
@@ -309,6 +320,35 @@ export class Gateway {
       }
     });
 
+    // ── Search API (keyword + semantic) ─────────────
+    this.app.get('/api/search', async (req, res) => {
+      try {
+        const query = (req.query.q as string || '').trim();
+        const type = (req.query.type as string) || 'keyword';
+        const limit = parseInt(req.query.limit as string) || 10;
+
+        if (!query) {
+          res.status(400).json({ error: 'Query parameter "q" is required' });
+          return;
+        }
+
+        if (type === 'semantic') {
+          const apiKey = this.agent.getConfig().gemini.apiKey;
+          if (!apiKey) {
+            res.status(400).json({ error: 'Semantic search requires a Gemini API key' });
+            return;
+          }
+          const results = await this.agent.getSessionStore().semanticSearch(query, apiKey, limit);
+          res.json({ type: 'semantic', query, results });
+        } else {
+          const results = this.agent.getSessionStore().searchMessages(query, limit);
+          res.json({ type: 'keyword', query, results });
+        }
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // ── Dashboard API ──────────────────────────────
     // List all tools
     this.app.get('/api/tools', async (_req, res) => {
@@ -325,26 +365,138 @@ export class Gateway {
     // List memory files
     this.app.get('/api/memory', (_req, res) => {
       try {
+        const store = getMemoryStore();
         const dir = resolve(this.config.memory.dir);
-        if (!existsSync(dir)) {
-          log.warn('Memory directory not found', { dir });
-          res.json({ files: [] });
-          return;
+
+        if (store) {
+          // DB-backed: return parsed items for memory/user, raw for others
+          const files: any[] = [];
+
+          // DB-backed files
+          for (const file of ['memory', 'user'] as const) {
+            const sections = store.getItemsByFile(file);
+            files.push({
+              name: file === 'user' ? 'USER' : 'MEMORY',
+              type: 'items',
+              sections: sections.map(s => ({
+                heading: s.section,
+                items: s.items.map(i => ({ id: i.id, content: i.content, createdAt: i.createdAt })),
+              })),
+            });
+          }
+
+          // Raw files
+          for (const name of ['IDENTITY', 'SOUL', 'HEARTBEAT']) {
+            const filePath = join(dir, `${name}.md`);
+            files.push({
+              name,
+              type: 'raw',
+              content: existsSync(filePath) ? readFileSync(filePath, 'utf-8') : '',
+            });
+          }
+
+          res.json({ files });
+        } else {
+          // Fallback: raw content for all files
+          if (!existsSync(dir)) {
+            res.json({ files: [] });
+            return;
+          }
+          const files = readdirSync(dir)
+            .filter((f: string) => f.endsWith('.md'))
+            .map((f: string) => ({
+              name: f.replace('.md', ''),
+              type: 'raw',
+              content: readFileSync(join(dir, f), 'utf-8'),
+            }));
+          res.json({ files });
         }
-        const files = readdirSync(dir)
-          .filter((f: string) => f.endsWith('.md'))
-          .map((f: string) => ({
-            name: f.replace('.md', ''),
-            content: readFileSync(join(dir, f), 'utf-8'),
-          }));
-        res.json({ files });
       } catch (err: any) {
         log.error('Failed to load memory files', { error: err.message });
         res.json({ files: [] });
       }
     });
 
-    // Update a memory file
+    // Memory items CRUD (DB-backed)
+    this.app.get('/api/memory/items', (req, res) => {
+      try {
+        const store = getMemoryStore();
+        if (!store) {
+          res.status(501).json({ error: 'Memory store not initialized' });
+          return;
+        }
+        const file = req.query.file as string | undefined;
+        const items = store.listItems(file);
+        res.json({ items });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/memory/items', (req, res) => {
+      try {
+        const store = getMemoryStore();
+        if (!store) {
+          res.status(501).json({ error: 'Memory store not initialized' });
+          return;
+        }
+        const { file, section, content } = req.body;
+        if (!file || !content) {
+          res.status(400).json({ error: 'file and content are required' });
+          return;
+        }
+        const id = store.addItem(file, section || '', content);
+        store.syncToFile(resolve(this.config.memory.dir), file);
+        this.agent.refreshContext();
+        res.json({ status: 'added', id });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.put('/api/memory/items/:id', (req, res) => {
+      try {
+        const store = getMemoryStore();
+        if (!store) {
+          res.status(501).json({ error: 'Memory store not initialized' });
+          return;
+        }
+        const id = parseInt(req.params.id, 10);
+        const { content } = req.body;
+        if (!content) {
+          res.status(400).json({ error: 'content is required' });
+          return;
+        }
+        const updated = store.updateItem(id, content);
+        if (!updated) {
+          res.status(404).json({ error: 'Item not found' });
+          return;
+        }
+        // Sync both files since we don't know which one it belonged to
+        store.syncToFile(resolve(this.config.memory.dir), 'memory');
+        store.syncToFile(resolve(this.config.memory.dir), 'user');
+        this.agent.refreshContext();
+        res.json({ status: 'updated' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.delete('/api/memory/items/:id', (req, res) => {
+      try {
+        const store = getMemoryStore();
+        if (!store) {
+          res.status(501).json({ error: 'Memory store not initialized' });
+          return;
+        }
+        const id = parseInt(req.params.id, 10);
+        const deleted = store.deleteItem(id);
+        if (!deleted) {
+          res.status(404).json({ error: 'Item not found' });
+          return;
+        }
+        store.syncToFile(resolve(this.config.memory.dir), 'memory');
+        store.syncToFile(resolve(this.config.memory.dir), 'user');
+        this.agent.refreshContext();
+        res.json({ status: 'deleted' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Update a memory file (raw — for IDENTITY, SOUL, HEARTBEAT)
     this.app.put('/api/memory/:name', (req, res) => {
       try {
         const filePath = join(resolve(this.config.memory.dir), `${req.params.name}.md`);
@@ -390,6 +542,245 @@ export class Gateway {
         }
         this.agent.switchModel(provider, model);
         res.json({ status: 'switched', provider, model });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── Mission Control API ──────────────────────────
+    // Stats for Command Center
+    this.app.get('/api/stats', async (_req, res) => {
+      try {
+        const stats = this.agent.getSessionStats();
+        const sessions = this.agent.listSessions();
+        const totalMessages = sessions.reduce((sum: number, s: any) => sum + (s.messageCount || 0), 0);
+        res.json({
+          uptime: Math.floor(process.uptime()),
+          messagesTotal: totalMessages,
+          sessionCount: sessions.length,
+          apiCalls: stats.apiCalls,
+          toolCalls: stats.toolCalls,
+          toolsUsed: stats.toolsUsed,
+          activeProvider: stats.activeProvider,
+          activeModel: stats.activeModel,
+          usingFallback: stats.usingFallback,
+          sessionDuration: stats.sessionDuration,
+        });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Connection status for Connections page
+    this.app.get('/api/connections', async (_req, res) => {
+      try {
+        const connections: Array<{ name: string; status: 'online' | 'offline' | 'unknown'; detail: string }> = [];
+
+        // Ollama
+        try {
+          const ollamaResp = await fetch(`http://${this.config.ollama.host}:${this.config.ollama.port}/api/tags`, {
+            signal: AbortSignal.timeout(3000),
+          });
+          const ollamaData: any = await ollamaResp.json();
+          const modelCount = ollamaData.models?.length || 0;
+          connections.push({ name: 'Ollama (Local LLM)', status: 'online', detail: `${modelCount} model(s) available` });
+        } catch {
+          connections.push({ name: 'Ollama (Local LLM)', status: 'offline', detail: 'Not reachable' });
+        }
+
+        // Gemini
+        const hasGeminiKey = !!this.config.gemini.apiKey;
+        connections.push({
+          name: 'Gemini API',
+          status: hasGeminiKey ? 'online' : 'offline',
+          detail: hasGeminiKey ? `Model: ${this.config.gemini.model}` : 'No API key configured',
+        });
+
+        // Google Chat
+        const hasGchat = !!this.config.googleChat.sheetId;
+        connections.push({
+          name: 'Google Chat',
+          status: hasGchat ? 'online' : 'offline',
+          detail: hasGchat ? 'Relay active' : 'Not configured',
+        });
+
+        // OpenRouter
+        const hasOpenRouter = !!this.config.openRouter.apiKey;
+        connections.push({
+          name: 'OpenRouter',
+          status: hasOpenRouter ? 'online' : 'offline',
+          detail: hasOpenRouter ? 'API key configured' : 'Not configured',
+        });
+
+        // MCP Servers
+        if (this.config.mcp.servers.length > 0) {
+          for (const srv of this.config.mcp.servers) {
+            connections.push({
+              name: `MCP: ${srv.name}`,
+              status: srv.enabled !== false ? 'online' : 'offline',
+              detail: srv.enabled !== false ? `Running: ${srv.command}` : 'Disabled',
+            });
+          }
+        }
+
+        res.json({ connections });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // Settings — read/write SOUL.md and IDENTITY.md
+    this.app.get('/api/settings', (_req, res) => {
+      try {
+        const dir = resolve(this.config.memory.dir);
+        const soulPath = join(dir, 'SOUL.md');
+        const identityPath = join(dir, 'IDENTITY.md');
+        const soul = existsSync(soulPath) ? readFileSync(soulPath, 'utf-8') : '';
+        const identity = existsSync(identityPath) ? readFileSync(identityPath, 'utf-8') : '';
+        res.json({
+          soul,
+          identity,
+          config: {
+            provider: this.agent.activeProvider,
+            model: this.agent.activeModel,
+            memoryDir: this.config.memory.dir,
+            gatewayPort: this.config.gateway.port,
+            heartbeatEnabled: this.config.heartbeat.enabled,
+            heartbeatInterval: this.config.heartbeat.intervalMinutes,
+          },
+        });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.put('/api/settings/soul', (req, res) => {
+      try {
+        const filePath = join(resolve(this.config.memory.dir), 'SOUL.md');
+        writeFileSync(filePath, req.body.content || '', 'utf-8');
+        this.agent.refreshContext();
+        res.json({ status: 'saved' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.put('/api/settings/identity', (req, res) => {
+      try {
+        const filePath = join(resolve(this.config.memory.dir), 'IDENTITY.md');
+        writeFileSync(filePath, req.body.content || '', 'utf-8');
+        this.agent.refreshContext();
+        res.json({ status: 'saved' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── Persona API ───────────────────────────────
+    this.app.get('/api/personas', (_req, res) => {
+      try {
+        const personas = this.agent.getSessionStore().listPersonas();
+        res.json({ personas });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/personas', (req, res) => {
+      try {
+        const { name, description, soul, identity } = req.body;
+        if (!name) return res.status(400).json({ error: 'name is required' });
+        const id = this.agent.getSessionStore().createPersona(
+          name, description || '', soul || '', identity || ''
+        );
+        res.json({ id, status: 'created' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.put('/api/personas/:id', (req, res) => {
+      try {
+        const updates: any = {};
+        if (req.body.name !== undefined) updates.name = req.body.name;
+        if (req.body.description !== undefined) updates.description = req.body.description;
+        if (req.body.soul !== undefined) updates.soulContent = req.body.soul;
+        if (req.body.identity !== undefined) updates.identityContent = req.body.identity;
+        this.agent.getSessionStore().updatePersona(req.params.id, updates);
+        res.json({ status: 'updated' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.delete('/api/personas/:id', (req, res) => {
+      try {
+        const ok = this.agent.getSessionStore().deletePersona(req.params.id);
+        if (!ok) return res.status(400).json({ error: 'Cannot delete default persona' });
+        res.json({ status: 'deleted' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/personas/:id/activate', (req, res) => {
+      try {
+        this.agent.getSessionStore().setActivePersona(req.params.id);
+        this.agent.refreshContext();  // Rebuild system prompt with new persona
+        res.json({ status: 'activated' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── Cron Jobs API ─────────────────────────────
+    this.app.get('/api/cron-jobs', (_req, res) => {
+      try {
+        const jobs = this.cronJobs.listJobs();
+        res.json({ jobs });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/cron-jobs', (req, res) => {
+      try {
+        const { name, cronExpr, prompt, isolated } = req.body;
+        if (!name || !cronExpr || !prompt) {
+          return res.status(400).json({ error: 'name, cronExpr, and prompt are required' });
+        }
+        const job = this.cronJobs.addJob({
+          id: `job_${Date.now().toString(36)}`,
+          name,
+          cronExpr,
+          prompt,
+          isolated: isolated !== false,
+          enabled: true,
+        });
+        res.json({ job });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.delete('/api/cron-jobs/:id', (req, res) => {
+      try {
+        const removed = this.cronJobs.removeJob(req.params.id);
+        if (!removed) return res.status(404).json({ error: 'Job not found' });
+        res.json({ status: 'deleted' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/cron-jobs/:id/run', async (req, res) => {
+      try {
+        const result = await this.cronJobs.runJob(req.params.id);
+        res.json({ status: 'completed', result: result.slice(0, 2000) });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/cron-jobs/:id/toggle', (req, res) => {
+      try {
+        const job = this.cronJobs.getJob(req.params.id);
+        if (!job) return res.status(404).json({ error: 'Job not found' });
+        if (job.enabled) {
+          this.cronJobs.pauseJob(req.params.id);
+          res.json({ status: 'paused' });
+        } else {
+          this.cronJobs.resumeJob(req.params.id);
+          res.json({ status: 'resumed' });
+        }
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.put('/api/cron-jobs/:id', (req, res) => {
+      try {
+        const job = this.cronJobs.getJob(req.params.id);
+        if (!job) return res.status(404).json({ error: 'Job not found' });
+        // Remove and re-add with updated fields
+        this.cronJobs.removeJob(req.params.id);
+        const updated = this.cronJobs.addJob({
+          id: req.params.id,
+          name: req.body.name || job.name,
+          cronExpr: req.body.cronExpr || job.cronExpr,
+          prompt: req.body.prompt || job.prompt,
+          isolated: req.body.isolated !== undefined ? req.body.isolated : job.isolated,
+          enabled: req.body.enabled !== undefined ? req.body.enabled : job.enabled,
+        });
+        res.json({ job: updated });
       } catch (err: any) { res.status(500).json({ error: err.message }); }
     });
   }
@@ -624,6 +1015,13 @@ export class Gateway {
           startHeartbeat(this.config, this.agent, this.chat);
         }
 
+        // Start cron job schedules (after MCP servers have had time to connect)
+        // Delay slightly to ensure MCP tools are registered
+        setTimeout(() => {
+          this.cronJobs.startAll();
+          log.info('📅 Cron job scheduler started');
+        }, 5000);
+
         // Auto-backup: commit and push to GitHub every 6 hours
         try {
           scheduler.addReminder('auto-backup', '0 */6 * * *');
@@ -654,6 +1052,7 @@ export class Gateway {
    */
   async stop(): Promise<void> {
     stopHeartbeat();
+    this.cronJobs.stopAll();
     this.server.close();
     log.info('Gateway stopped');
   }
@@ -679,7 +1078,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
   <title>Alice</title>
   <meta name="description" content="Alice — Personal AI Assistant">
   <meta name="theme-color" content="#131314">
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Alice">
   <link rel="icon" type="image/png" href="/alice-icon-512.png">
@@ -1757,6 +2156,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     </div>
     <div class="sidebar-nav" id="sidebarNav">
       <div class="sidebar-group-label">Dashboard</div>
+      <div class="sidebar-item sidebar-nav-item" data-page="command_center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        <span class="sidebar-item-title">Command Center</span>
+      </div>
       <div class="sidebar-item sidebar-nav-item" data-page="tools">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474a2.5 2.5 0 1 1 3.014 3.015a1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474a2.5 2.5 0 1 0-3.014 3.015a1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474a2.5 2.5 0 1 1-3.014-3.015a1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474a2.5 2.5 0 1 0 3.014-3.015a1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></svg>
         <span class="sidebar-item-title">Tools & Plugins</span>
@@ -1772,6 +2175,14 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       <div class="sidebar-item sidebar-nav-item" data-page="personas">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11h.01M14 6h.01M18 6h.01M6.5 13.1h.01M22 5c0 9-4 12-6 12s-6-3-6-12q0-3 6-3c6 0 6 1 6 3"/><path d="M17.4 9.9c-.8.8-2 .8-2.8 0m-4.5-2.8C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6c4.5 7.8 9.5 8.4 11.2 7.4c.9-.5 1.9-2.1 1.9-4.7"/><path d="M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"/></svg>
         <span class="sidebar-item-title">Personas</span>
+      </div>
+      <div class="sidebar-item sidebar-nav-item" data-page="connections">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        <span class="sidebar-item-title">Connections</span>
+      </div>
+      <div class="sidebar-item sidebar-nav-item" data-page="settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+        <span class="sidebar-item-title">Settings</span>
       </div>
     </div>
     <div class="sidebar-group-label" style="margin-top:4px">Conversations</div>
@@ -2787,14 +3198,159 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       } else if (page === 'memory') {
         const res = await fetch('/api/memory').then(r => r.json());
         let html = '<h2 style="color:var(--accent);margin-bottom:16px">Memory</h2>';
-        res.files.forEach(f => {
-          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px">';
-          html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
-          html += '<span style="font-weight:500;color:var(--text-primary);text-transform:uppercase;font-size:12px;letter-spacing:0.5px">' + f.name + '</span>';
-          html += '<button class="save-mem-btn" data-name="' + f.name + '" style="background:var(--accent);color:#131314;border:none;padding:4px 14px;border-radius:8px;cursor:pointer;font-size:12px">Save</button></div>';
-          html += '<textarea class="mem-editor" data-name="' + f.name + '" style="width:100%;min-height:120px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.5">' + f.content + '</textarea></div>';
+
+        // Tab bar
+        html += '<div id="mem-tabs" style="display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap">';
+        res.files.forEach((f, i) => {
+          const isItems = f.type === 'items';
+          const count = isItems ? f.sections.reduce((s, sec) => s + sec.items.length, 0) : 0;
+          const badge = isItems && count > 0 ? ' <span style="background:var(--accent);color:#131314;border-radius:10px;padding:1px 7px;font-size:10px;margin-left:4px;font-weight:600">' + count + '</span>' : '';
+          html += '<button class="mem-tab" data-tab="' + i + '" style="'
+            + 'background:' + (i === 0 ? 'var(--accent)' : 'var(--surface)') + ';'
+            + 'color:' + (i === 0 ? '#131314' : 'var(--text-secondary)') + ';'
+            + 'border:1px solid ' + (i === 0 ? 'var(--accent)' : 'var(--border)') + ';'
+            + 'padding:6px 16px;border-radius:20px;cursor:pointer;font-size:12px;font-weight:500;'
+            + 'letter-spacing:0.5px;text-transform:uppercase;font-family:var(--font);'
+            + 'transition:all var(--duration-short) var(--motion-standard)'
+            + '">' + f.name + badge + '</button>';
         });
+        html += '</div>';
+
+        // Tab content panels
+        res.files.forEach((f, i) => {
+          html += '<div class="mem-panel" data-panel="' + i + '" style="display:' + (i === 0 ? 'block' : 'none') + '">';
+
+          if (f.type === 'items') {
+            // DB-backed items view
+            if (f.sections.length === 0 || f.sections.every(s => s.items.length === 0)) {
+              html += '<div style="color:var(--text-tertiary);font-size:14px;padding:24px;text-align:center;background:var(--surface);border-radius:12px;border:1px solid var(--border)">No items yet. Add one below or ask Alice to learn something new.</div>';
+            } else {
+              f.sections.forEach(sec => {
+                if (sec.heading) {
+                  html += '<div style="font-size:11px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;padding-left:4px">' + sec.heading + '</div>';
+                }
+                sec.items.forEach(item => {
+                  html += '<div class="mem-item" data-id="' + item.id + '" style="'
+                    + 'display:flex;align-items:flex-start;gap:12px;padding:12px 16px;'
+                    + 'background:var(--surface);border:1px solid var(--border);border-radius:10px;'
+                    + 'margin-bottom:6px;transition:all var(--duration-medium) var(--motion-standard);'
+                    + 'overflow:hidden;max-height:200px">'
+                    + '<div style="flex:1;font-size:13px;color:var(--text-primary);line-height:1.5;padding-top:1px">' + item.content + '</div>'
+                    + '<button class="mem-delete" data-id="' + item.id + '" title="Remove" style="'
+                    + 'background:none;border:none;color:var(--text-tertiary);cursor:pointer;'
+                    + 'padding:4px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;'
+                    + 'transition:all var(--duration-short) var(--motion-standard)'
+                    + '"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>'
+                    + '</div>';
+                });
+              });
+            }
+
+            // Add item form
+            const fileKey = f.name === 'USER' ? 'user' : 'memory';
+            html += '<div style="margin-top:12px;display:flex;gap:8px;align-items:center">';
+            html += '<input class="mem-add-input" data-file="' + fileKey + '" placeholder="Add a new memory item..." style="'
+              + 'flex:1;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);'
+              + 'border-radius:10px;padding:10px 14px;font-family:var(--font);font-size:13px;'
+              + 'outline:none;transition:border-color var(--duration-short) var(--motion-standard)">';
+            html += '<select class="mem-add-section" data-file="' + fileKey + '" style="'
+              + 'background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);'
+              + 'border-radius:10px;padding:10px 12px;font-family:var(--font);font-size:12px;cursor:pointer">';
+            html += '<option value="">No section</option>';
+            f.sections.forEach(sec => {
+              if (sec.heading) html += '<option value="' + sec.heading + '">' + sec.heading + '</option>';
+            });
+            html += '</select>';
+            html += '<button class="mem-add-btn" data-file="' + fileKey + '" style="'
+              + 'background:var(--accent);color:#131314;border:none;padding:10px 18px;border-radius:10px;'
+              + 'cursor:pointer;font-size:12px;font-weight:500;font-family:var(--font);white-space:nowrap;'
+              + 'transition:opacity var(--duration-short) var(--motion-standard)">Add</button>';
+            html += '</div>';
+
+          } else {
+            // Raw textarea editor (IDENTITY, SOUL, HEARTBEAT)
+            html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px">';
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+            html += '<span style="font-weight:500;color:var(--text-primary);text-transform:uppercase;font-size:12px;letter-spacing:0.5px">' + f.name + '</span>';
+            html += '<button class="save-mem-btn" data-name="' + f.name + '" style="background:var(--accent);color:#131314;border:none;padding:4px 14px;border-radius:8px;cursor:pointer;font-size:12px">Save</button></div>';
+            html += '<textarea class="mem-editor" data-name="' + f.name + '" style="width:100%;min-height:200px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:var(--font-mono);font-size:13px;resize:vertical;line-height:1.5">' + (f.content || '') + '</textarea></div>';
+          }
+
+          html += '</div>';
+        });
+
         showDashboardView(html);
+
+        // Tab switching
+        dashboardView.querySelectorAll('.mem-tab').forEach(tab => {
+          tab.addEventListener('click', () => {
+            dashboardView.querySelectorAll('.mem-tab').forEach(t => {
+              t.style.background = 'var(--surface)';
+              t.style.color = 'var(--text-secondary)';
+              t.style.borderColor = 'var(--border)';
+            });
+            tab.style.background = 'var(--accent)';
+            tab.style.color = '#131314';
+            tab.style.borderColor = 'var(--accent)';
+            dashboardView.querySelectorAll('.mem-panel').forEach(p => { p.style.display = 'none'; });
+            const panel = dashboardView.querySelector('.mem-panel[data-panel="' + tab.dataset.tab + '"]');
+            if (panel) panel.style.display = 'block';
+          });
+        });
+
+        // Delete buttons — animate then remove
+        dashboardView.querySelectorAll('.mem-delete').forEach(btn => {
+          btn.addEventListener('mouseenter', () => { btn.style.color = 'var(--error)'; btn.style.background = 'rgba(242,184,181,0.1)'; });
+          btn.addEventListener('mouseleave', () => { btn.style.color = 'var(--text-tertiary)'; btn.style.background = 'none'; });
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.id;
+            const row = btn.closest('.mem-item');
+            if (!row) return;
+            // Animate out
+            row.style.opacity = '0';
+            row.style.maxHeight = '0';
+            row.style.padding = '0 16px';
+            row.style.marginBottom = '0';
+            row.style.borderColor = 'transparent';
+            await fetch('/api/memory/items/' + id, { method: 'DELETE' });
+            setTimeout(() => { row.remove(); }, 300);
+          });
+        });
+
+        // Add item
+        dashboardView.querySelectorAll('.mem-add-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const file = btn.dataset.file;
+            const input = dashboardView.querySelector('.mem-add-input[data-file="' + file + '"]');
+            const sectionSelect = dashboardView.querySelector('.mem-add-section[data-file="' + file + '"]');
+            const content = input?.value?.trim();
+            if (!content) return;
+            const section = sectionSelect?.value || '';
+            await fetch('/api/memory/items', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ file, section, content }),
+            });
+            input.value = '';
+            // Reload the memory page to show the new item
+            loadDashboard('memory');
+          });
+        });
+
+        // Enter key to add
+        dashboardView.querySelectorAll('.mem-add-input').forEach(input => {
+          input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              const file = input.dataset.file;
+              dashboardView.querySelector('.mem-add-btn[data-file="' + file + '"]')?.click();
+            }
+          });
+          // Focus styles
+          input.addEventListener('focus', () => { input.style.borderColor = 'var(--accent)'; });
+          input.addEventListener('blur', () => { input.style.borderColor = 'var(--border)'; });
+        });
+
+        // Raw editor save buttons
         dashboardView.querySelectorAll('.save-mem-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
             const name = btn.dataset.name;
@@ -2825,13 +3381,234 @@ const WEB_UI_HTML = `<!DOCTYPE html>
             loadDashboard('reminders');
           });
         });
-      } else if (page === 'personas') {
-        var html = '<h2 style="color:var(--accent);margin-bottom:16px">Personas</h2>';
-        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;border-left:3px solid var(--accent)">';
-        html += '<div style="font-weight:500;color:var(--text-primary);margin-bottom:6px">Alice (Default)</div>';
-        html += '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">Your personal AI assistant with a warm, helpful personality. Manages reminders, searches memory, and helps with coding tasks.</div></div>';
-        html += '<p style="color:var(--text-tertiary);margin-top:16px;font-size:13px">More personas coming soon.</p>';
+      } else if (page === 'command_center') {
+        const stats = await fetch('/api/stats').then(r => r.json());
+        const upH = Math.floor(stats.uptime / 3600);
+        const upM = Math.floor((stats.uptime % 3600) / 60);
+        const uptimeStr = upH > 0 ? upH + 'h ' + upM + 'm' : upM + 'm';
+        const topTools = Object.entries(stats.toolsUsed || {}).sort((a,b) => b[1] - a[1]).slice(0,5);
+
+        let html = '<h2 style="color:var(--accent);margin-bottom:20px">Command Center</h2>';
+        // Stat cards grid
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin-bottom:24px">';
+        const cards = [
+          { label: 'Uptime', value: uptimeStr, color: '#4ade80' },
+          { label: 'Messages', value: stats.messagesTotal, color: '#60a5fa' },
+          { label: 'Tool Calls', value: stats.toolCalls, color: '#c084fc' },
+          { label: 'Active Model', value: stats.activeModel.split('/').pop(), color: '#fb923c' },
+        ];
+        cards.forEach(c => {
+          html += '<div style="background:linear-gradient(135deg,var(--surface),var(--bg-tertiary));border:1px solid var(--border);border-radius:14px;padding:18px 20px;position:relative;overflow:hidden">';
+          html += '<div style="position:absolute;top:-8px;right:-8px;width:60px;height:60px;border-radius:50%;background:' + c.color + '15"></div>';
+          html += '<div style="font-size:12px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">' + c.label + '</div>';
+          html += '<div style="font-size:24px;font-weight:700;color:' + c.color + '">' + c.value + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+
+        // Session info
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:14px">Session Overview</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">';
+        html += '<div style="color:var(--text-secondary)">Sessions: <span style="color:var(--text-primary);font-weight:500">' + stats.sessionCount + '</span></div>';
+        html += '<div style="color:var(--text-secondary)">API Calls: <span style="color:var(--text-primary);font-weight:500">' + stats.apiCalls + '</span></div>';
+        html += '<div style="color:var(--text-secondary)">Provider: <span style="color:var(--text-primary);font-weight:500">' + stats.activeProvider + '</span></div>';
+        html += '<div style="color:var(--text-secondary)">Fallback: <span style="color:var(--text-primary);font-weight:500">' + (stats.usingFallback ? 'Active' : 'Standby') + '</span></div>';
+        html += '</div></div>';
+
+        // Top tools
+        if (topTools.length > 0) {
+          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
+          html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:14px">Top Tools This Session</div>';
+          topTools.forEach(([name, count]) => {
+            const maxC = topTools[0][1];
+            const pct = Math.round((count / maxC) * 100);
+            html += '<div style="margin-bottom:8px">';
+            html += '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span style="color:var(--text-secondary)">' + name + '</span><span style="color:var(--text-primary);font-weight:500">' + count + '</span></div>';
+            html += '<div style="height:4px;background:var(--bg-tertiary);border-radius:2px"><div style="height:100%;width:' + pct + '%;background:var(--accent);border-radius:2px;transition:width 0.3s"></div></div>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
         showDashboardView(html);
+
+      } else if (page === 'connections') {
+        const data = await fetch('/api/connections').then(r => r.json());
+        let html = '<h2 style="color:var(--accent);margin-bottom:20px">Connections</h2>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">';
+        (data.connections || []).forEach(c => {
+          const isOnline = c.status === 'online';
+          const dotColor = isOnline ? '#4ade80' : '#f87171';
+          const borderColor = isOnline ? '#4ade8033' : '#f8717133';
+          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;border-left:3px solid ' + dotColor + '">';
+          html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">';
+          html += '<div style="width:10px;height:10px;border-radius:50%;background:' + dotColor + ';box-shadow:0 0 8px ' + borderColor + '"></div>';
+          html += '<span style="font-weight:600;color:var(--text-primary);font-size:14px">' + c.name + '</span>';
+          html += '</div>';
+          html += '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">' + c.detail + '</div>';
+          html += '<div style="margin-top:8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:' + dotColor + ';font-weight:600">' + c.status + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+        showDashboardView(html);
+
+      } else if (page === 'settings') {
+        const data = await fetch('/api/settings').then(r => r.json());
+        let html = '<h2 style="color:var(--accent);margin-bottom:20px">Settings</h2>';
+
+        // Config summary
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:14px">Configuration</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;font-size:13px">';
+        Object.entries(data.config || {}).forEach(([k,v]) => {
+          html += '<div style="color:var(--text-secondary)">' + k + ': <span style="color:var(--text-primary);font-weight:500">' + v + '</span></div>';
+        });
+        html += '</div></div>';
+
+        // Soul editor
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px">Personality (SOUL.md)</div>';
+        html += '<button id="saveSoulBtn" style="background:var(--accent);color:#131314;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Save</button>';
+        html += '</div>';
+        html += '<textarea id="soulEditor" style="width:100%;min-height:180px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.6">' + (data.soul || '') + '</textarea>';
+        html += '</div>';
+
+        // Identity editor
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px">Identity (IDENTITY.md)</div>';
+        html += '<button id="saveIdentityBtn" style="background:var(--accent);color:#131314;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Save</button>';
+        html += '</div>';
+        html += '<textarea id="identityEditor" style="width:100%;min-height:180px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.6">' + (data.identity || '') + '</textarea>';
+        html += '</div>';
+
+        showDashboardView(html);
+
+        // Save handlers
+        document.getElementById('saveSoulBtn').addEventListener('click', async () => {
+          const btn = document.getElementById('saveSoulBtn');
+          await fetch('/api/settings/soul', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: document.getElementById('soulEditor').value}) });
+          btn.textContent = 'Saved!'; setTimeout(() => { btn.textContent = 'Save'; }, 2000);
+        });
+        document.getElementById('saveIdentityBtn').addEventListener('click', async () => {
+          const btn = document.getElementById('saveIdentityBtn');
+          await fetch('/api/settings/identity', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({content: document.getElementById('identityEditor').value}) });
+          btn.textContent = 'Saved!'; setTimeout(() => { btn.textContent = 'Save'; }, 2000);
+        });
+
+      } else if (page === 'personas') {
+        const data = await fetch('/api/personas').then(r => r.json());
+        const personas = data.personas || [];
+        let html = '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">';
+        html += '<h2 style="color:var(--accent);margin:0">Personas</h2>';
+        html += '<button id="createPersonaBtn" style="background:var(--accent);color:#131314;border:none;padding:8px 18px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600">+ New Persona</button>';
+        html += '</div>';
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">';
+        personas.forEach(p => {
+          const borderColor = p.isActive ? 'var(--accent)' : 'var(--border)';
+          const glowStyle = p.isActive ? ';box-shadow:0 0 12px rgba(138,180,248,0.15)' : '';
+          html += '<div class="persona-card" data-id="' + p.id + '" style="background:var(--surface);border:2px solid ' + borderColor + ';border-radius:14px;padding:18px 20px;cursor:pointer;transition:all 0.2s' + glowStyle + '">';
+          html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+          html += '<div style="font-weight:600;color:var(--text-primary);font-size:15px">' + p.name + '</div>';
+          html += '<div style="display:flex;gap:6px;align-items:center">';
+          if (p.isActive) {
+            html += '<span style="font-size:11px;background:var(--accent);color:#131314;padding:2px 8px;border-radius:6px;font-weight:600">ACTIVE</span>';
+          }
+          if (!p.isDefault) {
+            html += '<button class="edit-persona-btn" data-id="' + p.id + '" style="background:none;border:1px solid var(--border);color:var(--text-secondary);padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px">Edit</button>';
+            html += '<button class="del-persona-btn" data-id="' + p.id + '" style="background:none;border:1px solid #f87171;color:#f87171;padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px">Del</button>';
+          } else {
+            html += '<span style="font-size:11px;color:var(--text-tertiary)">Default</span>';
+          }
+          html += '</div></div>';
+          html += '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">' + (p.description || 'No description') + '</div>';
+          html += '</div>';
+        });
+        html += '</div>';
+
+        // Create/Edit modal (hidden by default)
+        html += '<div id="personaModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">';
+        html += '<div style="background:var(--bg-secondary);border:1px solid var(--border);border-radius:16px;padding:24px;width:90%;max-width:520px;max-height:90vh;overflow-y:auto">';
+        html += '<h3 id="modalTitle" style="color:var(--accent);margin:0 0 16px">Create Persona</h3>';
+        html += '<input id="pName" placeholder="Name" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:14px;margin-bottom:10px;box-sizing:border-box" />';
+        html += '<input id="pDesc" placeholder="Short description" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-tertiary);color:var(--text-primary);font-size:14px;margin-bottom:10px;box-sizing:border-box" />';
+        html += '<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:4px">Personality (Soul)</div>';
+        html += '<textarea id="pSoul" placeholder="Define the personality traits, values, and communication style..." style="width:100%;min-height:100px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;resize:vertical;line-height:1.5;box-sizing:border-box;margin-bottom:10px"></textarea>';
+        html += '<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:4px">Identity (Capabilities)</div>';
+        html += '<textarea id="pIdentity" placeholder="Define the identity, capabilities, and role..." style="width:100%;min-height:100px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:13px;resize:vertical;line-height:1.5;box-sizing:border-box;margin-bottom:14px"></textarea>';
+        html += '<div style="display:flex;gap:10px;justify-content:flex-end">';
+        html += '<button id="cancelModal" style="background:var(--surface);color:var(--text-secondary);border:1px solid var(--border);padding:8px 18px;border-radius:8px;cursor:pointer;font-size:13px">Cancel</button>';
+        html += '<button id="saveModal" style="background:var(--accent);color:#131314;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600">Save</button>';
+        html += '</div></div></div>';
+        showDashboardView(html);
+
+        // Modal logic
+        let editingId = null;
+        const modal = document.getElementById('personaModal');
+        document.getElementById('createPersonaBtn').addEventListener('click', () => {
+          editingId = null;
+          document.getElementById('modalTitle').textContent = 'Create Persona';
+          document.getElementById('pName').value = '';
+          document.getElementById('pDesc').value = '';
+          document.getElementById('pSoul').value = '';
+          document.getElementById('pIdentity').value = '';
+          modal.style.display = 'flex';
+        });
+        document.getElementById('cancelModal').addEventListener('click', () => { modal.style.display = 'none'; });
+        modal.addEventListener('click', (e) => { if (e.target === modal) modal.style.display = 'none'; });
+
+        document.getElementById('saveModal').addEventListener('click', async () => {
+          const name = document.getElementById('pName').value.trim();
+          if (!name) return;
+          const body = {
+            name,
+            description: document.getElementById('pDesc').value,
+            soul: document.getElementById('pSoul').value,
+            identity: document.getElementById('pIdentity').value,
+          };
+          if (editingId) {
+            await fetch('/api/personas/' + editingId, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+          } else {
+            await fetch('/api/personas', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+          }
+          modal.style.display = 'none';
+          loadDashboard('personas');
+        });
+
+        // Activate on card click
+        dashboardView.querySelectorAll('.persona-card').forEach(card => {
+          card.addEventListener('click', async (e) => {
+            if (e.target.closest('.edit-persona-btn') || e.target.closest('.del-persona-btn')) return;
+            await fetch('/api/personas/' + card.dataset.id + '/activate', { method: 'POST' });
+            loadDashboard('personas');
+          });
+        });
+
+        // Edit buttons
+        dashboardView.querySelectorAll('.edit-persona-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const p = personas.find(x => x.id === btn.dataset.id);
+            if (!p) return;
+            editingId = p.id;
+            document.getElementById('modalTitle').textContent = 'Edit Persona';
+            document.getElementById('pName').value = p.name;
+            document.getElementById('pDesc').value = p.description || '';
+            document.getElementById('pSoul').value = p.soulContent || '';
+            document.getElementById('pIdentity').value = p.identityContent || '';
+            modal.style.display = 'flex';
+          });
+        });
+
+        // Delete buttons
+        dashboardView.querySelectorAll('.del-persona-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (confirm('Delete this persona?')) {
+              await fetch('/api/personas/' + btn.dataset.id, { method: 'DELETE' });
+              loadDashboard('personas');
+            }
+          });
+        });
       }
     }
 

@@ -3,9 +3,10 @@ import { OAIProvider } from './providers/oai-provider.js';
 import { hasCliCredentials } from './providers/gemini-cli-auth.js';
 import { getOpenAIAccessToken, getOpenAIAccessTokenSync, hasCodexCredentials } from './providers/openai-oauth.js';
 import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
-import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, type MemoryUpdate } from '../memory/index.js';
+import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, setMemoryStore, getMemoryStore, type MemoryUpdate } from '../memory/index.js';
 import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
 import { SessionStore } from '../memory/sessions.js';
+import { MemoryStore } from '../memory/memory-store.js';
 import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
 import { join } from 'path';
@@ -36,6 +37,7 @@ export interface AgentResponse {
 export class Agent {
     private provider: ChatProvider;
     private fallbackProvider?: ChatProvider;
+    private backgroundProvider: ChatProvider | null = null;
     private config: AliceConfig;
     private conversationHistory: LLMMessage[] = [];
     private systemPrompt: string = '';
@@ -52,6 +54,11 @@ export class Agent {
         toolsUsed: {} as Record<string, number>,
         startTime: Date.now(),
     };
+
+    // Background task throttling
+    private lastExtractionTime = 0;
+    private pendingExtractions: Array<{ userMessage: string; assistantResponse: string; toolsUsed: string[] }> = [];
+    private extractionTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Canvas: holds the last canvas payload pushed by the canvas tool
     private lastCanvasPayload: { html: string; title: string } | null = null;
@@ -106,9 +113,27 @@ export class Agent {
             this.activeProvider = 'ollama';
         }
 
+        // Initialize background provider — lightweight local model for non-user-facing tasks
+        // (memory extraction, auto-title, session compaction, heartbeat)
+        try {
+            const bgModel = config.background?.model || 'qwen3:1.7b';
+            this.backgroundProvider = new OAIProvider({
+                model: bgModel,
+                baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
+            });
+            log.info('Background provider: Ollama', { model: bgModel });
+        } catch {
+            log.warn('Background provider unavailable — background tasks will use primary model');
+        }
+
         // Initialize session persistence
         const dataDir = join(config.memory.dir, 'data');
         this.sessionStore = new SessionStore(dataDir);
+
+        // Initialize DB-backed memory store (shares same DB file)
+        const memStore = new MemoryStore(dataDir);
+        memStore.migrateFromFiles(config.memory.dir);
+        setMemoryStore(memStore);
 
         // Resume latest session or create a new one
         const latest = this.sessionStore.getLatestSession();
@@ -158,6 +183,31 @@ export class Agent {
 
                 if (parts.length === 0) return 'No matching results found in memory or past conversations.';
                 return parts.join('\n\n');
+            },
+        });
+
+        // Register semantic_search tool (vector similarity via Gemini embeddings)
+        registerTool({
+            name: 'semantic_search',
+            description: 'Search past conversations by meaning using AI embeddings. Better than keyword search for finding conceptually related discussions. Use when the user asks "what did we discuss about X?" or "find conversations related to Y".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Natural language description of what to search for' },
+                    limit: { type: 'integer', description: 'Maximum results to return (default: 5)' },
+                },
+                required: ['query'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const apiKey = this.config.gemini.apiKey;
+                if (!apiKey) return 'Semantic search requires a Gemini API key for embeddings.';
+
+                const results = await this.sessionStore.semanticSearch(args.query, apiKey, args.limit ?? 5);
+                if (results.length === 0) return 'No semantically similar conversations found. Try keyword search with search_memory instead.';
+
+                return '**Semantic Search Results:**\n' + results.map((r, i) =>
+                    `[${i + 1}] (${(r.similarity * 100).toFixed(0)}% match) Session: ${r.sessionTitle} | ${r.role}: ${r.content}`
+                ).join('\n\n');
             },
         });
 
@@ -418,6 +468,17 @@ export class Agent {
         const memoryPrompt = buildSystemPrompt(memory);
         const skillPrompt = buildSkillPrompt(skills);
 
+        // Get active persona (if non-default, overlay its soul/identity)
+        const activePersona = this.sessionStore.getActivePersona();
+        const personaName = activePersona?.name || 'Alice';
+        let personaOverlay = '';
+        if (activePersona && !activePersona.isDefault) {
+            const parts: string[] = [];
+            if (activePersona.soulContent) parts.push(`## Persona Personality\n${activePersona.soulContent}`);
+            if (activePersona.identityContent) parts.push(`## Persona Identity\n${activePersona.identityContent}`);
+            if (parts.length > 0) personaOverlay = '\n\n' + parts.join('\n\n');
+        }
+
         const currentDate = new Date().toLocaleString('en-US', {
             timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             dateStyle: 'full',
@@ -425,14 +486,15 @@ export class Agent {
         });
 
         this.systemPrompt = [
-            `You are Alice, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
+            `You are ${personaName}, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
             '',
             memoryPrompt,
+            personaOverlay,
             '',
             `Current date/time: ${currentDate}`,
             `Working directory: ${process.cwd()}`,
             '',
-            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, set_reminder, generate_image, canvas, get_location) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
+            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, semantic_search, set_reminder, generate_image, canvas, get_location) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
             `IMPORTANT: When the user asks for charts, dashboards, visualizations, calculators, forms, or any interactive content, ALWAYS use the 'canvas' tool to push HTML directly inline in chat. Do NOT use write_file to create HTML files — use the canvas tool ONLY. If you absolutely must save a file, write it to ~/.alice/canvas/ (never to the working directory).`,
             `/no_think`,
         ].filter(Boolean).join('\n');
@@ -587,10 +649,17 @@ export class Agent {
                         response.functionCalls.map(fc => executeTool(fc.name, fc.args))
                     );
 
+                    // Truncate tool results to save context window space
+                    const truncatedResults = results.map(r =>
+                        typeof r === 'string' && r.length > 2000
+                            ? r.slice(0, 2000) + '\n\n... [truncated]'
+                            : r
+                    );
+
                     const responseParts: LLMPart[] = response.functionCalls.map((fc, i) => ({
                         functionResponse: {
                             name: fc.name,
-                            response: { result: results[i] },
+                            response: { result: truncatedResults[i] },
                         },
                     }));
 
@@ -787,10 +856,17 @@ export class Agent {
                     const toolMs = Date.now() - toolStart;
                     emit('tool_done', `${response.functionCalls.length} tool(s) completed in ${(toolMs / 1000).toFixed(1)}s`);
 
+                    // Truncate tool results to save context window space
+                    const truncatedResults = results.map(r =>
+                        typeof r === 'string' && r.length > 2000
+                            ? r.slice(0, 2000) + '\n\n... [truncated]'
+                            : r
+                    );
+
                     const responseParts: LLMPart[] = response.functionCalls.map((fc, i) => ({
                         functionResponse: {
                             name: fc.name,
-                            response: { result: results[i] },
+                            response: { result: truncatedResults[i] },
                         },
                     }));
 
@@ -897,7 +973,17 @@ export class Agent {
     private pushMessage(message: LLMMessage): void {
         this.conversationHistory.push(message);
         try {
-            this.sessionStore.saveMessage(this.currentSessionId, message);
+            const messageId = this.sessionStore.saveMessage(this.currentSessionId, message);
+
+            // Fire-and-forget: generate + store embedding asynchronously
+            const textContent = message.parts
+                .filter((p: any) => 'text' in p && p.text)
+                .map((p: any) => p.text)
+                .join(' ');
+            if (textContent.trim() && this.config.gemini.apiKey) {
+                this.sessionStore.embedMessage(messageId, this.currentSessionId, textContent, this.config.gemini.apiKey)
+                    .catch(() => { /* non-blocking — failures are logged in embedMessage */ });
+            }
         } catch (err: any) {
             log.warn('Failed to persist message', { error: err.message });
         }
@@ -928,7 +1014,8 @@ export class Agent {
                 return `${msg.role === 'user' ? 'USER' : 'ASSISTANT'}: ${text.slice(0, 300)}`;
             }).join('\n');
 
-            const result = await this.provider.generateContent(
+            const bgProvider = this.backgroundProvider ?? this.provider;
+            const result = await bgProvider.generateContent(
                 'You are a conversation summarizer. Create a concise summary. /no_think',
                 [{
                     role: 'user',
@@ -1027,8 +1114,9 @@ export class Agent {
         (async () => {
             try {
                 const titlePrompt = `Generate a very short title (3-6 words, no quotes, no punctuation at end) for a conversation that starts with this message: "${userMessage.slice(0, 200)}"`;
-                const result = await this.provider.generateContent(
-                    'You are a title generator. Respond with only the title, nothing else.',
+                const bgProvider = this.backgroundProvider ?? this.provider;
+                const result = await bgProvider.generateContent(
+                    'You are a title generator. Respond with only the title, nothing else. /no_think',
                     [{ role: 'user', parts: [{ text: titlePrompt }] }],
                     []
                 );
@@ -1046,19 +1134,78 @@ export class Agent {
     /**
      * Extract facts from a conversation exchange and persist to MEMORY.md.
      * Runs asynchronously in the background — does not block the response.
-     * Only triggers for substantial exchanges (tools used or long messages).
+     * Uses the lightweight background model (local Ollama) to avoid burning API credits.
+     * Implements cooldown (60s) and batching (3 exchanges or 2-min timer) to reduce calls.
      */
     private extractMemoryAsync(userMessage: string, assistantResponse: string, toolsUsed: string[]): void {
         // Only extract when the conversation was substantial
         const isSubstantial = toolsUsed.length > 0 || userMessage.length > 100;
         if (!isSubstantial) return;
 
+        // Cooldown: skip if less than 60 seconds since last extraction
+        const EXTRACTION_COOLDOWN_MS = 60_000;
+        const now = Date.now();
+        if (now - this.lastExtractionTime < EXTRACTION_COOLDOWN_MS) {
+            log.debug('Memory extraction skipped (cooldown)', {
+                sinceLastMs: now - this.lastExtractionTime,
+            });
+            // Buffer for batch extraction
+            this.pendingExtractions.push({ userMessage, assistantResponse, toolsUsed });
+            this.scheduleExtractionFlush();
+            return;
+        }
+
+        // Buffer this exchange
+        this.pendingExtractions.push({ userMessage, assistantResponse, toolsUsed });
+
+        // Flush if we've accumulated enough, or schedule a timer
+        const BATCH_SIZE = 3;
+        if (this.pendingExtractions.length >= BATCH_SIZE) {
+            this.flushExtractions();
+        } else {
+            this.scheduleExtractionFlush();
+        }
+    }
+
+    /**
+     * Schedule a timer to flush pending extractions after 2 minutes.
+     */
+    private scheduleExtractionFlush(): void {
+        if (this.extractionTimer) return; // Already scheduled
+        this.extractionTimer = setTimeout(() => {
+            this.extractionTimer = null;
+            if (this.pendingExtractions.length > 0) {
+                this.flushExtractions();
+            }
+        }, 2 * 60_000); // 2 minutes
+    }
+
+    /**
+     * Flush all pending extractions in a single batch LLM call.
+     * Uses the background provider (local Ollama) to avoid burning API credits.
+     */
+    private flushExtractions(): void {
+        const exchanges = this.pendingExtractions.splice(0);
+        if (exchanges.length === 0) return;
+
+        if (this.extractionTimer) {
+            clearTimeout(this.extractionTimer);
+            this.extractionTimer = null;
+        }
+
+        this.lastExtractionTime = Date.now();
+
         const memoryDir = this.config.memory.dir;
-        const provider = this.provider;
+        const provider = this.backgroundProvider ?? this.provider;
 
         (async () => {
             try {
-                const extractPrompt = `Analyze this conversation and extract facts to store in memory files.
+                // Build a combined transcript for batch extraction
+                const transcript = exchanges.map((ex, i) =>
+                    `--- Exchange ${i + 1} ---\nUSER: ${ex.userMessage.slice(0, 300)}\nASSISTANT: ${ex.assistantResponse.slice(0, 300)}`
+                ).join('\n\n');
+
+                const extractPrompt = `Analyze these conversation exchanges and extract facts to store in memory files.
 
 Route each fact to the correct file:
 - "user" → personal info, preferences, habits, name, birthday, work style
@@ -1071,8 +1218,7 @@ For each fact, specify an action:
 
 For "user" file facts, specify a section: "About Anthony", "Preferences", or "Active Projects".
 
-USER: ${userMessage.slice(0, 500)}
-ASSISTANT: ${assistantResponse.slice(0, 500)}
+${transcript}
 
 Respond with ONLY valid JSON (no markdown, no code fences). If nothing to extract, respond: {"updates":[]}
 Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","content":"fact here"},{"file":"memory","action":"add","content":"fact here"}]}`;
@@ -1121,7 +1267,10 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
 
                 const changed = await updateMemory(memoryDir, validUpdates);
                 if (changed > 0) {
-                    log.info(`Smart memory update`, { changes: changed, updates: validUpdates.map(u => `${u.action}:${u.file}`) });
+                    log.info(`Smart memory update (batch of ${exchanges.length})`, {
+                        changes: changed,
+                        updates: validUpdates.map(u => `${u.action}:${u.file}`),
+                    });
                     // Refresh context so next response uses updated memory
                     this.refreshContext();
                 }
@@ -1139,10 +1288,135 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
     }
 
     /**
+     * Get the config (for API endpoints that need config values).
+     */
+    getConfig(): typeof this.config {
+        return this.config;
+    }
+
+    /**
+     * Get the session store (for search API endpoints).
+     */
+    getSessionStore() {
+        return this.sessionStore;
+    }
+
+    /**
      * Get the LLM provider (for memory consolidation).
      */
     getProvider(): any {
         return this.provider;
+    }
+
+    /**
+     * Get the background provider (for heartbeat, consolidation — uses local Ollama).
+     * Falls back to the primary provider if background is unavailable.
+     */
+    getBackgroundProvider(): any {
+        return this.backgroundProvider ?? this.provider;
+    }
+
+    /**
+     * Process a message using the background provider with full tool support.
+     * Runs a ReAct tool loop with isolated history (doesn't pollute the user's conversation).
+     * Used for heartbeat tasks, scheduled checks, and other background operations.
+     */
+    async processBackgroundMessage(message: string, opts?: { useMainProvider?: boolean; model?: string }): Promise<AgentResponse> {
+        let bgProvider: ChatProvider;
+        if (opts?.model) {
+            // Create an ad-hoc provider for the specified model
+            const { OAIProvider } = await import('./providers/oai-provider.js');
+            bgProvider = new OAIProvider({
+                model: opts.model,
+                baseUrl: `http://localhost:11434/v1/chat/completions`,
+            });
+        } else if (opts?.useMainProvider) {
+            bgProvider = this.provider;
+        } else {
+            bgProvider = this.backgroundProvider ?? this.provider;
+        }
+        const functionDeclarations = toGeminiFunctionDeclarations();
+        const maxIterations = 10;
+        const toolsUsed: string[] = [];
+
+        // Isolated message history — not persisted, not shared with main conversation
+        const messages: LLMMessage[] = [
+            { role: 'user', parts: [{ text: message }] },
+        ];
+
+        const systemPrompt = [
+            'You are a background task agent with full access to MCP tools (Gmail, Calendar, Weather, etc).',
+            'You MUST use the available tools to gather real data. Do NOT guess or make up information.',
+            'Execute each step of the task using tool calls, then compile the results.',
+        ].join('\n');
+
+        log.debug('Background message starting', { toolCount: functionDeclarations.length, message: message.slice(0, 100) });
+
+        for (let i = 0; i < maxIterations; i++) {
+            try {
+                const response = await bgProvider.generateContent(
+                    systemPrompt,
+                    messages,
+                    functionDeclarations
+                );
+
+                log.debug('Background iteration', {
+                    iteration: i + 1,
+                    hasText: !!response.text,
+                    textLength: response.text?.length || 0,
+                    functionCalls: response.functionCalls?.length || 0,
+                    functionNames: response.functionCalls?.map(fc => fc.name) || [],
+                });
+
+                // Tool calls — execute and loop
+                if (response.functionCalls?.length) {
+                    // Record tool call in history
+                    messages.push({
+                        role: 'model',
+                        parts: response.functionCalls.map(fc => ({
+                            functionCall: { name: fc.name, args: fc.args },
+                        })),
+                    });
+
+                    const results = await Promise.all(
+                        response.functionCalls.map(fc => {
+                            toolsUsed.push(fc.name);
+                            return executeTool(fc.name, fc.args);
+                        })
+                    );
+
+                    // Truncate results and add to history
+                    const responseParts: LLMPart[] = response.functionCalls.map((fc, i) => ({
+                        functionResponse: {
+                            name: fc.name,
+                            response: {
+                                result: typeof results[i] === 'string' && results[i].length > 2000
+                                    ? results[i].slice(0, 2000) + '\n\n... [truncated]'
+                                    : results[i],
+                            },
+                        },
+                    }));
+                    messages.push({ role: 'user', parts: responseParts });
+                    continue;
+                }
+
+                // Text response — done
+                if (response.text) {
+                    const cleanText = response.text.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+                    log.info('Background message processed', { iterations: i + 1, toolsUsed: toolsUsed.length, resultLength: cleanText.length });
+                    return { text: cleanText, toolsUsed, iterations: i + 1 };
+                }
+
+                // Empty response
+                log.warn('Background message returned empty response', { iteration: i + 1 });
+                return { text: '', toolsUsed, iterations: i + 1 };
+            } catch (err: any) {
+                log.error('Background message error', { error: err.message, iteration: i + 1 });
+                return { text: `Background task error: ${err.message}`, toolsUsed, iterations: i + 1 };
+            }
+        }
+
+        return { text: 'Background task reached max iterations.', toolsUsed, iterations: maxIterations };
     }
 
     /**

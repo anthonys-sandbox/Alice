@@ -26,6 +26,7 @@ export class GoogleChatAdapter {
     private pollInterval: ReturnType<typeof setInterval> | null = null;
     private processedIds: Set<string> = new Set();
     private chatAuth: GoogleAuth | null = null;
+    private lastSpaceName: string | null = null;
 
     constructor(
         sheetId: string,
@@ -81,6 +82,19 @@ export class GoogleChatAdapter {
             // Quick test — read the sheet title
             const meta = await sheets.spreadsheets.get({ spreadsheetId: this.sheetId });
             log.info(`📋 Connected to sheet: "${meta.data.properties?.title}"`);
+
+            // Discover space name from existing rows for outbound messages
+            if (!this.lastSpaceName) {
+                const existing = await sheets.spreadsheets.values.get({
+                    spreadsheetId: this.sheetId,
+                    range: 'messages!G2:G100',
+                });
+                const spaceRows = (existing.data.values || []).flat().filter(Boolean);
+                if (spaceRows.length > 0) {
+                    this.lastSpaceName = spaceRows[spaceRows.length - 1]; // latest
+                    log.info('Discovered Chat space name from sheet', { spaceName: this.lastSpaceName });
+                }
+            }
         } catch (err: any) {
             log.error('Failed to connect to relay sheet', { error: err.message });
             return;
@@ -119,6 +133,12 @@ export class GoogleChatAdapter {
             // Skip header row, find pending messages
             for (let i = 1; i < rows.length; i++) {
                 const [id, _timestamp, sender, text, status, _response, spaceName] = rows[i];
+
+                // Remember the space name for proactive outbound messages
+                if (spaceName && !this.lastSpaceName) {
+                    this.lastSpaceName = spaceName;
+                    log.info('Learned Chat space name', { spaceName });
+                }
 
                 if (status !== 'pending') continue;
                 if (this.processedIds.has(id)) continue;
@@ -228,13 +248,116 @@ export class GoogleChatAdapter {
     }
 
     async sendMessage(text: string): Promise<boolean> {
-        log.info(`📤 ${text.slice(0, 100)}`);
-        return true;
+        // Try Chat API directly (service account)
+        const spaceName = this.lastSpaceName || process.env.GOOGLE_CHAT_SPACE;
+
+        if (spaceName && this.chatAuth) {
+            try {
+                const client = await this.chatAuth.getClient();
+                const tokenResponse = await client.getAccessToken();
+                const token = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
+
+                if (token) {
+                    const chatUrl = `https://chat.googleapis.com/v1/${spaceName}/messages`;
+                    const chatRes = await fetch(chatUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ text }),
+                    });
+
+                    if (chatRes.ok) {
+                        log.info(`📤 Sent to Chat: ${text.slice(0, 100)}`);
+                        return true;
+                    } else {
+                        const errBody = await chatRes.text();
+                        log.error('Chat API send failed', { status: chatRes.status, body: errBody.slice(0, 200) });
+                    }
+                }
+            } catch (err: any) {
+                log.error('Chat API send error', { error: err.message });
+            }
+        }
+
+        // Fallback: write to Sheets relay
+        if (this.sheetId && this.oauthClientId && this.oauthClientSecret) {
+            try {
+                const auth = await getAuthenticatedClient(this.oauthClientId, this.oauthClientSecret);
+                const sheets = google.sheets({ version: 'v4', auth });
+                const msgId = `out_${Date.now().toString(36)}`;
+
+                await sheets.spreadsheets.values.append({
+                    spreadsheetId: this.sheetId,
+                    range: 'messages!A:G',
+                    valueInputOption: 'RAW',
+                    requestBody: {
+                        values: [[msgId, new Date().toISOString(), 'Alice', '', 'outbound', text, '']],
+                    },
+                });
+                log.info(`📤 Wrote to Sheet relay: ${text.slice(0, 100)}`);
+                return true;
+            } catch (err: any) {
+                log.error('Sheet relay write failed', { error: err.message });
+            }
+        }
+
+        log.warn('No delivery method available — message not sent');
+        return false;
     }
 
     async sendCard(title: string, subtitle: string, text: string): Promise<boolean> {
         const formatted = `*${title}*\n_${subtitle}_\n\n${text}`;
         return this.sendMessage(formatted);
+    }
+
+    /**
+     * Send a Google Chat Cards v2 message.
+     * @param cardsV2 - Array of Cards v2 objects (see https://developers.google.com/workspace/chat/api/reference/rest/v1/cards)
+     * @param fallbackText - Plain text fallback if card delivery fails
+     */
+    async sendCardV2(cardsV2: any[], fallbackText?: string): Promise<boolean> {
+        const spaceName = this.lastSpaceName || process.env.GOOGLE_CHAT_SPACE;
+
+        if (spaceName && this.chatAuth) {
+            try {
+                const client = await this.chatAuth.getClient();
+                const tokenResponse = await client.getAccessToken();
+                const token = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
+
+                if (token) {
+                    const chatUrl = `https://chat.googleapis.com/v1/${spaceName}/messages`;
+                    const payload: any = { cardsV2 };
+                    if (fallbackText) payload.text = fallbackText;
+
+                    const chatRes = await fetch(chatUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(payload),
+                    });
+
+                    if (chatRes.ok) {
+                        log.info(`📤 Sent card to Chat: ${cardsV2[0]?.card?.header?.title || 'Card'}`);
+                        return true;
+                    } else {
+                        const errBody = await chatRes.text();
+                        log.error('Chat API card send failed', { status: chatRes.status, body: errBody.slice(0, 300) });
+                    }
+                }
+            } catch (err: any) {
+                log.error('Chat API card send error', { error: err.message });
+            }
+        }
+
+        // Fallback to plain text
+        if (fallbackText) {
+            return this.sendMessage(fallbackText);
+        }
+        return false;
     }
 
     /**

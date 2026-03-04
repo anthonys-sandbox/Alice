@@ -60,6 +60,9 @@ export interface AliceConfig {
     openai: {
         model: string;
     };
+    background: {
+        model: string;
+    };
 }
 
 const DEFAULTS: AliceConfig = {
@@ -115,6 +118,9 @@ const DEFAULTS: AliceConfig = {
     openai: {
         model: 'gpt-4o',
     },
+    background: {
+        model: 'qwen3:1.7b',
+    },
 };
 
 export function loadConfig(projectDir?: string): AliceConfig {
@@ -150,6 +156,7 @@ export function loadConfig(projectDir?: string): AliceConfig {
     if (process.env.LOG_LEVEL) config.logging.level = process.env.LOG_LEVEL as AliceConfig['logging']['level'];
     if (process.env.GEMINI_AUTH) config.gemini.auth = process.env.GEMINI_AUTH as AliceConfig['gemini']['auth'];
     if (process.env.OPENROUTER_API_KEY) config.openRouter.apiKey = process.env.OPENROUTER_API_KEY;
+    if (process.env.BACKGROUND_MODEL) config.background.model = process.env.BACKGROUND_MODEL;
 
     return config;
 }

@@ -54,7 +54,9 @@ export function startHeartbeat(
                 memory.heartbeat.content,
             ].join('\n');
 
-            const response = await agent.processMessage(heartbeatPrompt);
+            // Use background provider with tool support — runs on local Ollama
+            // with isolated history (doesn't pollute user's conversation)
+            const response = await agent.processBackgroundMessage(heartbeatPrompt);
 
             // Send the result to Google Chat
             if (response.text && response.text.trim()) {
@@ -65,13 +67,13 @@ export function startHeartbeat(
                 );
             }
 
-            log.info('Heartbeat complete', { toolsUsed: response.toolsUsed.length });
+            log.info('Heartbeat complete (background model)', { toolsUsed: response.toolsUsed.length });
 
             // Consolidate memory every 3rd heartbeat to keep profiles clean
             if (heartbeatCount % 3 === 0) {
                 log.info('Running memory consolidation...');
-                const provider = agent.getProvider();
-                const result = await consolidateMemory(config.memory.dir, provider);
+                const consolidationProvider = agent.getBackgroundProvider();
+                const result = await consolidateMemory(config.memory.dir, consolidationProvider);
                 if (result.memoryChanged || result.userChanged) {
                     agent.refreshContext();
                     log.info('Memory consolidation refreshed context');

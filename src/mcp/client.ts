@@ -117,10 +117,67 @@ export class MCPManager {
      * Discover tools from an MCP server and register them in Alice's registry.
      */
     private async discoverAndRegisterTools(serverName: string, client: Client): Promise<string[]> {
-        const result = await client.listTools();
+        let tools: any[];
+        try {
+            const result = await client.listTools();
+            tools = result.tools;
+        } catch (err: any) {
+            // Some MCP servers (e.g. google-calendar) have schemas that fail
+            // the SDK's strict validation. Patch the schemas and retry.
+            log.warn(`listTools() failed for ${serverName}, retrying with schema fix`, { error: err.message });
+
+            // Monkey-patch the client to disable response validation
+            const origRequest = (client as any)._transport;
+            if (origRequest && origRequest._process) {
+                // Read raw tools by sending JSON-RPC directly on the process
+                const rawTools = await new Promise<any[]>((resolve, reject) => {
+                    const proc = origRequest._process;
+                    const reqId = Date.now();
+                    const msg = JSON.stringify({ jsonrpc: '2.0', id: reqId, method: 'tools/list', params: {} }) + '\n';
+
+                    let buffer = '';
+                    const onData = (chunk: Buffer) => {
+                        buffer += chunk.toString();
+                        const lines = buffer.split('\n');
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const parsed = JSON.parse(line);
+                                if (parsed.id === reqId && parsed.result) {
+                                    proc.stdout.off('data', onData);
+                                    resolve(parsed.result.tools || []);
+                                    return;
+                                }
+                            } catch { /* not complete JSON yet */ }
+                        }
+                    };
+
+                    proc.stdout.on('data', onData);
+                    proc.stdin.write(msg);
+
+                    // Timeout after 5 seconds
+                    setTimeout(() => {
+                        proc.stdout.off('data', onData);
+                        reject(new Error('Timeout waiting for tools/list response'));
+                    }, 5000);
+                });
+
+                // Fix schemas: ensure type: "object" is set
+                tools = rawTools.map((t: any) => ({
+                    ...t,
+                    inputSchema: {
+                        type: 'object',
+                        ...(t.inputSchema || {}),
+                    },
+                }));
+                log.info(`Retrieved ${tools.length} tools for ${serverName} via raw transport`);
+            } else {
+                throw err;
+            }
+        }
         const toolNames: string[] = [];
 
-        for (const tool of result.tools) {
+        for (const tool of tools) {
             const aliceToolName = `mcp_${serverName}_${tool.name}`;
             toolNames.push(aliceToolName);
 

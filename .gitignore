@@ -18,6 +18,13 @@ com.gravityclaw.agent.plist
 
 # Service account key
 alice-chat-sa.json
+
+# Google OAuth credentials for MCP servers
+google-oauth.json
+credentials.json
+*-mcp-tokens.json
+.mcp-google-calendar/
+.mcp-gmail/
 menubar/node_modules
 Alice.app/
 scripts/transcribe
@@ -27,3 +34,7 @@ generated_images/
 # Alice-generated canvas files
 barchart.html
 chart_component.html
+gmail-tokens.json
+client_secret_*.json
+mcp-google-calendar-token.json
+*.bak

@@ -3,6 +3,7 @@ import { dirname, resolve, extname, join } from 'path';
 import { execSync } from 'child_process';
 import { createLogger } from '../../utils/logger.js';
 import { browserTools } from './browser.js';
+import type { CronJobManager } from '../../scheduler/cron-jobs.js';
 
 const log = createLogger('Tools');
 
@@ -780,8 +781,8 @@ function sanitizeSchema(schema: any): any {
 export function toGeminiFunctionDeclarations() {
     const CORE_TOOLS = new Set([
         'bash', 'read_file', 'write_file', 'edit_file',
-        'web_search', 'search_memory', 'set_reminder', 'generate_image',
-        'browse_page',
+        'web_search', 'search_memory', 'semantic_search', 'set_reminder', 'generate_image',
+        'browse_page', 'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))
@@ -790,4 +791,80 @@ export function toGeminiFunctionDeclarations() {
             description: tool.description,
             parameters: sanitizeSchema(tool.parameters),
         }));
+}
+
+/**
+ * Register cron job management tools bound to a CronJobManager instance.
+ * Called at startup after CronJobManager is initialized.
+ */
+export function registerCronTools(manager: CronJobManager): void {
+    registerTool({
+        name: 'create_cron_job',
+        description: 'Create a new scheduled cron job. The job will run automatically at the specified schedule and deliver results to Google Chat. Use standard cron expressions (e.g. "0 9 * * 1-5" = weekdays at 9am, "*/30 * * * *" = every 30 min).',
+        parameters: {
+            type: 'object',
+            properties: {
+                name: { type: 'string', description: 'Human-readable name for the job (e.g. "Morning Briefing")' },
+                cronExpr: { type: 'string', description: 'Cron expression for the schedule (e.g. "0 7 * * 1-5")' },
+                prompt: { type: 'string', description: 'The prompt/instruction to execute when the job fires' },
+                isolated: { type: 'boolean', description: 'Run in isolated context (default: true). Isolated jobs don\'t affect chat history.' },
+            },
+            required: ['name', 'cronExpr', 'prompt'],
+        },
+        async execute(args) {
+            try {
+                const job = manager.addJob({
+                    id: `job_${Date.now().toString(36)}`,
+                    name: args.name,
+                    cronExpr: args.cronExpr,
+                    prompt: args.prompt,
+                    isolated: args.isolated !== false,
+                    enabled: true,
+                });
+                return `✅ Cron job created: "${job.name}" (${job.cronExpr})\nID: ${job.id}\nNext run will be based on the cron schedule.`;
+            } catch (err: any) {
+                return `❌ Failed to create cron job: ${err.message}`;
+            }
+        },
+    });
+
+    registerTool({
+        name: 'list_cron_jobs',
+        description: 'List all scheduled cron jobs with their status, last run time, and schedule.',
+        parameters: {
+            type: 'object',
+            properties: {},
+            required: [],
+        },
+        async execute() {
+            const jobs = manager.listJobs();
+            if (jobs.length === 0) return 'No cron jobs configured.';
+
+            return jobs.map(j => {
+                const status = j.enabled ? '🟢 Active' : '⏸️ Paused';
+                const lastRun = j.lastRun ? `Last run: ${j.lastRun}` : 'Never run';
+                return `${status} **${j.name}** (${j.cronExpr})\n  ID: ${j.id} | ${lastRun} | Isolated: ${j.isolated}`;
+            }).join('\n\n');
+        },
+    });
+
+    registerTool({
+        name: 'delete_cron_job',
+        description: 'Delete a scheduled cron job by its ID.',
+        parameters: {
+            type: 'object',
+            properties: {
+                id: { type: 'string', description: 'The job ID to delete (e.g. "job_morning_brief")' },
+            },
+            required: ['id'],
+        },
+        async execute(args) {
+            const removed = manager.removeJob(args.id);
+            return removed
+                ? `✅ Cron job "${args.id}" deleted.`
+                : `❌ No cron job found with ID "${args.id}".`;
+        },
+    });
+
+    log.info('Cron job tools registered: create_cron_job, list_cron_jobs, delete_cron_job');
 }
