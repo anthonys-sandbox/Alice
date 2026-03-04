@@ -3187,17 +3187,120 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       if (page === 'tools') {
         const res = await fetch('/api/tools').then(r => r.json());
         let html = '<h2 style="color:var(--accent);margin-bottom:16px">Tools &amp; Plugins</h2>';
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">';
-        res.tools.forEach(t => {
-          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;border-left:3px solid var(--accent)">';
-          html += '<div style="font-weight:500;color:var(--text-primary);margin-bottom:6px">' + t.name + '</div>';
-          html += '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">' + t.description + '</div></div>';
+
+        // Search bar
+        html += '<div style="margin-bottom:16px"><input id="tool-search" type="text" placeholder="Search tools..." style="width:100%;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text-primary);font-size:14px;outline:none" /></div>';
+
+        // Categorize tools
+        const categories = {};
+        const catOrder = [];
+        const catMap = {
+          // Built-in file/system tools
+          'read_file': '📁 File System', 'write_file': '📁 File System', 'edit_file': '📁 File System', 'list_directory': '📁 File System',
+          'bash': '⚙️ System', 'web_search': '🌐 Web', 'web_fetch': '🌐 Web', 'read_pdf': '📄 Documents',
+          'generate_image': '🎨 Creative', 'gemini_code': '🎨 Creative',
+          // Browser
+          'browse_page': '🌐 Browser', 'screenshot': '🌐 Browser', 'click_element': '🌐 Browser', 'type_text': '🌐 Browser', 'browser_clear_data': '🌐 Browser',
+          // Memory
+          'search_memory': '🧠 Memory & Search', 'semantic_search': '🧠 Memory & Search',
+          // Scheduling
+          'set_reminder': '⏰ Scheduling', 'cancel_reminder': '⏰ Scheduling', 'list_reminders': '⏰ Scheduling',
+          'create_cron_job': '⏰ Scheduling', 'list_cron_jobs': '⏰ Scheduling', 'delete_cron_job': '⏰ Scheduling',
+          // Git
+          'git_status': '📦 Git', 'git_diff': '📦 Git', 'git_commit': '📦 Git', 'git_log': '📦 Git', 'git_backup': '📦 Git',
+          // Clipboard
+          'clipboard_read': '📋 Clipboard', 'clipboard_write': '📋 Clipboard',
+          // Canvas / UI
+          'canvas': '🎨 Creative', 'get_location': '📍 Location', 'switch_persona': '👤 Persona',
+          'install_skill': '🦀 Skills', 'watch_file': '⏰ Scheduling',
+        };
+
+        (res.tools || []).forEach(t => {
+          let cat;
+          if (catMap[t.name]) {
+            cat = catMap[t.name];
+          } else if (t.name.startsWith('mcp_')) {
+            // Extract MCP server name: mcp_servername_toolname
+            const parts = t.name.split('_');
+            const serverName = parts.slice(1, -1).join('-') || parts[1] || 'unknown';
+            // Try to get a clean name from the description prefix like [MCP:github]
+            const desc = t.description || '';
+            const mcpIdx = desc.indexOf('[MCP:');
+            const cleanName = mcpIdx >= 0 ? desc.substring(mcpIdx + 5, desc.indexOf(']', mcpIdx)) : serverName;
+            cat = '🔌 MCP: ' + cleanName;
+          } else {
+            cat = '⚙️ Other';
+          }
+          if (!categories[cat]) { categories[cat] = []; catOrder.push(cat); }
+          categories[cat].push(t);
         });
-        html += '</div>';
+
+        // Sort: built-in first, MCP last
+        const sortedCats = catOrder.filter((v, i, a) => a.indexOf(v) === i).sort((a, b) => {
+          const aIsMcp = a.includes('MCP');
+          const bIsMcp = b.includes('MCP');
+          if (aIsMcp && !bIsMcp) return 1;
+          if (!aIsMcp && bIsMcp) return -1;
+          return 0;
+        });
+
+        sortedCats.forEach((cat, idx) => {
+          const tools = categories[cat];
+          const isCollapsed = cat.includes('MCP');
+          html += '<div class="tool-group" data-group="' + cat + '">';
+          html += '<div class="tool-group-header" data-idx="' + idx + '" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;user-select:none">';
+          html += '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:14px;font-weight:600;color:var(--text-primary)">' + cat + '</span><span style="background:var(--accent);color:#000;font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px">' + tools.length + '</span></div>';
+          html += '<span class="tool-chevron" id="chev-' + idx + '" style="color:var(--text-tertiary);font-size:12px;transition:transform 0.2s">' + (isCollapsed ? '▶' : '▼') + '</span>';
+          html += '</div>';
+          html += '<div class="tool-group-body" id="tgb-' + idx + '" style="display:' + (isCollapsed ? 'none' : 'grid') + ';grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:14px;padding-left:4px">';
+          tools.forEach(t => {
+            html += '<div class="tool-card" data-name="' + t.name + '" style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:10px;padding:12px 14px;border-left:3px solid var(--accent)">';
+            html += '<div style="font-weight:500;color:var(--text-primary);margin-bottom:4px;font-size:13px">' + t.name + '</div>';
+            const cleanDesc = (t.description || '').replace('[MCP:' + (t.description || '').split('[MCP:')[1]?.split(']')[0] + '] ', '').slice(0, 120);
+            html += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.4">' + cleanDesc + '</div></div>';
+          });
+          html += '</div></div>';
+        });
+
         showDashboardView(html);
+
+        // Wire collapsible headers
+        document.querySelectorAll('.tool-group-header').forEach(hdr => {
+          hdr.addEventListener('click', () => {
+            const idx = hdr.dataset.idx;
+            const body = document.getElementById('tgb-' + idx);
+            const chev = document.getElementById('chev-' + idx);
+            if (body.style.display === 'none') {
+              body.style.display = 'grid';
+              chev.textContent = '▼';
+            } else {
+              body.style.display = 'none';
+              chev.textContent = '▶';
+            }
+          });
+        });
+
+        // Wire search
+        document.getElementById('tool-search')?.addEventListener('input', (e) => {
+          const q = e.target.value.toLowerCase();
+          document.querySelectorAll('.tool-card').forEach(card => {
+            const name = card.dataset.name || '';
+            const desc = card.textContent || '';
+            card.style.display = (name.toLowerCase().includes(q) || desc.toLowerCase().includes(q)) ? '' : 'none';
+          });
+          // Show groups that have visible cards
+          document.querySelectorAll('.tool-group').forEach(grp => {
+            const visibleCards = grp.querySelectorAll('.tool-card[style*="display: none"]');
+            const allCards = grp.querySelectorAll('.tool-card');
+            const body = grp.querySelector('.tool-group-body');
+            if (q && body) body.style.display = 'grid';
+            grp.style.display = (visibleCards.length === allCards.length && q) ? 'none' : '';
+          });
+        });
       } else if (page === 'memory') {
         const res = await fetch('/api/memory').then(r => r.json());
-        let html = '<h2 style="color:var(--accent);margin-bottom:16px">Memory</h2>';
+        let html = '<h2 style="color:var(--accent);margin-bottom:12px">Memory</h2>';
+        html += '<input id="mem-search" type="text" placeholder="Search memory items..." style="width:100%;padding:9px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text-primary);font-size:13px;outline:none;margin-bottom:14px" />';
 
         // Tab bar
         html += '<div id="mem-tabs" style="display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap">';
@@ -3360,110 +3463,336 @@ const WEB_UI_HTML = `<!DOCTYPE html>
             setTimeout(() => { btn.textContent = 'Save'; }, 2000);
           });
         });
+
+        // Memory search filter
+        document.getElementById('mem-search')?.addEventListener('input', (e) => {
+          const q = e.target.value.toLowerCase();
+          dashboardView.querySelectorAll('.mem-item').forEach(item => {
+            const text = item.textContent.toLowerCase();
+            item.style.display = (!q || text.includes(q)) ? '' : 'none';
+          });
+        });
       } else if (page === 'reminders') {
         const res = await fetch('/api/reminders').then(r => r.json());
         let html = '<h2 style="color:var(--accent);margin-bottom:16px">Reminders</h2>';
+
+        // Create new reminder form
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:16px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px">+ New Reminder</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 200px auto;gap:10px;align-items:end">';
+        html += '<div><div style="font-size:12px;color:var(--text-tertiary);margin-bottom:4px">Message</div><input id="rem-msg" type="text" placeholder="Take a break, check emails..." style="width:100%;padding:10px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none" /></div>';
+        html += '<div><div style="font-size:12px;color:var(--text-tertiary);margin-bottom:4px">Schedule</div><input id="rem-schedule" type="text" placeholder="in 5m, in 2h, 0 9 * * *" style="width:100%;padding:10px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none" /></div>';
+        html += '<button id="rem-create-btn" style="background:var(--accent);color:#000;border:none;padding:10px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;height:40px">Create</button>';
+        html += '</div></div>';
+
+        // Existing reminders list
         if (res.reminders.length === 0) {
-          html += '<p style="color:var(--text-secondary)">No active reminders. Ask Alice to set one!</p>';
+          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:24px;text-align:center"><p style="color:var(--text-tertiary);margin:0">No active reminders. Create one above or ask Alice!</p></div>';
         } else {
-          res.reminders.forEach(r => {
-            html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">';
-            html += '<div><span style="color:var(--text-primary);font-weight:500">' + (r.message || r.id) + '</span>';
-            if (r.cron) html += '<span style="color:var(--text-tertiary);font-size:12px;margin-left:8px">' + r.cron + '</span>';
+          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden">';
+          res.reminders.forEach((r, i) => {
+            const borderTop = i > 0 ? 'border-top:1px solid var(--border);' : '';
+            html += '<div style="padding:14px 20px;display:flex;align-items:center;justify-content:space-between;' + borderTop + '">';
+            html += '<div style="display:flex;align-items:center;gap:10px">';
+            html += '<div style="width:8px;height:8px;border-radius:50%;background:#4ade80"></div>';
+            html += '<div><div style="color:var(--text-primary);font-weight:500;font-size:14px">' + (r.message || r.id) + '</div>';
+            if (r.cron) {
+              html += '<div style="display:flex;align-items:center;gap:6px;margin-top:3px"><span style="background:var(--accent);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px">CRON</span><span style="color:var(--text-tertiary);font-size:12px">' + r.cron + '</span></div>';
+            } else {
+              html += '<div style="margin-top:3px"><span style="background:#60a5fa;color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px">ONE-SHOT</span></div>';
+            }
+            html += '</div></div>';
+            html += '<button class="cancel-rem-btn" data-id="' + r.id + '" style="background:#e5393522;color:#e53935;border:1px solid #e5393544;padding:6px 14px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:500">Delete</button>';
             html += '</div>';
-            html += '<button class="cancel-rem-btn" data-id="' + r.id + '" style="background:#e53935;color:white;border:none;padding:4px 12px;border-radius:8px;cursor:pointer;font-size:12px">Cancel</button></div>';
           });
+          html += '</div>';
         }
         showDashboardView(html);
+
+        // Wire create button
+        document.getElementById('rem-create-btn')?.addEventListener('click', async () => {
+          const msg = document.getElementById('rem-msg').value.trim();
+          const schedule = document.getElementById('rem-schedule').value.trim();
+          if (!msg || !schedule) return;
+          const btn = document.getElementById('rem-create-btn');
+          btn.textContent = '⏳';
+          // Use Alice's chat endpoint to set the reminder naturally
+          await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Set a reminder ' + schedule + ': ' + msg }) });
+          btn.textContent = '✅ Created!';
+          setTimeout(() => loadDashboard('reminders'), 1000);
+        });
+
+        // Wire delete buttons
         dashboardView.querySelectorAll('.cancel-rem-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
             await fetch('/api/reminders/' + btn.dataset.id, { method: 'DELETE' });
             loadDashboard('reminders');
           });
         });
+
       } else if (page === 'command_center') {
-        const stats = await fetch('/api/stats').then(r => r.json());
+        const [stats, cronData, connData] = await Promise.all([
+          fetch('/api/stats').then(r => r.json()),
+          fetch('/api/cron-jobs').then(r => r.json()).catch(() => ({ jobs: [] })),
+          fetch('/api/connections').then(r => r.json()).catch(() => ({ connections: [] })),
+        ]);
         const upH = Math.floor(stats.uptime / 3600);
         const upM = Math.floor((stats.uptime % 3600) / 60);
         const uptimeStr = upH > 0 ? upH + 'h ' + upM + 'm' : upM + 'm';
         const topTools = Object.entries(stats.toolsUsed || {}).sort((a,b) => b[1] - a[1]).slice(0,5);
+        const onlineCount = (connData.connections || []).filter(c => c.status === 'online').length;
+        const totalConns = (connData.connections || []).length;
+        const cronJobs = cronData.jobs || [];
 
         let html = '<h2 style="color:var(--accent);margin-bottom:20px">Command Center</h2>';
-        // Stat cards grid
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin-bottom:24px">';
+
+        // ── Stat cards row ──
+        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
         const cards = [
           { label: 'Uptime', value: uptimeStr, color: '#4ade80' },
           { label: 'Messages', value: stats.messagesTotal, color: '#60a5fa' },
           { label: 'Tool Calls', value: stats.toolCalls, color: '#c084fc' },
-          { label: 'Active Model', value: stats.activeModel.split('/').pop(), color: '#fb923c' },
+          { label: 'API Calls', value: stats.apiCalls || 0, color: '#f472b6' },
+          { label: 'Sessions', value: stats.sessionCount, color: '#facc15' },
+          { label: 'Active Model', value: (stats.activeModel || '').split('/').pop(), color: '#fb923c' },
         ];
         cards.forEach(c => {
-          html += '<div style="background:linear-gradient(135deg,var(--surface),var(--bg-tertiary));border:1px solid var(--border);border-radius:14px;padding:18px 20px;position:relative;overflow:hidden">';
-          html += '<div style="position:absolute;top:-8px;right:-8px;width:60px;height:60px;border-radius:50%;background:' + c.color + '15"></div>';
-          html += '<div style="font-size:12px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">' + c.label + '</div>';
-          html += '<div style="font-size:24px;font-weight:700;color:' + c.color + '">' + c.value + '</div>';
+          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden">';
+          html += '<div style="position:absolute;top:-10px;right:-10px;width:50px;height:50px;border-radius:50%;background:' + c.color + '12"></div>';
+          html += '<div style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">' + c.label + '</div>';
+          html += '<div style="font-size:20px;font-weight:700;color:' + c.color + '">' + c.value + '</div>';
           html += '</div>';
         });
         html += '</div>';
 
-        // Session info
-        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:14px">Session Overview</div>';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">';
-        html += '<div style="color:var(--text-secondary)">Sessions: <span style="color:var(--text-primary);font-weight:500">' + stats.sessionCount + '</span></div>';
-        html += '<div style="color:var(--text-secondary)">API Calls: <span style="color:var(--text-primary);font-weight:500">' + stats.apiCalls + '</span></div>';
+        // ── Two column layout: System Health + Quick Actions ──
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">';
+
+        // System Health
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🟢</span> System Health</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">';
         html += '<div style="color:var(--text-secondary)">Provider: <span style="color:var(--text-primary);font-weight:500">' + stats.activeProvider + '</span></div>';
-        html += '<div style="color:var(--text-secondary)">Fallback: <span style="color:var(--text-primary);font-weight:500">' + (stats.usingFallback ? 'Active' : 'Standby') + '</span></div>';
+        html += '<div style="color:var(--text-secondary)">Fallback: <span style="color:' + (stats.usingFallback ? '#f87171' : '#4ade80') + ';font-weight:500">' + (stats.usingFallback ? 'Active' : 'Standby') + '</span></div>';
+        html += '<div style="color:var(--text-secondary)">Connections: <span style="color:' + (onlineCount === totalConns ? '#4ade80' : '#facc15') + ';font-weight:500">' + onlineCount + '/' + totalConns + ' online</span></div>';
+        html += '<div style="color:var(--text-secondary)">Cron Jobs: <span style="color:var(--text-primary);font-weight:500">' + cronJobs.length + ' active</span></div>';
         html += '</div></div>';
 
-        // Top tools
-        if (topTools.length > 0) {
-          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
-          html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:14px">Top Tools This Session</div>';
+        // Quick Actions
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">⚡</span> Quick Actions</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+        const actions = [
+          { label: '☀️ Run Briefing', id: 'qa-briefing' },
+          { label: '💓 Heartbeat', id: 'qa-heartbeat' },
+          { label: '📦 Git Backup', id: 'qa-backup' },
+          { label: '🔄 Refresh', id: 'qa-refresh' },
+        ];
+        actions.forEach(a => {
+          html += '<button id="' + a.id + '" class="qa-btn" style="background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s;text-align:left">' + a.label + '</button>';
+        });
+        html += '</div></div>';
+        html += '</div>';
+
+        // ── Two column: Cron Jobs + Top Tools ──
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
+
+        // Scheduled Jobs
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">📅</span> Scheduled Jobs</div>';
+        if (cronJobs.length === 0) {
+          html += '<div style="color:var(--text-tertiary);font-size:13px">No scheduled jobs.</div>';
+        } else {
+          cronJobs.forEach(j => {
+            const isEnabled = j.enabled !== false;
+            const statusDot = isEnabled ? '#4ade80' : '#666';
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">';
+            html += '<div style="display:flex;align-items:center;gap:8px">';
+            html += '<div style="width:8px;height:8px;border-radius:50%;background:' + statusDot + '"></div>';
+            html += '<div><div style="font-size:13px;color:var(--text-primary);font-weight:500">' + (j.name || j.id) + '</div>';
+            html += '<div style="font-size:11px;color:var(--text-tertiary)">' + (j.cron || '') + (j.lastRun ? ' · Last: ' + new Date(j.lastRun).toLocaleTimeString() : '') + '</div></div>';
+            html += '</div>';
+            html += '<button class="cron-run-btn" data-id="' + j.id + '" style="background:var(--accent);color:#000;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:600">Run</button>';
+            html += '</div>';
+          });
+        }
+        html += '</div>';
+
+        // Top Tools
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🔧</span> Top Tools This Session</div>';
+        if (topTools.length === 0) {
+          html += '<div style="color:var(--text-tertiary);font-size:13px">No tools used yet this session.</div>';
+        } else {
           topTools.forEach(([name, count]) => {
             const maxC = topTools[0][1];
             const pct = Math.round((count / maxC) * 100);
-            html += '<div style="margin-bottom:8px">';
+            html += '<div style="margin-bottom:10px">';
             html += '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span style="color:var(--text-secondary)">' + name + '</span><span style="color:var(--text-primary);font-weight:500">' + count + '</span></div>';
             html += '<div style="height:4px;background:var(--bg-tertiary);border-radius:2px"><div style="height:100%;width:' + pct + '%;background:var(--accent);border-radius:2px;transition:width 0.3s"></div></div>';
             html += '</div>';
           });
-          html += '</div>';
         }
+        html += '</div>';
+        html += '</div>';
+
         showDashboardView(html);
 
-      } else if (page === 'connections') {
-        const data = await fetch('/api/connections').then(r => r.json());
-        let html = '<h2 style="color:var(--accent);margin-bottom:20px">Connections</h2>';
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">';
-        (data.connections || []).forEach(c => {
-          const isOnline = c.status === 'online';
-          const dotColor = isOnline ? '#4ade80' : '#f87171';
-          const borderColor = isOnline ? '#4ade8033' : '#f8717133';
-          html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;border-left:3px solid ' + dotColor + '">';
-          html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">';
-          html += '<div style="width:10px;height:10px;border-radius:50%;background:' + dotColor + ';box-shadow:0 0 8px ' + borderColor + '"></div>';
-          html += '<span style="font-weight:600;color:var(--text-primary);font-size:14px">' + c.name + '</span>';
-          html += '</div>';
-          html += '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">' + c.detail + '</div>';
-          html += '<div style="margin-top:8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:' + dotColor + ';font-weight:600">' + c.status + '</div>';
-          html += '</div>';
+        // Wire quick action buttons
+        document.querySelectorAll('.qa-btn').forEach(btn => {
+          btn.addEventListener('mouseenter', () => { btn.style.background = 'var(--accent)'; btn.style.color = '#000'; });
+          btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--bg-tertiary)'; btn.style.color = 'var(--text-primary)'; });
         });
-        html += '</div>';
+        document.getElementById('qa-briefing')?.addEventListener('click', async (e) => {
+          e.target.textContent = '⏳ Running...';
+          await fetch('/api/cron-jobs/job_morning_brief/run', { method: 'POST' });
+          e.target.textContent = '✅ Sent!';
+          setTimeout(() => { e.target.textContent = '☀️ Run Briefing'; }, 2000);
+        });
+        document.getElementById('qa-heartbeat')?.addEventListener('click', async (e) => {
+          e.target.textContent = '⏳ Running...';
+          await fetch('/api/heartbeat/trigger', { method: 'POST' }).catch(() => {});
+          e.target.textContent = '✅ Triggered!';
+          setTimeout(() => { e.target.textContent = '💓 Heartbeat'; }, 2000);
+        });
+        document.getElementById('qa-backup')?.addEventListener('click', async (e) => {
+          e.target.textContent = '⏳ Backing up...';
+          await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Backup everything to git: commit all changes and push to origin' }) });
+          e.target.textContent = '✅ Started!';
+          setTimeout(() => { e.target.textContent = '📦 Git Backup'; }, 2000);
+        });
+        document.getElementById('qa-refresh')?.addEventListener('click', () => loadDashboard('command_center'));
+
+        // Wire cron run buttons
+        document.querySelectorAll('.cron-run-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            btn.textContent = '⏳';
+            await fetch('/api/cron-jobs/' + btn.dataset.id + '/run', { method: 'POST' });
+            btn.textContent = '✅';
+            setTimeout(() => { btn.textContent = 'Run'; }, 2000);
+          });
+        });
+
+      } else if (page === 'connections') {
+        const [data, toolsData] = await Promise.all([
+          fetch('/api/connections').then(r => r.json()),
+          fetch('/api/tools').then(r => r.json()).catch(() => ({ tools: [] })),
+        ]);
+
+        // Count tools per MCP server
+        const mcpToolCounts = {};
+        (toolsData.tools || []).forEach(t => {
+          if (t.name.startsWith('mcp_')) {
+            const desc = t.description || '';
+            const mcpIdx = desc.indexOf('[MCP:');
+            const serverName = mcpIdx >= 0 ? 'MCP: ' + desc.substring(mcpIdx + 5, desc.indexOf(']', mcpIdx)) : t.name.split('_').slice(1, -1).join('-');
+            mcpToolCounts[serverName] = (mcpToolCounts[serverName] || 0) + 1;
+          }
+        });
+
+        let html = '<h2 style="color:var(--accent);margin-bottom:20px">Connections</h2>';
+
+        // Separate providers and MCP servers
+        const providers = (data.connections || []).filter(c => !c.name.startsWith('MCP:'));
+        const mcpServers = (data.connections || []).filter(c => c.name.startsWith('MCP:'));
+
+        // Providers section
+        if (providers.length > 0) {
+          html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:13px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-tertiary)">Providers</div>';
+          html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:24px">';
+          providers.forEach(c => {
+            const isOnline = c.status === 'online';
+            const dotColor = isOnline ? '#4ade80' : '#f87171';
+            html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;border-left:3px solid ' + dotColor + '">';
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
+            html += '<div style="display:flex;align-items:center;gap:8px"><div style="width:8px;height:8px;border-radius:50%;background:' + dotColor + ';box-shadow:0 0 6px ' + dotColor + '44"></div><span style="font-weight:600;color:var(--text-primary);font-size:14px">' + c.name + '</span></div>';
+            html += '<span style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:' + dotColor + ';font-weight:600">' + c.status + '</span>';
+            html += '</div>';
+            html += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.4">' + c.detail + '</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+
+        // MCP Servers section
+        if (mcpServers.length > 0) {
+          html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:13px;text-transform:uppercase;letter-spacing:0.8px;color:var(--text-tertiary)">MCP Servers</div>';
+          html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">';
+          mcpServers.forEach(c => {
+            const isOnline = c.status === 'online';
+            const dotColor = isOnline ? '#4ade80' : '#f87171';
+            const serverKey = c.name.replace('MCP: ', '');
+            const toolCount = mcpToolCounts[c.name] || mcpToolCounts['MCP: ' + serverKey] || 0;
+            html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px;border-left:3px solid ' + dotColor + '">';
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">';
+            html += '<div style="display:flex;align-items:center;gap:8px"><div style="width:8px;height:8px;border-radius:50%;background:' + dotColor + ';box-shadow:0 0 6px ' + dotColor + '44"></div><span style="font-weight:600;color:var(--text-primary);font-size:14px">' + c.name + '</span></div>';
+            html += '<div style="display:flex;align-items:center;gap:6px">';
+            if (toolCount > 0) html += '<span style="background:var(--accent);color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px">' + toolCount + ' tools</span>';
+            html += '<span style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:' + dotColor + ';font-weight:600">' + c.status + '</span>';
+            html += '</div></div>';
+            html += '<div style="font-size:12px;color:var(--text-secondary);line-height:1.4">' + c.detail + '</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+
         showDashboardView(html);
 
       } else if (page === 'settings') {
-        const data = await fetch('/api/settings').then(r => r.json());
+        const [data, modelsData] = await Promise.all([
+          fetch('/api/settings').then(r => r.json()),
+          fetch('/api/models').then(r => r.json()).catch(() => ({ models: [], active: {} })),
+        ]);
         let html = '<h2 style="color:var(--accent);margin-bottom:20px">Settings</h2>';
 
-        // Config summary
-        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:10px;font-size:14px">Configuration</div>';
-        html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px;font-size:13px">';
-        Object.entries(data.config || {}).forEach(([k,v]) => {
-          html += '<div style="color:var(--text-secondary)">' + k + ': <span style="color:var(--text-primary);font-weight:500">' + v + '</span></div>';
+        // Model selector + Config
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">';
+
+        // Model Selector
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🤖</span> Active Model</div>';
+        const activeModel = (modelsData.active || {}).model || data.config?.model || '';
+        const activeProvider = (modelsData.active || {}).provider || data.config?.provider || '';
+        html += '<div style="margin-bottom:10px"><div style="font-size:12px;color:var(--text-tertiary);margin-bottom:4px">Provider</div><div style="font-size:14px;color:var(--text-primary);font-weight:500">' + activeProvider + '</div></div>';
+        html += '<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:4px">Model</div>';
+        html += '<div style="display:flex;gap:8px;align-items:center">';
+        html += '<select id="model-select" style="flex:1;padding:10px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none">';
+        const models = modelsData.models || [];
+        // Group by provider
+        const groupedModels = {};
+        models.forEach(m => {
+          const provider = m.provider || 'unknown';
+          if (!groupedModels[provider]) groupedModels[provider] = [];
+          groupedModels[provider].push(m);
+        });
+        Object.entries(groupedModels).forEach(([provider, provModels]) => {
+          html += '<optgroup label="' + provider + '">';
+          provModels.forEach(m => {
+            const modelId = m.id || m.model || m.name || '';
+            const selected = modelId === activeModel ? ' selected' : '';
+            html += '<option value="' + provider + '::' + modelId + '"' + selected + '>' + modelId + '</option>';
+          });
+          html += '</optgroup>';
+        });
+        html += '</select>';
+        html += '<button id="switch-model-btn" style="background:var(--accent);color:#000;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">Switch</button>';
+        html += '</div></div>';
+
+        // Config Summary
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">⚙️</span> Configuration</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">';
+        const configItems = [
+          { label: 'Memory Dir', value: data.config?.memoryDir || '' },
+          { label: 'Gateway Port', value: data.config?.gatewayPort || '' },
+          { label: 'Heartbeat', value: data.config?.heartbeatEnabled ? '✅ Every ' + (data.config?.heartbeatInterval || 30) + 'm' : '❌ Disabled' },
+          { label: 'Fallback', value: activeProvider === 'gemini' ? 'Ollama' : 'Gemini' },
+        ];
+        configItems.forEach(c => {
+          html += '<div style="color:var(--text-secondary)">' + c.label + ': <span style="color:var(--text-primary);font-weight:500">' + c.value + '</span></div>';
         });
         html += '</div></div>';
+        html += '</div>';
 
         // Soul editor
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
@@ -3471,7 +3800,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px">Personality (SOUL.md)</div>';
         html += '<button id="saveSoulBtn" style="background:var(--accent);color:#131314;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Save</button>';
         html += '</div>';
-        html += '<textarea id="soulEditor" style="width:100%;min-height:180px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.6">' + (data.soul || '') + '</textarea>';
+        html += '<textarea id="soulEditor" style="width:100%;min-height:160px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.6">' + (data.soul || '') + '</textarea>';
         html += '</div>';
 
         // Identity editor
@@ -3480,10 +3809,21 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px">Identity (IDENTITY.md)</div>';
         html += '<button id="saveIdentityBtn" style="background:var(--accent);color:#131314;border:none;padding:6px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Save</button>';
         html += '</div>';
-        html += '<textarea id="identityEditor" style="width:100%;min-height:180px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.6">' + (data.identity || '') + '</textarea>';
+        html += '<textarea id="identityEditor" style="width:100%;min-height:160px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.6">' + (data.identity || '') + '</textarea>';
         html += '</div>';
 
         showDashboardView(html);
+
+        // Wire model switch button
+        document.getElementById('switch-model-btn')?.addEventListener('click', async () => {
+          const val = document.getElementById('model-select').value;
+          const [provider, model] = val.split('::');
+          const btn = document.getElementById('switch-model-btn');
+          btn.textContent = '⏳';
+          await fetch('/api/models/switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ provider, model }) });
+          btn.textContent = '✅ Switched!';
+          setTimeout(() => { btn.textContent = 'Switch'; loadDashboard('settings'); }, 1500);
+        });
 
         // Save handlers
         document.getElementById('saveSoulBtn').addEventListener('click', async () => {

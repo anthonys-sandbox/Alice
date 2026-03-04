@@ -72,7 +72,7 @@ export class MCPManager {
             });
 
             const client = new Client(
-                { name: 'alice-agent', version: '1.0.0' },
+                { name: 'alice-agent', version: '1.5.0' },
                 { capabilities: {} }
             );
 

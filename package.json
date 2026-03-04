@@ -1,6 +1,6 @@
 {
   "name": "alice",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "description": "A self-hosted AI agent that runs locally on your Mac, communicates via Google Chat, and uses the Gemini API",
   "type": "module",
   "main": "dist/index.js",

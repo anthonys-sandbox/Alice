@@ -14,7 +14,7 @@ const program = new Command();
 program
     .name('alice')
     .description('✨ Alice — Your personal AI agent')
-    .version('1.0.0');
+    .version('1.5.0');
 
 // ============================================================
 // alice start
