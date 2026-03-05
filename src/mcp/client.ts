@@ -99,16 +99,29 @@ export class MCPManager {
     }
 
     /**
-     * Remove keys that Gemini's API doesn't accept (e.g. $schema) from tool parameter schemas.
+     * Remove keys that Gemini's API doesn't accept from tool parameter schemas.
+     * Gemini supports only a subset of JSON Schema — use an allowlist approach
+     * so new MCP servers with richer schemas (e.g. propertyNames, $ref, oneOf)
+     * don't cause 400 errors.
      */
-    private sanitizeSchema(schema: any): any {
+    private static readonly ALLOWED_SCHEMA_KEYS = new Set([
+        'type', 'description', 'properties', 'required', 'items',
+        'enum', 'format', 'nullable', 'default', 'minimum', 'maximum',
+        'minItems', 'maxItems', 'minLength', 'maxLength', 'pattern',
+        'title', 'additionalProperties',
+    ]);
+
+    private sanitizeSchema(schema: any, insideProperties = false): any {
         if (!schema || typeof schema !== 'object') return schema;
         if (Array.isArray(schema)) return schema.map(s => this.sanitizeSchema(s));
 
         const clean: any = {};
         for (const [key, value] of Object.entries(schema)) {
-            if (key === '$schema') continue; // Gemini rejects this field
-            clean[key] = this.sanitizeSchema(value);
+            // Inside a `properties` object, keys are user-defined property names
+            // (e.g. "name", "calendarId") — keep them all, only sanitize their values.
+            // At the schema keyword level, filter to Gemini-supported keys only.
+            if (!insideProperties && !MCPManager.ALLOWED_SCHEMA_KEYS.has(key)) continue;
+            clean[key] = this.sanitizeSchema(value, key === 'properties');
         }
         return clean;
     }

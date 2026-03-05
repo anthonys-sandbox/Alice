@@ -387,10 +387,10 @@ export class CronJobManager {
             const startsAt = now.toISOString().split('T')[0] + 'T00:00:00Z';
             const endsAt = tomorrow.toISOString().split('T')[0] + 'T00:00:00Z';
 
-            const calResult = await executeTool('mcp_google-calendar_list_calendar_events', {
+            const calResult = await executeTool('mcp_google-calendar_list-events', {
                 calendarId: 'primary',
-                startsAt,
-                endsAt,
+                timeMin: startsAt,
+                timeMax: endsAt,
             });
             const { widgets, summary, timeline } = this.buildCalendarWidgets(calResult);
             dateParts.calendarWidgets = widgets;

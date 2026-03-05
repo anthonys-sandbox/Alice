@@ -597,7 +597,7 @@ MCP tools are discovered automatically at startup and registered as callable fun
 |---|---|---|---|
 | `weather` | `open-meteo-mcp-server` | 17 | Weather forecasts, air quality, marine, flood, geocoding (free, no API key) |
 | `gmail` | `@gongrzhe/server-gmail-autoauth-mcp` | 19 | Gmail read/send/search/filter (requires OAuth — see setup) |
-| `google-calendar` | `mcp-google-calendar` | 6 | Google Calendar events CRUD (requires OAuth) |
+| `google-calendar` | `@cocal/google-calendar-mcp` | 12 | Google Calendar events CRUD, free/busy queries, event responses, multi-account (requires OAuth) |
 | `filesystem` | `@anthropic/mcp-filesystem` | 14 | Read/write/search files in allowed directories |
 | `github` | `@anthropic/mcp-github` | 26 | GitHub repos, issues, PRs, code search |
 | `notebooklm` | `notebooklm-mcp` | 16 | Chat with Gemini through NotebookLM notebooks |
