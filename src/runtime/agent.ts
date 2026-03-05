@@ -54,6 +54,7 @@ export class Agent {
         toolsUsed: {} as Record<string, number>,
         startTime: Date.now(),
     };
+    private statsPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Background task throttling
     private lastExtractionTime = 0;
@@ -143,16 +144,22 @@ export class Agent {
             // Cap to avoid exceeding model context window — memory files carry long-term knowledge
             const MAX_RESUME_MESSAGES = 10;
             if (allMessages.length > MAX_RESUME_MESSAGES) {
-                this.conversationHistory = allMessages.slice(-MAX_RESUME_MESSAGES);
-                log.warn('Session truncated for context window', { total: allMessages.length, kept: MAX_RESUME_MESSAGES });
+                this.conversationHistory = Agent.sanitizeHistory(allMessages.slice(-MAX_RESUME_MESSAGES));
+                log.warn('Session truncated for context window', { total: allMessages.length, kept: this.conversationHistory.length });
             } else {
-                this.conversationHistory = allMessages;
+                this.conversationHistory = Agent.sanitizeHistory(allMessages);
             }
             log.info('Resumed session', { id: latest.id, title: latest.title, messages: this.conversationHistory.length });
         } else {
             this.currentSessionId = this.sessionStore.createSession();
             log.info('New session created', { id: this.currentSessionId });
         }
+
+        // Load persisted cumulative stats
+        const saved = this.sessionStore.loadStats();
+        this.sessionStats.apiCalls = saved.apiCalls;
+        this.sessionStats.toolCalls = saved.toolCalls;
+        this.sessionStats.toolsUsed = saved.toolsUsed;
 
         // Register search_memory tool (needs SessionStore)
         registerTool({
@@ -526,6 +533,52 @@ export class Agent {
     }
 
     /**
+     * Sanitize conversation history for Gemini API compatibility.
+     * The standard Gemini API strictly requires that:
+     * - A functionResponse turn must immediately follow a functionCall turn
+     * - No orphaned functionCall or functionResponse turns exist
+     * This drops any orphaned turns to prevent 400 INVALID_ARGUMENT errors.
+     */
+    static sanitizeHistory(messages: LLMMessage[]): LLMMessage[] {
+        const result: LLMMessage[] = [];
+
+        for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            const hasFunctionCall = msg.parts.some((p: any) => 'functionCall' in p);
+            const hasFunctionResponse = msg.parts.some((p: any) => 'functionResponse' in p);
+
+            if (hasFunctionCall) {
+                // Only keep this functionCall if the NEXT message is a matching functionResponse
+                const next = messages[i + 1];
+                if (next && next.parts.some((p: any) => 'functionResponse' in p)) {
+                    result.push(msg);
+                } else {
+                    log.debug('Dropping orphaned functionCall turn', { index: i });
+                    // Skip this message — also skip the next if it's a text response to the broken call
+                }
+            } else if (hasFunctionResponse) {
+                // Only keep if the PREVIOUS result message was a functionCall
+                const prev = result[result.length - 1];
+                if (prev && prev.parts.some((p: any) => 'functionCall' in p)) {
+                    result.push(msg);
+                } else {
+                    log.debug('Dropping orphaned functionResponse turn', { index: i });
+                }
+            } else {
+                result.push(msg);
+            }
+        }
+
+        // Ensure the history starts with a user turn (Gemini API requirement)
+        while (result.length > 0 && result[0].role !== 'user') {
+            log.debug('Dropping leading non-user message');
+            result.shift();
+        }
+
+        return result;
+    }
+
+    /**
      * Trim conversation context if approaching token budget.
      * Keeps the most recent messages and compresses the rest into a summary.
      */
@@ -574,10 +627,10 @@ export class Agent {
 
         const summaryText = `[Context summary — ${oldMessages.length} earlier messages removed]\n${summaryParts.join('\n')}`;
 
-        this.conversationHistory = [
+        this.conversationHistory = Agent.sanitizeHistory([
             { role: 'user', parts: [{ text: summaryText }] },
             ...recentMessages,
-        ];
+        ]);
 
         const newEstimate = this.estimateTokens(this.conversationHistory);
         log.info('Context trimmed', {
@@ -607,6 +660,8 @@ export class Agent {
         let iterations = 0;
         let rateLimitRetries = 0;
         const MAX_RATE_LIMIT_RETRIES = 5;
+        let lastToolName = '';
+        let sameToolCount = 0;
 
         const startTime = Date.now();
 
@@ -625,8 +680,12 @@ export class Agent {
             try {
                 // Trim context if approaching token budget
                 this.trimContextIfNeeded();
+                // Sanitize before API call — ensures valid function call/response ordering
+                this.conversationHistory = Agent.sanitizeHistory(this.conversationHistory);
 
                 // Call the LLM
+                this.sessionStats.apiCalls++;
+                this.debouncePersistStats();
                 const response = await this.provider.generateContent(
                     this.systemPrompt,
                     this.conversationHistory,
@@ -643,7 +702,10 @@ export class Agent {
                     for (const fc of response.functionCalls) {
                         log.info(`Tool call: ${fc.name}`, { args: Object.keys(fc.args) });
                         toolsUsed.push(fc.name);
+                        this.sessionStats.toolCalls++;
+                        this.sessionStats.toolsUsed[fc.name] = (this.sessionStats.toolsUsed[fc.name] || 0) + 1;
                     }
+                    this.debouncePersistStats();
 
                     const results = await Promise.all(
                         response.functionCalls.map(fc => executeTool(fc.name, fc.args))
@@ -665,6 +727,37 @@ export class Agent {
 
                     // Add tool results to history
                     this.pushMessage({ role: 'user', parts: responseParts });
+
+                    // Loop detection: catch same-tool repeats AND multi-tool cycling
+                    const currentToolName = response.functionCalls.map(fc => fc.name).join(',');
+                    if (currentToolName === lastToolName) {
+                        sameToolCount++;
+                    } else {
+                        lastToolName = currentToolName;
+                        sameToolCount = 1;
+                    }
+
+                    // Same-tool loop (3x in a row)
+                    if (sameToolCount >= 3) {
+                        log.warn('Same-tool loop detected, injecting hint', { tool: currentToolName, count: sameToolCount });
+                        this.pushMessage({
+                            role: 'user',
+                            parts: [{ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` }],
+                        });
+                    }
+
+                    // Multi-tool cycling detection: if last 8 tool calls use ≤3 unique tools, we're cycling
+                    if (toolsUsed.length >= 8) {
+                        const recentTools = toolsUsed.slice(-8);
+                        const uniqueRecent = new Set(recentTools).size;
+                        if (uniqueRecent <= 3) {
+                            log.warn('Multi-tool cycling detected', { recentTools, uniqueRecent });
+                            this.pushMessage({
+                                role: 'user',
+                                parts: [{ text: `SYSTEM: You are cycling between the same ${uniqueRecent} tools without making progress (${[...new Set(recentTools)].join(', ')}). STOP calling tools. Use the data you already have to answer the user's question. If you truly cannot answer, explain what's missing.` }],
+                            });
+                        }
+                    }
 
                     // Continue the loop — model needs to process tool results
                     continue;
@@ -796,6 +889,8 @@ export class Agent {
         let iterations = 0;
         let rateLimitRetries = 0;
         const MAX_RATE_LIMIT_RETRIES = 5;
+        let lastToolName = '';
+        let sameToolCount = 0;
         const startTime = Date.now();
 
         while (iterations < this.config.agent.maxIterations) {
@@ -812,6 +907,8 @@ export class Agent {
             try {
                 // Trim context if approaching token budget
                 this.trimContextIfNeeded();
+                // Sanitize before API call — ensures valid function call/response ordering
+                this.conversationHistory = Agent.sanitizeHistory(this.conversationHistory);
 
                 // Dynamic model routing: use vision model ONLY when the latest user message has images
                 // Only applies to Ollama — other providers handle vision natively
@@ -835,6 +932,7 @@ export class Agent {
                     onToken
                 );
                 this.sessionStats.apiCalls++;
+                this.debouncePersistStats();
                 emit('llm_done', `LLM responded in ${((Date.now() - llmStart) / 1000).toFixed(1)}s`);
 
                 // Tool calls
@@ -848,6 +946,7 @@ export class Agent {
                         this.sessionStats.toolsUsed[fc.name] = (this.sessionStats.toolsUsed[fc.name] || 0) + 1;
                         emit('tool_call', `${fc.name}(${Object.keys(fc.args).join(', ')})`);
                     }
+                    this.debouncePersistStats();
 
                     const toolStart = Date.now();
                     const results = await Promise.all(
@@ -871,6 +970,36 @@ export class Agent {
                     }));
 
                     this.pushMessage({ role: 'user', parts: responseParts });
+
+                    // Loop detection: catch same-tool repeats AND multi-tool cycling
+                    const currentToolName = response.functionCalls.map(fc => fc.name).join(',');
+                    if (currentToolName === lastToolName) {
+                        sameToolCount++;
+                    } else {
+                        lastToolName = currentToolName;
+                        sameToolCount = 1;
+                    }
+
+                    if (sameToolCount >= 3) {
+                        log.warn('Same-tool loop detected', { tool: currentToolName, count: sameToolCount });
+                        this.pushMessage({
+                            role: 'user',
+                            parts: [{ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` }],
+                        });
+                    }
+
+                    if (toolsUsed.length >= 8) {
+                        const recentTools = toolsUsed.slice(-8);
+                        const uniqueRecent = new Set(recentTools).size;
+                        if (uniqueRecent <= 3) {
+                            log.warn('Multi-tool cycling detected', { recentTools, uniqueRecent });
+                            this.pushMessage({
+                                role: 'user',
+                                parts: [{ text: `SYSTEM: You are cycling between the same ${uniqueRecent} tools without making progress (${[...new Set(recentTools)].join(', ')}). STOP calling tools. Use the data you already have to answer the user's question. If you truly cannot answer, explain what's missing.` }],
+                            });
+                        }
+                    }
+
                     continue;
                 }
 
@@ -1098,6 +1227,25 @@ export class Agent {
             activeModel: this.activeModel,
             usingFallback: this.usingFallback,
         };
+    }
+
+    /**
+     * Debounced persistence of session stats to the DB.
+     * Batches writes so rapid tool loops don't hammer SQLite.
+     */
+    private debouncePersistStats(): void {
+        if (this.statsPersistTimer) clearTimeout(this.statsPersistTimer);
+        this.statsPersistTimer = setTimeout(() => {
+            try {
+                this.sessionStore.saveStats({
+                    apiCalls: this.sessionStats.apiCalls,
+                    toolCalls: this.sessionStats.toolCalls,
+                    toolsUsed: this.sessionStats.toolsUsed,
+                });
+            } catch (err: any) {
+                log.warn('Failed to persist stats', { error: err.message });
+            }
+        }, 2000);
     }
 
     /**

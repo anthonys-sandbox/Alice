@@ -13,7 +13,7 @@
     },
     "heartbeat": {
         "enabled": true,
-        "intervalMinutes": 30
+        "intervalMinutes": 360
     },
     "agent": {
         "maxIterations": 25,
@@ -29,7 +29,7 @@
                 "command": "npx",
                 "args": [
                     "-y",
-                    "open-meteo-mcp-server"
+                    "open-meteo-mcp-lite"
                 ]
             },
             {
@@ -51,7 +51,8 @@
                     "@cocal/google-calendar-mcp"
                 ],
                 "env": {
-                    "GOOGLE_OAUTH_CREDENTIALS": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw/credentials.json"
+                    "GOOGLE_OAUTH_CREDENTIALS": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw/credentials.json",
+                    "ENABLED_TOOLS": "list-events,create-event,get-freebusy,search-events"
                 },
                 "cwd": "/Users/AnthonyTackett/Documents/GitHub/GravityClaw",
                 "enabled": true

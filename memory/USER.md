@@ -8,11 +8,8 @@
 - Operating System: macOS
 - Project Location: ~/Documents/GitHub/
 - Home Directory: /Users/AnthonyTackett
-- Assistant can send emails
-- Label_1 created for Tyler Martin and Anthony's meeting scheduling
-- Scheduled meeting with Tyler Martin for 11:15 AM – 11:30 AM on Thursday, March 5th (CT), titled 'The Grand Marshmallow Gravity Symposium' with XOXO - Alice
-- I've sent that email to Tyler Martin with the message 'u up?' and signed it off as 'XOXO - Alice.'
 - User checks their calendar regularly.
+- Prefers Fahrenheit over Celcius when talking about the weather. Imperial units over metric unless asked.
 
 ## Active Projects
 
@@ -30,4 +27,3 @@
 - Views AI as a productivity tool for professional work
 - Reminded about AI team expansions or creative workflow checks
 - Expects interactive content to be rendered using the canvas tool.
-- sent email to kati_callahan@hillspet.com with message 'This is a test from Alice.'

@@ -392,6 +392,7 @@ export class CronJobManager {
                 timeMin: startsAt,
                 timeMax: endsAt,
             });
+            log.info('Morning briefing Calendar raw result', { resultLength: calResult?.length, preview: calResult?.slice(0, 500) });
             const { widgets, summary, timeline } = this.buildCalendarWidgets(calResult);
             dateParts.calendarWidgets = widgets;
             dateParts.calendarSummary = summary;
@@ -407,17 +408,11 @@ export class CronJobManager {
         let weatherSummary = 'Weather unavailable.';
         try {
             const [weatherHome, weatherWork] = await Promise.all([
-                executeTool('mcp_weather_weather_forecast', {
+                executeTool('mcp_weather_get_weather', {
                     latitude: 39.0911, longitude: -94.4155,
-                    timezone: 'America/Chicago',
-                    daily: ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'weather_code'],
-                    forecast_days: 1,
                 }),
-                executeTool('mcp_weather_weather_forecast', {
+                executeTool('mcp_weather_get_weather', {
                     latitude: 38.9822, longitude: -94.6708,
-                    timezone: 'America/Chicago',
-                    daily: ['temperature_2m_max', 'temperature_2m_min', 'precipitation_sum', 'weather_code'],
-                    forecast_days: 1,
                 }),
             ]);
             const home = this.formatWeather(weatherHome);
@@ -448,15 +443,16 @@ export class CronJobManager {
             const response = await this.agent!.processBackgroundMessage(
                 `You are Alice, Anthony's AI assistant. Analyze today's briefing data and respond with JSON ONLY.\n` +
                 `Today is ${date}. Current time: ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })}.\n\n` +
+                `IMPORTANT: Only use data provided below. Do NOT invent or assume any details not explicitly present.\n\n` +
                 `Weather data:\n${dateParts.weatherText}` +
                 calendarSection +
                 emailSection +
                 `\n\nRespond with ONLY this JSON (no markdown, no code fences):\n` +
                 `{\n` +
                 `  "greeting": "A friendly 1-sentence good morning to Anthony",\n` +
-                `  "weather": "1-2 sentence conversational weather summary with temps",\n` +
-                `  "calendarInsight": "2-3 sentences: summarize the day's meetings, note any key themes or prep needed. End with how much estimated desk/free time there is between meetings (e.g. 'You have about 2 hours of desk time between meetings today.').",\n` +
-                `  "emailInsight": "2-4 sentences: highlight the most important emails, any action items or things needing follow-up. Be specific about what's in them, not just who sent them."\n` +
+                `  "weather": "1-2 sentence conversational weather summary with temps. If weather data says unavailable, say you couldn't fetch it.",\n` +
+                `  "calendarInsight": "2-3 sentences: summarize the day's meetings, note any key themes or prep needed. End with how much estimated desk/free time there is between meetings (e.g. 'You have about 2 hours of desk time between meetings today.'). If no events, say the calendar is clear.",\n` +
+                `  "emailInsight": "2-4 sentences: highlight the most important emails, any action items or things needing follow-up. Be specific about what's in them, not just who sent them. If no emails provided, say inbox is clear."\n` +
                 `}`,
                 { useMainProvider: true }
             );

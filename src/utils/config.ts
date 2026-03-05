@@ -70,7 +70,7 @@ const DEFAULTS: AliceConfig = {
     gemini: {
         apiKey: '',
         model: 'gemini-3-flash-preview',
-        auth: 'auto',
+        auth: 'apikey',
     },
     ollama: {
         host: '127.0.0.1',

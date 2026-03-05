@@ -25,13 +25,7 @@ export function startHeartbeat(
 ): void {
     const minutes = config.heartbeat.intervalMinutes;
     const cronExpr = `*/${minutes} * * * *`;
-    const usingCli = config.gemini?.auth === 'cli' || (config.gemini?.auth === 'auto' && agent.activeProvider === 'gemini-cli');
-
-    if (usingCli && config.ollama) {
-        log.info(`Starting heartbeat every ${minutes} minutes (using Ollama to save Gemini quota)`);
-    } else {
-        log.info(`Starting heartbeat every ${minutes} minutes`);
-    }
+    log.info(`Starting heartbeat every ${minutes} minutes (background model)`);
 
     heartbeatTask = cron.schedule(cronExpr, async () => {
         log.info('Heartbeat triggered');
@@ -54,9 +48,9 @@ export function startHeartbeat(
                 memory.heartbeat.content,
             ].join('\n');
 
-            // Use background provider with tool support — runs on local Ollama
-            // with isolated history (doesn't pollute user's conversation)
-            const response = await agent.processBackgroundMessage(heartbeatPrompt);
+            // Use main provider — heartbeat needs real tool reasoning capability
+            // that the local background model (4B) can't handle
+            const response = await agent.processBackgroundMessage(heartbeatPrompt, { useMainProvider: true });
 
             // Send the result to Google Chat
             if (response.text && response.text.trim()) {

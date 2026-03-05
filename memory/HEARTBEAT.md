@@ -1,6 +1,6 @@
 # Heartbeat Checklist
 
-Tasks to check on every heartbeat cycle (default: every 30 minutes).
+Tasks to check on every heartbeat cycle (default: every 6 hours).
 
 ## Monitoring
 

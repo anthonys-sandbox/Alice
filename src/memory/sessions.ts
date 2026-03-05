@@ -104,6 +104,14 @@ export class SessionStore {
             );
         `);
 
+        // Cumulative stats table (survives restarts)
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS stats (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+        `);
+
         // Seed default Alice persona if none exist
         const count = this.db.prepare('SELECT COUNT(*) as c FROM personas').get() as { c: number };
         if (count.c === 0) {
@@ -387,6 +395,43 @@ export class SessionStore {
             log.warn('FTS search failed', { error: err.message });
             return [];
         }
+    }
+
+    // ── Stats Persistence ────────────────────────────
+
+    /**
+     * Save cumulative stats to the database.
+     */
+    saveStats(stats: { apiCalls: number; toolCalls: number; toolsUsed: Record<string, number> }): void {
+        const upsert = this.db.prepare(
+            'INSERT OR REPLACE INTO stats (key, value) VALUES (?, ?)'
+        );
+        const txn = this.db.transaction(() => {
+            upsert.run('apiCalls', String(stats.apiCalls));
+            upsert.run('toolCalls', String(stats.toolCalls));
+            upsert.run('toolsUsed', JSON.stringify(stats.toolsUsed));
+        });
+        txn();
+    }
+
+    /**
+     * Load cumulative stats from the database.
+     */
+    loadStats(): { apiCalls: number; toolCalls: number; toolsUsed: Record<string, number> } {
+        const defaults = { apiCalls: 0, toolCalls: 0, toolsUsed: {} as Record<string, number> };
+        try {
+            const rows = this.db.prepare('SELECT key, value FROM stats').all() as Array<{ key: string; value: string }>;
+            for (const row of rows) {
+                if (row.key === 'apiCalls') defaults.apiCalls = parseInt(row.value, 10) || 0;
+                if (row.key === 'toolCalls') defaults.toolCalls = parseInt(row.value, 10) || 0;
+                if (row.key === 'toolsUsed') {
+                    try { defaults.toolsUsed = JSON.parse(row.value); } catch { /* keep empty */ }
+                }
+            }
+        } catch (err: any) {
+            log.warn('Failed to load stats', { error: err.message });
+        }
+        return defaults;
     }
 
     // ── Persona CRUD ────────────────────────────────

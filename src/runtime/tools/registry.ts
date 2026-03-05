@@ -744,9 +744,12 @@ function sanitizeSchema(schema: any): any {
 
     const result = { ...schema };
 
-    // Convert numeric enum values to strings
+    // Gemini requires enum only on STRING type — coerce type + values
     if (Array.isArray(result.enum)) {
         result.enum = result.enum.map((v: any) => String(v));
+        if (result.type && result.type !== 'string') {
+            result.type = 'string';
+        }
     }
 
     // Recurse into properties
