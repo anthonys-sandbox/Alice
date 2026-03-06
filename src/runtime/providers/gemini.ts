@@ -311,7 +311,26 @@ export class GeminiProvider {
             log.debug('Stream complete', {
                 hasText: !!fullText,
                 functionCallCount: functionCalls?.length ?? 0,
+                rawPartsCount: rawParts.length,
             });
+
+            // Fallback: if streaming didn't catch text via chunk.text,
+            // extract it from rawParts (thinking models may put text only in parts)
+            if (!fullText && rawParts.length > 0 && !functionCalls) {
+                for (const part of rawParts) {
+                    if (part.text) {
+                        fullText += part.text;
+                    }
+                }
+                if (fullText) {
+                    log.info('Recovered text from rawParts fallback', { chars: fullText.length });
+                    onToken(fullText);
+                } else {
+                    log.warn('Stream returned no text and no function calls', {
+                        partTypes: rawParts.map((p: any) => Object.keys(p).join(',')),
+                    });
+                }
+            }
 
             return { text: fullText || null, functionCalls, rawParts, rawResponse: null };
         } catch (err: any) {
