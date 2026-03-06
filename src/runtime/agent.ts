@@ -259,6 +259,97 @@ export class Agent {
             },
         });
 
+        // Register delegate_task tool (sub-agent orchestration)
+        registerTool({
+            name: 'delegate_task',
+            description: 'Delegate a task to a sub-agent that runs independently. Good for research, analysis, or multi-step tasks that can run in parallel. The sub-agent has its own conversation and tool access.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    task: { type: 'string', description: 'Description of the task to delegate' },
+                    tools: { type: 'string', description: 'Comma-separated list of tool names the sub-agent can use (default: all)' },
+                    max_iterations: { type: 'integer', description: 'Max iterations for the sub-agent (default: 10)' },
+                },
+                required: ['task'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const { SubAgent } = await import('./sub-agent.js');
+                const allowedTools: Set<string> = args.tools
+                    ? new Set(args.tools.split(',').map((t: string) => t.trim()))
+                    : new Set<string>();
+
+                const subAgent = new SubAgent(
+                    this.config,
+                    this.provider,
+                    this.backgroundProvider,
+                    allowedTools,
+                );
+
+                const result = await subAgent.execute({
+                    task: args.task,
+                    maxIterations: args.max_iterations ?? 10,
+                });
+
+                if (!result.success) {
+                    return `Sub-agent failed: ${result.error}\n\nPartial result:\n${result.text}`;
+                }
+
+                return `**Sub-Agent Result** (${result.iterations} iterations, tools: ${result.toolsUsed.join(', ') || 'none'}):\n\n${result.text}`;
+            },
+        });
+
+        // Register code tool (agentic coding mode)
+        registerTool({
+            name: 'code',
+            description: 'Enter autonomous coding mode. Alice will read relevant files, plan changes, edit code, run build checks, and present a diff for review. Uses git stash for safe rollback. Use for multi-file changes, refactors, or feature implementation.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    task: { type: 'string', description: 'Description of the coding task' },
+                    files: { type: 'string', description: 'Comma-separated list of specific files to focus on (optional)' },
+                },
+                required: ['task'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const { CodingAgent } = await import('./coding-agent.js');
+                const codingAgent = new CodingAgent(
+                    this.config,
+                    this.provider,
+                    this.backgroundProvider,
+                );
+
+                const files = args.files
+                    ? args.files.split(',').map((f: string) => f.trim())
+                    : undefined;
+
+                const result = await codingAgent.execute({
+                    task: args.task,
+                    files,
+                });
+
+                const parts: string[] = [];
+                parts.push(`**Coding Agent** (${result.iterations} iterations, ${result.filesChanged.length} files changed)`);
+                parts.push('');
+                parts.push(result.text);
+
+                if (result.diff) {
+                    parts.push('');
+                    parts.push('**Changes:**');
+                    parts.push('```diff');
+                    parts.push(result.diff.slice(0, 5000));
+                    parts.push('```');
+                }
+
+                if (!result.success) {
+                    parts.push('');
+                    parts.push(`⚠️ Task incomplete: ${result.error}`);
+                    parts.push('To rollback: run \`git checkout . && git stash pop\`');
+                }
+
+                return parts.join('\n');
+            },
+        });
+
         // Register scheduler tools
         registerTool({
             name: 'set_reminder',

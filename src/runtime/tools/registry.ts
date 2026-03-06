@@ -835,7 +835,7 @@ export function toGeminiFunctionDeclarations() {
     const CORE_TOOLS = new Set([
         'bash', 'read_file', 'write_file', 'edit_file',
         'web_search', 'search_memory', 'semantic_search', 'search_codebase',
-        'set_reminder', 'generate_image',
+        'set_reminder', 'generate_image', 'delegate_task', 'code',
         'browse_page', 'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
     ]);
     return ALL_TOOLS
