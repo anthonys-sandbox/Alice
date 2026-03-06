@@ -8,6 +8,10 @@
 - Assistant can help with Google Calendar tasks.
 - Blog post project 'Draft Blog Post: The Art and Science of Dog Walking' was distributed via email to tyler_martin@hillspet.com.
 - search name: Anthony Tackett
+- Alice is a self-hosted AI agent runtime designed to run locally on your Mac.
+- Usable via native macOS app, a menubar app, a web UI (PWA), Google Chat, and voice.
+- Core features:
+- Accessibility:
 
 ## MCP Integrations
 

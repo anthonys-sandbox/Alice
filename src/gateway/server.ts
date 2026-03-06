@@ -1946,6 +1946,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       align-items: center;
       gap: 4px;
       padding: 12px 16px;
+      flex-wrap: wrap;
     }
     .typing-indicator .dot {
       width: 8px;
@@ -1959,6 +1960,26 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     @keyframes typingBounce {
       0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
       30% { transform: translateY(-6px); opacity: 1; }
+    }
+    /* ── Inline activity status ── */
+    .activity-status {
+      width: 100%;
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+      min-height: 18px;
+    }
+    .activity-status.visible { opacity: 1; }
+    .activity-status .status-icon { font-size: 14px; }
+    .activity-status .status-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     /* ── Canvas inline bubble ── */
     .canvas-bubble {
@@ -2539,7 +2560,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
       const content = document.createElement('div');
       content.className = 'typing-indicator';
-      content.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+      content.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>' +
+        '<div class="activity-status" id="activity-status">' +
+        '<span class="status-icon">🧠</span>' +
+        '<span class="status-text">Thinking...</span>' +
+        '</div>';
       row.appendChild(content);
 
       messages.appendChild(row);
@@ -2679,9 +2704,49 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         return;
       }
 
-      // Activity console events
+      // Activity events — update inline status + console
       if (data.type === 'activity') {
         addActivity(data.action, data.detail);
+        // Update the inline status bar in the chat area
+        const statusEl = document.getElementById('activity-status');
+        if (statusEl) {
+          const statusMap = {
+            tool_call: { icon: '🔧', label: function(d) {
+              const name = (d || '').split('(')[0];
+              const friendly = {
+                bash: 'Running command',
+                delegate_task: 'Deploying sub-agent',
+                code: 'Running coding agent',
+                web_search: 'Searching the web',
+                read_file: 'Reading file',
+                write_file: 'Writing file',
+                edit_file: 'Editing file',
+                browse_page: 'Browsing page',
+                semantic_search: 'Searching codebase',
+                search_memory: 'Searching memory',
+                search_codebase: 'Searching codebase',
+                workspace_status: 'Checking workspace',
+                generate_image: 'Generating image',
+                set_reminder: 'Setting reminder',
+                create_cron_job: 'Creating scheduled job',
+              };
+              return friendly[name] || ('Using ' + name);
+            }},
+            tool_done: { icon: '✅', label: function(d) { return d || 'Done'; } },
+            llm_call: { icon: '🧠', label: function() { return 'Thinking...'; } },
+            llm_done: { icon: '✨', label: function(d) { return d || 'Response ready'; } },
+            rate_limit: { icon: '⏳', label: function(d) { return d || 'Rate limited, waiting...'; } },
+            failover: { icon: '⚡', label: function(d) { return d || 'Switching provider'; } },
+            iteration: { icon: '🔄', label: function(d) { return d || 'Processing...'; } },
+            error: { icon: '❌', label: function(d) { return d || 'Error'; } },
+          };
+          const info = statusMap[data.action];
+          if (info) {
+            statusEl.querySelector('.status-icon').textContent = info.icon;
+            statusEl.querySelector('.status-text').textContent = typeof info.label === 'function' ? info.label(data.detail) : info.label;
+            statusEl.classList.add('visible');
+          }
+        }
         return;
       }
 
