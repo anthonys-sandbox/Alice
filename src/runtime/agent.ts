@@ -1518,10 +1518,11 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
 
                 // Tool calls — execute and loop
                 if (response.functionCalls?.length) {
-                    // Record tool call in history
+                    // Record tool call in history — use rawParts to preserve
+                    // thought_signature which Gemini 3 requires in follow-up turns
                     messages.push({
                         role: 'model',
-                        parts: response.functionCalls.map(fc => ({
+                        parts: response.rawParts || response.functionCalls.map(fc => ({
                             functionCall: { name: fc.name, args: fc.args },
                         })),
                     });

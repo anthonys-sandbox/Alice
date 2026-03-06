@@ -24,8 +24,15 @@ export function startHeartbeat(
     chat: GoogleChatAdapter
 ): void {
     const minutes = config.heartbeat.intervalMinutes;
-    const cronExpr = `*/${minutes} * * * *`;
-    log.info(`Starting heartbeat every ${minutes} minutes (background model)`);
+    // Build correct cron expression — minute field only goes 0-59
+    let cronExpr: string;
+    if (minutes >= 60) {
+        const hours = Math.floor(minutes / 60);
+        cronExpr = `0 */${hours} * * *`;  // e.g. 360 min → "0 */6 * * *"
+    } else {
+        cronExpr = `*/${minutes} * * * *`;
+    }
+    log.info(`Starting heartbeat every ${minutes} minutes`, { cronExpr });
 
     heartbeatTask = cron.schedule(cronExpr, async () => {
         log.info('Heartbeat triggered');
