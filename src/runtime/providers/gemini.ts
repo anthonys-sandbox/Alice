@@ -71,6 +71,24 @@ export class GeminiProvider {
         return this.authMode === 'cli' ? 'Ultra' : 'API';
     }
 
+    /**
+     * Build the unified tools config array.
+     * Combines function declarations with native Gemini tools (Google Search, Code Execution).
+     */
+    private buildToolsConfig(functionDeclarations: FunctionDeclaration[]): any[] | undefined {
+        const tools: any[] = [];
+
+        if (functionDeclarations.length > 0) {
+            tools.push({ functionDeclarations: functionDeclarations as any });
+        }
+
+        // Native Gemini tools — always available alongside function declarations
+        tools.push({ googleSearch: {} });
+        tools.push({ codeExecution: {} });
+
+        return tools.length > 0 ? tools : undefined;
+    }
+
     async generateContent(
         systemInstruction: string,
         messages: LLMMessage[],
@@ -93,9 +111,7 @@ export class GeminiProvider {
                 contents: messages as any,
                 config: {
                     systemInstruction,
-                    tools: functionDeclarations.length > 0
-                        ? [{ functionDeclarations: functionDeclarations as any }]
-                        : undefined,
+                    tools: this.buildToolsConfig(functionDeclarations),
                 },
             });
 
@@ -132,9 +148,7 @@ export class GeminiProvider {
                 contents: messages as any,
                 config: {
                     systemInstruction,
-                    tools: functionDeclarations.length > 0
-                        ? [{ functionDeclarations: functionDeclarations as any }]
-                        : undefined,
+                    tools: this.buildToolsConfig(functionDeclarations),
                 },
             });
 
@@ -149,6 +163,21 @@ export class GeminiProvider {
                     onToken(chunkText);
                 }
 
+                // Handle code execution parts in stream
+                const parts = (chunk.candidates?.[0]?.content?.parts as any[]) ?? [];
+                for (const part of parts) {
+                    if (part.executableCode?.code) {
+                        const codeBlock = `\n\n\`\`\`python\n${part.executableCode.code}\n\`\`\`\n`;
+                        fullText += codeBlock;
+                        onToken(codeBlock);
+                    }
+                    if (part.codeExecutionResult?.output) {
+                        const output = `\n**Code Output:**\n\`\`\`\n${part.codeExecutionResult.output}\n\`\`\`\n`;
+                        fullText += output;
+                        onToken(output);
+                    }
+                }
+
                 if (chunk.functionCalls && chunk.functionCalls.length > 0) {
                     functionCalls = chunk.functionCalls.map(fc => ({
                         name: fc.name!,
@@ -156,9 +185,14 @@ export class GeminiProvider {
                     }));
                 }
 
-                const parts = (chunk.candidates?.[0]?.content?.parts as any[]) ?? [];
                 if (parts.length > 0) {
                     rawParts = parts;
+                }
+
+                // Handle grounding metadata (Google Search results)
+                const grounding = chunk.candidates?.[0]?.groundingMetadata;
+                if (grounding?.searchEntryPoint?.renderedContent) {
+                    log.debug('Google Search grounding used');
                 }
             }
 
@@ -189,9 +223,7 @@ export class GeminiProvider {
         functionDeclarations: FunctionDeclaration[]
     ): Promise<LLMResponse> {
         try {
-            const tools = functionDeclarations.length > 0
-                ? [{ functionDeclarations }]
-                : undefined;
+            const tools = this.buildToolsConfig(functionDeclarations);
 
             const resp = await CodeAssist.generateContent(
                 this.model,
@@ -230,9 +262,7 @@ export class GeminiProvider {
         onToken: (token: string) => void,
     ): Promise<LLMResponse> {
         try {
-            const tools = functionDeclarations.length > 0
-                ? [{ functionDeclarations }]
-                : undefined;
+            const tools = this.buildToolsConfig(functionDeclarations);
 
             let fullText = '';
             let functionCalls: Array<{ name: string; args: Record<string, any> }> | null = null;
@@ -261,6 +291,17 @@ export class GeminiProvider {
                                 name: part.functionCall.name,
                                 args: part.functionCall.args || {},
                             });
+                        }
+                        // Handle code execution parts
+                        if (part.executableCode?.code) {
+                            const codeBlock = `\n\n\`\`\`python\n${part.executableCode.code}\n\`\`\`\n`;
+                            fullText += codeBlock;
+                            onToken(codeBlock);
+                        }
+                        if (part.codeExecutionResult?.output) {
+                            const output = `\n**Code Output:**\n\`\`\`\n${part.codeExecutionResult.output}\n\`\`\`\n`;
+                            fullText += output;
+                            onToken(output);
                         }
                     }
                     if (parts.length > 0) {
@@ -304,8 +345,38 @@ export class GeminiProvider {
             args: fc.args as Record<string, any>,
         })) ?? null;
 
-        const text = response.text ?? null;
+        let text = response.text ?? null;
         const rawParts = (response.candidates?.[0]?.content?.parts as any[]) ?? [];
+
+        // Surface code execution results as text
+        for (const part of rawParts) {
+            if (part.executableCode?.code) {
+                text = (text || '') + `\n\n\`\`\`python\n${part.executableCode.code}\n\`\`\`\n`;
+            }
+            if (part.codeExecutionResult?.output) {
+                text = (text || '') + `\n**Code Output:**\n\`\`\`\n${part.codeExecutionResult.output}\n\`\`\`\n`;
+            }
+        }
+
+        // Log grounding metadata if present
+        const grounding = response.candidates?.[0]?.groundingMetadata;
+        if (grounding) {
+            log.debug('Google Search grounding metadata present', {
+                searchQueries: grounding.webSearchQueries?.length ?? 0,
+            });
+            // Append search source citations if available
+            const chunks = grounding.groundingChunks ?? [];
+            if (chunks.length > 0) {
+                const sources = chunks
+                    .filter((c: any) => c.web?.uri)
+                    .map((c: any) => `- [${c.web.title || c.web.uri}](${c.web.uri})`)
+                    .slice(0, 5)
+                    .join('\n');
+                if (sources) {
+                    text = (text || '') + `\n\n**Sources:**\n${sources}`;
+                }
+            }
+        }
 
         log.debug('Response received', {
             hasText: !!text,
@@ -337,6 +408,29 @@ export class GeminiProvider {
                         name: part.functionCall.name,
                         args: part.functionCall.args || {},
                     });
+                }
+                // Surface code execution results
+                if (part.executableCode?.code) {
+                    text = (text || '') + `\n\n\`\`\`python\n${part.executableCode.code}\n\`\`\`\n`;
+                }
+                if (part.codeExecutionResult?.output) {
+                    text = (text || '') + `\n**Code Output:**\n\`\`\`\n${part.codeExecutionResult.output}\n\`\`\`\n`;
+                }
+            }
+
+            // Grounding metadata from Code Assist responses
+            const grounding = candidate.groundingMetadata;
+            if (grounding) {
+                const chunks = grounding.groundingChunks ?? [];
+                if (chunks.length > 0) {
+                    const sources = chunks
+                        .filter((c: any) => c.web?.uri)
+                        .map((c: any) => `- [${c.web.title || c.web.uri}](${c.web.uri})`)
+                        .slice(0, 5)
+                        .join('\n');
+                    if (sources) {
+                        text = (text || '') + `\n\n**Sources:**\n${sources}`;
+                    }
                 }
             }
         }
