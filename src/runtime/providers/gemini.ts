@@ -77,18 +77,21 @@ export class GeminiProvider {
 
     /**
      * Build the unified tools config array.
-     * Combines function declarations with native Gemini tools (Google Search, Code Execution).
+     * Combines function declarations with native Gemini tools (Google Search).
+     * Note: codeExecution cannot be combined with Function Calling per Gemini API.
      */
     private buildToolsConfig(functionDeclarations: FunctionDeclaration[]): any[] | undefined {
         const tools: any[] = [];
 
         if (functionDeclarations.length > 0) {
             tools.push({ functionDeclarations: functionDeclarations as any });
+            // Google Search can coexist with function calling
+            tools.push({ googleSearch: {} });
+        } else {
+            // No custom tools — can use built-in tools
+            tools.push({ googleSearch: {} });
+            tools.push({ codeExecution: {} });
         }
-
-        // Native Gemini tools — always available alongside function declarations
-        tools.push({ googleSearch: {} });
-        tools.push({ codeExecution: {} });
 
         return tools.length > 0 ? tools : undefined;
     }
