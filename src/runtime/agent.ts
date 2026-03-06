@@ -285,9 +285,18 @@ export class Agent {
                     allowedTools,
                 );
 
+                // Inject active persona for personality-consistent sub-agents
+                const activePersona = this.sessionStore.getActivePersona();
+                const persona = activePersona ? {
+                    name: activePersona.name,
+                    soul: activePersona.soulContent,
+                    identity: activePersona.identityContent,
+                } : undefined;
+
                 const result = await subAgent.execute({
                     task: args.task,
                     maxIterations: args.max_iterations ?? 10,
+                    persona,
                 });
 
                 if (!result.success) {
@@ -345,6 +354,49 @@ export class Agent {
                     parts.push(`⚠️ Task incomplete: ${result.error}`);
                     parts.push('To rollback: run \`git checkout . && git stash pop\`');
                 }
+
+                return parts.join('\n');
+            },
+        });
+
+        // Register workspace_status tool
+        registerTool({
+            name: 'workspace_status',
+            description: 'Get the current workspace status: RAG index stats, recently changed files, and system health. Use to understand the project state.',
+            parameters: {
+                type: 'object',
+                properties: {},
+            },
+            execute: async () => {
+                const parts: string[] = ['**Workspace Status**\n'];
+
+                // RAG index stats
+                if (this.ragIndex) {
+                    const stats = this.ragIndex.getStats();
+                    parts.push(`📚 **RAG Index:** ${stats.totalFiles} files, ${stats.totalChunks} chunks, ${stats.embeddedChunks} embedded`);
+                    const pct = stats.totalChunks > 0 ? Math.round(stats.embeddedChunks / stats.totalChunks * 100) : 0;
+                    parts.push(`   Embedding progress: ${pct}%`);
+                } else {
+                    parts.push('📚 RAG Index: not initialized');
+                }
+
+                // Recent git changes
+                try {
+                    const { execSync } = await import('child_process');
+                    const recent = execSync('git diff --name-only HEAD~5 2>/dev/null || echo "(no git history)"', {
+                        cwd: process.cwd(),
+                        encoding: 'utf-8',
+                        timeout: 5000,
+                    }).trim();
+                    if (recent && !recent.includes('no git history')) {
+                        parts.push(`\n📝 **Recently changed files:**\n${recent.split('\n').map(f => `  - ${f}`).join('\n')}`);
+                    }
+                } catch { /* ignore */ }
+
+                // Session stats
+                parts.push(`\n📊 **Session:** ${this.sessionStats.apiCalls} API calls, ${this.sessionStats.toolCalls} tool calls`);
+                parts.push(`🤖 **Model:** ${this.activeModel} (${this.activeProvider})`);
+                parts.push(`📂 **Working dir:** ${process.cwd()}`);
 
                 return parts.join('\n');
             },

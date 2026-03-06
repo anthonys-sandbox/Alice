@@ -17,9 +17,10 @@ type ChatProvider = {
 
 export interface SubAgentTask {
     task: string;
-    tools?: string[];         // Whitelist of allowed tool names (defaults to all)
+    tools?: string[];         // Whitelist of allowed tool names (defaults to all including MCP)
     maxIterations?: number;   // Max ReAct loop iterations (default: 10)
     provider?: 'background' | 'primary';  // Which provider to use (default: background)
+    persona?: { name: string; soul: string; identity: string };  // Optional persona to adopt
 }
 
 export interface SubAgentResult {
@@ -64,8 +65,18 @@ export class SubAgent {
             this.provider = this.primaryProvider;
         }
 
-        // Build system prompt for the sub-agent
+        // Build system prompt for the sub-agent (persona-aware)
+        const personaLines = task.persona
+            ? [
+                `You are ${task.persona.name}.`,
+                task.persona.soul,
+                task.persona.identity,
+                '',
+            ]
+            : [];
+
         const systemPrompt = [
+            ...personaLines,
             'You are a focused task-execution agent. Complete the assigned task efficiently.',
             'Use the available tools to gather information and take action.',
             'When the task is complete, respond with your findings/results.',
@@ -73,17 +84,17 @@ export class SubAgent {
             `Working directory: ${process.cwd()}`,
         ].join('\n');
 
+        // Build function declarations (includes MCP tools when no whitelist is set)
+        const allDecls = toGeminiFunctionDeclarations();
+        const filteredDecls = this.allowedTools.size > 0
+            ? allDecls.filter(d => this.allowedTools.has(d.name))
+            : allDecls;  // Empty whitelist = ALL tools including MCP
+
         // Add the task as the first user message
         this.conversationHistory.push({
             role: 'user',
             parts: [{ text: task.task }],
         });
-
-        // Build function declarations from allowed tools
-        const allDecls = toGeminiFunctionDeclarations();
-        const filteredDecls = this.allowedTools.size > 0
-            ? allDecls.filter(d => this.allowedTools.has(d.name))
-            : allDecls;
 
         log.info('Sub-agent started', {
             id: this.taskId,
@@ -196,5 +207,27 @@ export class SubAgent {
                 error: err.message,
             };
         }
+    }
+
+    /**
+     * Run multiple tasks in parallel and return all results.
+     * Each task gets its own independent sub-agent.
+     */
+    static async runParallel(
+        tasks: SubAgentTask[],
+        config: AliceConfig,
+        primaryProvider: ChatProvider,
+        backgroundProvider: ChatProvider | null,
+    ): Promise<SubAgentResult[]> {
+        const promises = tasks.map(task => {
+            const allowedTools = task.tools
+                ? new Set<string>(task.tools)
+                : new Set<string>();
+
+            const agent = new SubAgent(config, primaryProvider, backgroundProvider, allowedTools);
+            return agent.execute(task);
+        });
+
+        return Promise.all(promises);
     }
 }

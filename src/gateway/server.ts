@@ -2138,6 +2138,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .action-failover { color: #ffb86c; }
     .action-error { color: var(--error); }
     .action-iteration { color: var(--text-tertiary); }
+    /* Tool output streaming styles */
+    .tool-output { background: rgba(0,0,0,0.15); border-radius: 4px; margin: 2px 0; padding: 4px 0; }
+    .tool-stdout { color: var(--success); }
+    .tool-stderr { color: var(--error); }
+    .tool-info { color: var(--accent); }
+    .tool-pre { margin: 0; font-family: 'Google Sans Mono', monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; color: var(--text-secondary); }
     .action-fallback { color: var(--accent); }
     /* Shrink chat when console is open */
     body.console-open #messages,
@@ -2676,6 +2682,26 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       // Activity console events
       if (data.type === 'activity') {
         addActivity(data.action, data.detail);
+        return;
+      }
+
+      // Streaming tool output (bash, sub-agent, coding agent)
+      if (data.type === 'tool_output') {
+        // Auto-show console on tool output
+        if (consolePanel.style.display === 'none') {
+          consolePanel.style.display = 'flex';
+          document.body.classList.add('console-open');
+        }
+        const entry = document.createElement('div');
+        entry.className = 'console-entry tool-output';
+        const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const streamClass = data.stream === 'stderr' ? 'tool-stderr' : (data.stream === 'info' ? 'tool-info' : 'tool-stdout');
+        const icon = data.stream === 'stderr' ? '⚠️' : (data.stream === 'info' ? '📡' : '💻');
+        entry.innerHTML = '<span class="console-time">' + time + '</span>' +
+          '<span class="console-action ' + streamClass + '">' + icon + ' ' + (data.tool || 'tool') + '</span>' +
+          '<pre class="console-detail tool-pre">' + (data.chunk || '').replace(/</g, '&lt;') + '</pre>';
+        consoleLog.appendChild(entry);
+        consoleLog.scrollTop = consoleLog.scrollHeight;
         return;
       }
 

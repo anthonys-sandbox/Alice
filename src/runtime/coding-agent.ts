@@ -2,6 +2,8 @@ import { SubAgent, type SubAgentResult } from './sub-agent.js';
 import { executeTool, toolEvents } from './tools/registry.js';
 import { createLogger } from '../utils/logger.js';
 import { execSync } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import type { AliceConfig } from '../utils/config.js';
 
 const log = createLogger('CodingAgent');
@@ -74,7 +76,13 @@ export class CodingAgent {
         }
 
         try {
-            // Step 2: Build the coding prompt
+            // Step 2: Detect test framework
+            const testCmd = this.detectTestCommand(cwd);
+            const testStep = testCmd
+                ? `5. Run tests with bash: "${testCmd}" — fix any failures`
+                : '5. If tests exist, run them with bash to verify nothing is broken';
+
+            // Step 3: Build the coding prompt
             const fileContext = task.files?.length
                 ? `\nFocus on these files: ${task.files.join(', ')}`
                 : '';
@@ -88,7 +96,7 @@ export class CodingAgent {
                 '2. Plan your changes (mention what files you\'ll modify and why)',
                 '3. Make the changes using write_file or edit_file',
                 '4. Run "npx tsc --noEmit" with bash to verify the build',
-                '5. If the build fails, fix the errors and retry',
+                testStep,
                 '6. When done, summarize what you changed and why',
                 '',
                 'IMPORTANT: Make small, targeted changes. Test after each change.',
@@ -193,5 +201,35 @@ export class CodingAgent {
         } catch (err: any) {
             return `Rollback failed: ${err.message}`;
         }
+    }
+
+    /**
+     * Auto-detect the test command for the current project.
+     */
+    private detectTestCommand(cwd: string): string | null {
+        try {
+            const pkgPath = join(cwd, 'package.json');
+            if (existsSync(pkgPath)) {
+                const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+                if (pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1') {
+                    return 'npm test';
+                }
+                if (pkg.scripts?.['test:unit']) return 'npm run test:unit';
+                if (pkg.scripts?.['test:e2e']) return 'npm run test:e2e';
+            }
+
+            // Common test runners
+            if (existsSync(join(cwd, 'pytest.ini')) || existsSync(join(cwd, 'pyproject.toml'))) {
+                return 'python -m pytest --tb=short -q';
+            }
+            if (existsSync(join(cwd, 'jest.config.ts')) || existsSync(join(cwd, 'jest.config.js'))) {
+                return 'npx jest --passWithNoTests';
+            }
+            if (existsSync(join(cwd, 'vitest.config.ts'))) {
+                return 'npx vitest run';
+            }
+        } catch { /* ignore */ }
+
+        return null;
     }
 }
