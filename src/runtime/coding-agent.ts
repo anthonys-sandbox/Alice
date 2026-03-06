@@ -55,10 +55,11 @@ export class CodingAgent {
 
         // Step 1: Save current state (git stash)
         let stashCreated = false;
+        const stashName = `alice-coding-agent-${Date.now()}`;
         try {
             const status = execSync('git status --porcelain', { cwd, encoding: 'utf-8' }).trim();
             if (status) {
-                execSync('git stash push -m "alice-coding-agent-backup"', { cwd, encoding: 'utf-8' });
+                execSync(`git stash push -m "${stashName}"`, { cwd, encoding: 'utf-8' });
                 stashCreated = true;
                 log.info('Created git stash backup');
                 toolEvents.emit('tool_output', {
@@ -173,14 +174,18 @@ export class CodingAgent {
     rollback(): string {
         const cwd = process.cwd();
         try {
+            // Discard the coding agent's changes
             execSync('git checkout .', { cwd, encoding: 'utf-8' });
 
-            // Try to restore stash
+            // Try to restore the user's original stash (most recent alice stash)
             try {
                 const stashList = execSync('git stash list', { cwd, encoding: 'utf-8' });
-                if (stashList.includes('alice-coding-agent-backup')) {
-                    execSync('git stash pop', { cwd, encoding: 'utf-8' });
-                    return 'Changes rolled back and previous state restored from stash.';
+                const lines = stashList.split('\n');
+                const aliceStash = lines.find(l => l.includes('alice-coding-agent-'));
+                if (aliceStash) {
+                    const stashRef = aliceStash.split(':')[0]; // e.g., stash@{0}
+                    execSync(`git stash pop ${stashRef}`, { cwd, encoding: 'utf-8' });
+                    return 'Changes rolled back and your previous state restored from stash.';
                 }
             } catch { /* no stash to pop */ }
 

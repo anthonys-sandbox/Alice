@@ -366,7 +366,11 @@ export class RAGIndex {
             'SELECT id, content FROM rag_chunks WHERE path = ? AND embedding IS NULL'
         ).all(relPath) as Array<{ id: number; content: string }>;
 
-        for (const row of rows) {
+        // Cap embeddings per file to avoid API quota exhaustion on large files
+        const MAX_EMBEDDINGS_PER_FILE = 50;
+        const toEmbed = rows.slice(0, MAX_EMBEDDINGS_PER_FILE);
+
+        for (const row of toEmbed) {
             const emb = await generateEmbedding(row.content, this.apiKey);
             if (emb) {
                 this.db.prepare(
@@ -374,8 +378,8 @@ export class RAGIndex {
                 ).run(embeddingToBuffer(emb), row.id);
             }
 
-            // Rate-limit to avoid hitting API quotas
-            await new Promise(r => setTimeout(r, 100));
+            // Rate-limit to avoid hitting API quotas (250ms = ~240 RPM)
+            await new Promise(r => setTimeout(r, 250));
         }
     }
 
