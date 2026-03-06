@@ -84,9 +84,8 @@ export class GeminiProvider {
         const tools: any[] = [];
 
         if (functionDeclarations.length > 0) {
+            // Gemini API: built-in tools CANNOT coexist with function calling
             tools.push({ functionDeclarations: functionDeclarations as any });
-            // Google Search can coexist with function calling
-            tools.push({ googleSearch: {} });
         } else {
             // No custom tools — can use built-in tools
             tools.push({ googleSearch: {} });
