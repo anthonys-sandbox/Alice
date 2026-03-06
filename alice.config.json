@@ -3,10 +3,7 @@
     "gemini": {
         "model": "gemini-3-flash-preview"
     },
-    "ollama": {
-        "model": "qwen3:8b",
-        "visionModel": "qwen3-vl"
-    },
+    "ollama": {},
     "gateway": {
         "host": "0.0.0.0",
         "port": 18790

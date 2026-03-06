@@ -115,11 +115,11 @@ GEMINI_API_KEY=your_key_here  # Get from https://aistudio.google.com/apikey
 
 ```bash
 CHAT_PROVIDER=ollama
-OLLAMA_MODEL=qwen3:8b
-OLLAMA_VISION_MODEL=qwen3-vl  # Auto-used when images are attached
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_VISION_MODEL=llama3.1:8b
 ```
 
-Requires Ollama: `brew install ollama && ollama serve && ollama pull qwen3:8b`
+Requires Ollama: `brew install ollama && ollama serve && ollama pull llama3.1:8b`
 
 ### 3. Start Alice
 
@@ -369,8 +369,8 @@ Alice uses a layered configuration system:
 | `GEMINI_API_KEY` | — | Gemini API key ([get one](https://aistudio.google.com/apikey)) |
 | `GEMINI_AUTH` | `apikey` | Gemini auth mode: `apikey` or `cli` (Google Ultra) |
 | `GEMINI_MODEL` | `gemini-3-flash-preview` | Gemini model name |
-| `OLLAMA_MODEL` | `qwen3:8b` | Ollama text model (reasoning + tool calling) |
-| `OLLAMA_VISION_MODEL` | `qwen3-vl` | Ollama vision model (auto-used when images attached) |
+| `OLLAMA_MODEL` | `llama3.1:8b` | Ollama text model (reasoning + tool calling) |
+| `OLLAMA_VISION_MODEL` | `llama3.1:8b` | Ollama vision model (auto-used when images attached) |
 | `OLLAMA_HOST` | `127.0.0.1` | Ollama server host |
 | `OLLAMA_PORT` | `11434` | Ollama server port |
 | `OPENROUTER_API_KEY` | — | OpenRouter API key ([get one](https://openrouter.ai/settings/keys)) |
@@ -388,7 +388,7 @@ Alice uses a layered configuration system:
 {
     "chatProvider": "gemini",
     "gemini": { "model": "gemini-3-flash-preview" },
-    "ollama": { "model": "qwen3:8b", "visionModel": "qwen3-vl" },
+    "ollama": {},
     "gateway": { "host": "0.0.0.0", "port": 18790 },
     "heartbeat": { "enabled": true, "intervalMinutes": 30 },
     "agent": { "maxIterations": 25, "timeoutMs": 300000 },

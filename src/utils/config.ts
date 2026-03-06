@@ -75,9 +75,9 @@ const DEFAULTS: AliceConfig = {
     ollama: {
         host: '127.0.0.1',
         port: 11434,
-        model: 'qwen3:8b',
-        visionModel: 'qwen3-vl',
-        fallbackModel: 'qwen3:1.7b',
+        model: 'llama3.1:8b',
+        visionModel: 'llama3.1:8b',
+        fallbackModel: 'llama3.1:8b',
     },
     googleChat: {
         sheetId: '',
@@ -119,7 +119,7 @@ const DEFAULTS: AliceConfig = {
         model: 'gpt-4o',
     },
     background: {
-        model: 'qwen3:1.7b',
+        model: 'llama3.1:8b',
     },
 };
 

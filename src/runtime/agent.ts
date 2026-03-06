@@ -117,7 +117,7 @@ export class Agent {
         // Initialize background provider — lightweight local model for non-user-facing tasks
         // (memory extraction, auto-title, session compaction, heartbeat)
         try {
-            const bgModel = config.background?.model || 'qwen3:1.7b';
+            const bgModel = config.background?.model || config.ollama.model;
             this.backgroundProvider = new OAIProvider({
                 model: bgModel,
                 baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
@@ -534,34 +534,45 @@ export class Agent {
 
     /**
      * Sanitize conversation history for Gemini API compatibility.
-     * The standard Gemini API strictly requires that:
+     * Gemini 3.x thinking models strictly require that:
      * - A functionResponse turn must immediately follow a functionCall turn
      * - No orphaned functionCall or functionResponse turns exist
-     * This drops any orphaned turns to prevent 400 INVALID_ARGUMENT errors.
+     * - thought_signature parts are preserved in function call turns
+     * Uses a two-pass approach to atomically keep/drop entire pairs.
      */
     static sanitizeHistory(messages: LLMMessage[]): LLMMessage[] {
-        const result: LLMMessage[] = [];
+        // Pass 1: identify matched functionCall/functionResponse pairs
+        const keepIndices = new Set<number>();
 
+        for (let i = 0; i < messages.length; i++) {
+            const msg = messages[i];
+            const hasFunctionCall = msg.parts.some((p: any) => 'functionCall' in p);
+
+            if (hasFunctionCall) {
+                // Look for a matching functionResponse as the NEXT message
+                const next = messages[i + 1];
+                if (next && next.parts.some((p: any) => 'functionResponse' in p)) {
+                    // Keep both as a pair
+                    keepIndices.add(i);
+                    keepIndices.add(i + 1);
+                } else {
+                    log.debug('Dropping orphaned functionCall turn', { index: i });
+                }
+            }
+        }
+
+        // Pass 2: build result — keep matched pairs and non-function messages
+        const result: LLMMessage[] = [];
         for (let i = 0; i < messages.length; i++) {
             const msg = messages[i];
             const hasFunctionCall = msg.parts.some((p: any) => 'functionCall' in p);
             const hasFunctionResponse = msg.parts.some((p: any) => 'functionResponse' in p);
 
-            if (hasFunctionCall) {
-                // Only keep this functionCall if the NEXT message is a matching functionResponse
-                const next = messages[i + 1];
-                if (next && next.parts.some((p: any) => 'functionResponse' in p)) {
+            if (hasFunctionCall || hasFunctionResponse) {
+                // Only include if part of a matched pair
+                if (keepIndices.has(i)) {
                     result.push(msg);
-                } else {
-                    log.debug('Dropping orphaned functionCall turn', { index: i });
-                    // Skip this message — also skip the next if it's a text response to the broken call
-                }
-            } else if (hasFunctionResponse) {
-                // Only keep if the PREVIOUS result message was a functionCall
-                const prev = result[result.length - 1];
-                if (prev && prev.parts.some((p: any) => 'functionCall' in p)) {
-                    result.push(msg);
-                } else {
+                } else if (hasFunctionResponse) {
                     log.debug('Dropping orphaned functionResponse turn', { index: i });
                 }
             } else {
@@ -609,6 +620,16 @@ export class Agent {
         if (keepCount >= this.conversationHistory.length) {
             // Can't trim further — just keep MIN_KEEP
             keepCount = MIN_KEEP;
+        }
+
+        // Adjust keepCount to avoid splitting a functionCall/functionResponse pair.
+        // If the first kept message is a functionResponse, include its preceding functionCall.
+        const trimIdx = this.conversationHistory.length - keepCount;
+        if (trimIdx > 0 && trimIdx < this.conversationHistory.length) {
+            const firstKept = this.conversationHistory[trimIdx];
+            if (firstKept.parts.some((p: any) => 'functionResponse' in p)) {
+                keepCount++; // Include the preceding functionCall turn
+            }
         }
 
         const oldMessages = this.conversationHistory.slice(0, -keepCount);
@@ -738,12 +759,13 @@ export class Agent {
                     }
 
                     // Same-tool loop (3x in a row)
+                    // IMPORTANT: Append hints to the existing functionResponse turn instead of
+                    // creating a separate user message, to preserve the strict
+                    // functionCall → functionResponse adjacency required by Gemini 3.x thinking models.
                     if (sameToolCount >= 3) {
                         log.warn('Same-tool loop detected, injecting hint', { tool: currentToolName, count: sameToolCount });
-                        this.pushMessage({
-                            role: 'user',
-                            parts: [{ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` }],
-                        });
+                        const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
+                        lastMsg.parts.push({ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` } as LLMPart);
                     }
 
                     // Multi-tool cycling detection: if last 8 tool calls use ≤3 unique tools, we're cycling
@@ -752,10 +774,8 @@ export class Agent {
                         const uniqueRecent = new Set(recentTools).size;
                         if (uniqueRecent <= 3) {
                             log.warn('Multi-tool cycling detected', { recentTools, uniqueRecent });
-                            this.pushMessage({
-                                role: 'user',
-                                parts: [{ text: `SYSTEM: You are cycling between the same ${uniqueRecent} tools without making progress (${[...new Set(recentTools)].join(', ')}). STOP calling tools. Use the data you already have to answer the user's question. If you truly cannot answer, explain what's missing.` }],
-                            });
+                            const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
+                            lastMsg.parts.push({ text: `SYSTEM: You are cycling between the same ${uniqueRecent} tools without making progress (${[...new Set(recentTools)].join(', ')}). STOP calling tools. Use the data you already have to answer the user's question. If you truly cannot answer, explain what's missing.` } as LLMPart);
                         }
                     }
 
@@ -919,7 +939,7 @@ export class Agent {
                     if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
                         oaiProvider.setModel(this.config.ollama.visionModel);
                     } else if (!hasImages && oaiProvider.setModel) {
-                        oaiProvider.setModel(this.config.ollama?.model || 'qwen3:8b');
+                        oaiProvider.setModel(this.config.ollama.model);
                     }
                 }
 
@@ -980,12 +1000,11 @@ export class Agent {
                         sameToolCount = 1;
                     }
 
+                    // Append hints to the existing functionResponse turn (same fix as processMessage)
                     if (sameToolCount >= 3) {
                         log.warn('Same-tool loop detected', { tool: currentToolName, count: sameToolCount });
-                        this.pushMessage({
-                            role: 'user',
-                            parts: [{ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` }],
-                        });
+                        const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
+                        lastMsg.parts.push({ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` } as LLMPart);
                     }
 
                     if (toolsUsed.length >= 8) {
@@ -993,10 +1012,8 @@ export class Agent {
                         const uniqueRecent = new Set(recentTools).size;
                         if (uniqueRecent <= 3) {
                             log.warn('Multi-tool cycling detected', { recentTools, uniqueRecent });
-                            this.pushMessage({
-                                role: 'user',
-                                parts: [{ text: `SYSTEM: You are cycling between the same ${uniqueRecent} tools without making progress (${[...new Set(recentTools)].join(', ')}). STOP calling tools. Use the data you already have to answer the user's question. If you truly cannot answer, explain what's missing.` }],
-                            });
+                            const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
+                            lastMsg.parts.push({ text: `SYSTEM: You are cycling between the same ${uniqueRecent} tools without making progress (${[...new Set(recentTools)].join(', ')}). STOP calling tools. Use the data you already have to answer the user's question. If you truly cannot answer, explain what's missing.` } as LLMPart);
                         }
                     }
 
