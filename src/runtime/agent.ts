@@ -7,6 +7,7 @@ import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemor
 import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
 import { SessionStore } from '../memory/sessions.js';
 import { MemoryStore } from '../memory/memory-store.js';
+import { RAGIndex } from '../memory/rag-index.js';
 import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
 import { join } from 'path';
@@ -42,6 +43,7 @@ export class Agent {
     private conversationHistory: LLMMessage[] = [];
     private systemPrompt: string = '';
     private sessionStore: SessionStore;
+    private ragIndex: RAGIndex | null = null;
     private currentSessionId: string;
     public activeModel!: string;
     public activeProvider!: string;
@@ -136,6 +138,21 @@ export class Agent {
         memStore.migrateFromFiles(config.memory.dir);
         setMemoryStore(memStore);
 
+        // Initialize RAG index for project file search
+        if (config.gemini.apiKey) {
+            try {
+                this.ragIndex = new RAGIndex(dataDir, config.gemini.apiKey, process.cwd());
+                // Auto-index in background on startup
+                this.ragIndex.indexProject().then(stats => {
+                    log.info('RAG index ready', stats);
+                }).catch(err => {
+                    log.warn('RAG indexing failed', { error: err.message });
+                });
+            } catch (err: any) {
+                log.warn('RAG index init failed', { error: err.message });
+            }
+        }
+
         // Resume latest session or create a new one
         const latest = this.sessionStore.getLatestSession();
         if (latest && latest.messageCount > 0) {
@@ -214,6 +231,30 @@ export class Agent {
 
                 return '**Semantic Search Results:**\n' + results.map((r, i) =>
                     `[${i + 1}] (${(r.similarity * 100).toFixed(0)}% match) Session: ${r.sessionTitle} | ${r.role}: ${r.content}`
+                ).join('\n\n');
+            },
+        });
+
+        // Register search_codebase tool (RAG over project files)
+        registerTool({
+            name: 'search_codebase',
+            description: 'Search project files by meaning using AI embeddings. Finds relevant code, configs, and docs in the workspace. Use for understanding codebase structure, finding implementations, or locating related files.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Natural language description of what to find in the codebase' },
+                    limit: { type: 'integer', description: 'Maximum results to return (default: 8)' },
+                },
+                required: ['query'],
+            },
+            execute: async (args: Record<string, any>) => {
+                if (!this.ragIndex) return 'Codebase search is not available — GEMINI_API_KEY required for embeddings.';
+
+                const results = await this.ragIndex.semanticSearch(args.query, args.limit ?? 8);
+                if (results.length === 0) return 'No matching code found. Try different search terms or check if the project has been indexed.';
+
+                return '**Codebase Search Results:**\n\n' + results.map((r, i) =>
+                    `### [${i + 1}] ${r.path} (chunk ${r.chunkIndex})${r.similarity ? ` — ${(r.similarity * 100).toFixed(0)}% match` : ''}\n\`\`\`\n${r.content.slice(0, 500)}\n\`\`\``
                 ).join('\n\n');
             },
         });
@@ -506,7 +547,7 @@ export class Agent {
             `Current date/time: ${currentDate}`,
             `Working directory: ${process.cwd()}`,
             '',
-            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, semantic_search, set_reminder, generate_image, canvas, get_location) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
+            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, semantic_search, search_codebase, set_reminder, generate_image, canvas, get_location) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
             `IMPORTANT: When the user asks for charts, dashboards, visualizations, calculators, forms, or any interactive content, ALWAYS use the 'canvas' tool to push HTML directly inline in chat. Do NOT use write_file to create HTML files — use the canvas tool ONLY. If you absolutely must save a file, write it to ~/.alice/canvas/ (never to the working directory).`,
             `/no_think`,
         ].filter(Boolean).join('\n');
@@ -1532,6 +1573,13 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
      */
     getSessionStore() {
         return this.sessionStore;
+    }
+
+    /**
+     * Get the RAG index (for file watcher to trigger re-indexing).
+     */
+    getRagIndex() {
+        return this.ragIndex;
     }
 
     /**

@@ -17,6 +17,7 @@ import { MCPManager } from '../mcp/client.js';
 import { getMemoryStore } from '../memory/index.js';
 import { CronJobManager } from '../scheduler/cron-jobs.js';
 import { registerCronTools, toolEvents } from '../runtime/tools/registry.js';
+import { FileWatcher } from '../runtime/file-watcher.js';
 
 const log = createLogger('Gateway');
 
@@ -29,6 +30,7 @@ export class Gateway {
   private config: AliceConfig;
   private mcp: MCPManager;
   private cronJobs: CronJobManager;
+  private fileWatcher: FileWatcher | null = null;
 
   constructor(config: AliceConfig) {
     this.config = config;
@@ -1050,6 +1052,14 @@ export class Gateway {
           log.warn('Auto-backup scheduling failed', { error: err.message });
         }
 
+        // Start file watcher for live workspace awareness
+        const ragIndex = this.agent.getRagIndex();
+        if (ragIndex) {
+          this.fileWatcher = new FileWatcher(ragIndex, process.cwd());
+          this.fileWatcher.start();
+          log.info('👁️ File watcher started for live workspace awareness');
+        }
+
         resolve();
       });
     });
@@ -1061,6 +1071,7 @@ export class Gateway {
   async stop(): Promise<void> {
     stopHeartbeat();
     this.cronJobs.stopAll();
+    if (this.fileWatcher) this.fileWatcher.stop();
     this.server.close();
     log.info('Gateway stopped');
   }
