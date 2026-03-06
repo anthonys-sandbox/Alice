@@ -312,23 +312,34 @@ export class GeminiProvider {
                 hasText: !!fullText,
                 functionCallCount: functionCalls?.length ?? 0,
                 rawPartsCount: rawParts.length,
+                partTypes: rawParts.map((p: any) => Object.keys(p).join(',')),
             });
 
-            // Fallback: if streaming didn't catch text via chunk.text,
-            // extract it from rawParts (thinking models may put text only in parts)
+            // Fallback tier 1: extract user-facing text from rawParts (skip thought parts)
             if (!fullText && rawParts.length > 0 && !functionCalls) {
                 for (const part of rawParts) {
-                    if (part.text) {
+                    if (part.text && !part.thought) {
                         fullText += part.text;
                     }
                 }
                 if (fullText) {
-                    log.info('Recovered text from rawParts fallback', { chars: fullText.length });
+                    log.info('Recovered text from rawParts (tier 1)', { chars: fullText.length });
                     onToken(fullText);
-                } else {
-                    log.warn('Stream returned no text and no function calls', {
-                        partTypes: rawParts.map((p: any) => Object.keys(p).join(',')),
-                    });
+                }
+            }
+
+            // Fallback tier 2: if still no text, retry with non-streaming API
+            if (!fullText && !functionCalls) {
+                log.warn('Streaming returned no user-facing text, retrying non-streaming');
+                try {
+                    const retryResult = await this.generateContent(systemInstruction, messages, functionDeclarations);
+                    if (retryResult.text) {
+                        log.info('Recovered text via non-streaming retry (tier 2)', { chars: retryResult.text.length });
+                        onToken(retryResult.text);
+                        return retryResult;
+                    }
+                } catch (retryErr: any) {
+                    log.warn('Non-streaming retry also failed', { error: retryErr.message });
                 }
             }
 
