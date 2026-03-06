@@ -202,6 +202,28 @@ export class GeminiProvider {
 
             return this.parseGenAIResponse(response);
         } catch (err: any) {
+            // Handle stale/expired cached content — clear cache and retry without it
+            if (err.message?.includes('CachedContent') || err.message?.includes('403')) {
+                log.warn('Cached content expired or invalid, retrying without cache', { error: err.message });
+                this.cachedContentName = null;
+                this.cachedSystemHash = null;
+
+                try {
+                    const response = await this.ai.models.generateContent({
+                        model: this.model,
+                        contents: messages as any,
+                        config: {
+                            systemInstruction,
+                            tools: this.buildToolsConfig(functionDeclarations),
+                        },
+                    });
+                    return this.parseGenAIResponse(response);
+                } catch (retryErr: any) {
+                    log.error('Gemini API error on retry', { error: retryErr.message });
+                    throw retryErr;
+                }
+            }
+
             log.error('Gemini API error', { error: err.message });
             throw err;
         }

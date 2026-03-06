@@ -1010,24 +1010,33 @@ export class Agent {
                         sameToolCount = 1;
                     }
 
-                    // Same-tool loop (3x in a row)
+                    // Same-tool loop detection
                     // IMPORTANT: Append hints to the existing functionResponse turn instead of
                     // creating a separate user message, to preserve the strict
                     // functionCall → functionResponse adjacency required by Gemini 3.x thinking models.
                     if (sameToolCount >= 3) {
-                        log.warn('Same-tool loop detected, injecting hint', { tool: currentToolName, count: sameToolCount });
+                        log.warn('Same-tool loop detected', { tool: currentToolName, count: sameToolCount });
                         const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
                         lastMsg.parts.push({ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` } as LLMPart);
                     }
 
-                    // Multi-tool cycling detection: if last 8 tool calls use ≤3 unique tools, we're cycling
-                    if (toolsUsed.length >= 8) {
-                        const recentTools = toolsUsed.slice(-8);
+                    // Force-break: if same tool called 5+ times, stop the loop entirely
+                    if (sameToolCount >= 5) {
+                        log.warn('Force-breaking tool loop', { tool: currentToolName, count: sameToolCount });
+                        const breakMsg = `I called ${currentToolName} ${sameToolCount} times but couldn't complete the task. Here are the results I gathered so far.`;
+                        this.pushMessage({ role: 'model', parts: [{ text: breakMsg }] });
+                        return { text: breakMsg, toolsUsed, iterations };
+                    }
+
+                    // Multi-tool cycling: force-break if last 10 calls use ≤3 unique tools
+                    if (toolsUsed.length >= 10) {
+                        const recentTools = toolsUsed.slice(-10);
                         const uniqueRecent = new Set(recentTools).size;
                         if (uniqueRecent <= 3) {
-                            log.warn('Multi-tool cycling detected', { recentTools, uniqueRecent });
-                            const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
-                            lastMsg.parts.push({ text: `SYSTEM: You are cycling between the same ${uniqueRecent} tools without making progress (${[...new Set(recentTools)].join(', ')}). STOP calling tools. Use the data you already have to answer the user's question. If you truly cannot answer, explain what's missing.` } as LLMPart);
+                            log.warn('Force-breaking multi-tool cycle', { recentTools, uniqueRecent });
+                            const cycleMsg = `I was cycling between ${[...new Set(recentTools)].join(', ')} without making progress. Here's what I found so far.`;
+                            this.pushMessage({ role: 'model', parts: [{ text: cycleMsg }] });
+                            return { text: cycleMsg, toolsUsed, iterations };
                         }
                     }
 
@@ -1259,13 +1268,23 @@ export class Agent {
                         lastMsg.parts.push({ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` } as LLMPart);
                     }
 
-                    if (toolsUsed.length >= 8) {
-                        const recentTools = toolsUsed.slice(-8);
+                    // Force-break: if same tool called 5+ times, stop the loop entirely
+                    if (sameToolCount >= 5) {
+                        log.warn('Force-breaking tool loop', { tool: currentToolName, count: sameToolCount });
+                        const breakMsg = `I called ${currentToolName} ${sameToolCount} times but couldn't complete the task. Here are the results I gathered so far.`;
+                        this.pushMessage({ role: 'model', parts: [{ text: breakMsg }] });
+                        return { text: breakMsg, toolsUsed, iterations };
+                    }
+
+                    // Multi-tool cycling: force-break if last 10 calls use ≤3 unique tools
+                    if (toolsUsed.length >= 10) {
+                        const recentTools = toolsUsed.slice(-10);
                         const uniqueRecent = new Set(recentTools).size;
                         if (uniqueRecent <= 3) {
-                            log.warn('Multi-tool cycling detected', { recentTools, uniqueRecent });
-                            const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
-                            lastMsg.parts.push({ text: `SYSTEM: You are cycling between the same ${uniqueRecent} tools without making progress (${[...new Set(recentTools)].join(', ')}). STOP calling tools. Use the data you already have to answer the user's question. If you truly cannot answer, explain what's missing.` } as LLMPart);
+                            log.warn('Force-breaking multi-tool cycle', { recentTools, uniqueRecent });
+                            const cycleMsg = `I was cycling between ${[...new Set(recentTools)].join(', ')} without making progress. Here's what I found so far.`;
+                            this.pushMessage({ role: 'model', parts: [{ text: cycleMsg }] });
+                            return { text: cycleMsg, toolsUsed, iterations };
                         }
                     }
 
