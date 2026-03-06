@@ -18,7 +18,7 @@ const INDEXABLE_EXTENSIONS = new Set([
 const SKIP_DIRS = new Set([
     'node_modules', '.git', 'dist', 'build', '.next', '.nuxt', 'coverage',
     '__pycache__', '.venv', 'venv', '.tox', 'target', '.gradle',
-    'generated_images', '.alice',
+    'generated_images', '.alice', 'menubar',
 ]);
 
 // Max file size to index (100KB)
@@ -374,8 +374,9 @@ export class RAGIndex {
 
         let start = 0;
         let index = 0;
+        const MAX_CHUNKS = 500; // Safety cap
 
-        while (start < content.length) {
+        while (start < content.length && chunks.length < MAX_CHUNKS) {
             const end = Math.min(start + CHUNK_SIZE, content.length);
             let chunkEnd = end;
 
@@ -392,8 +393,12 @@ export class RAGIndex {
                 index,
             });
 
-            start = chunkEnd - CHUNK_OVERLAP;
-            if (start >= content.length) break;
+            // If we reached end of file, all content is captured
+            if (chunkEnd >= content.length) break;
+
+            // Advance with overlap, ensuring we always move forward
+            const nextStart = chunkEnd - CHUNK_OVERLAP;
+            start = Math.max(nextStart, start + 1);
             index++;
         }
 

@@ -1,6 +1,5 @@
-import { watch, FSWatcher } from 'fs';
-import { join, extname, relative } from 'path';
-import { readdirSync, statSync } from 'fs';
+import { watch, FSWatcher, readdirSync, statSync } from 'fs';
+import { join, extname } from 'path';
 import { createLogger } from '../utils/logger.js';
 import type { RAGIndex } from '../memory/rag-index.js';
 
@@ -17,12 +16,13 @@ const WATCHABLE_EXTENSIONS = new Set([
 const SKIP_DIRS = new Set([
     'node_modules', '.git', 'dist', 'build', '.next', '.nuxt', 'coverage',
     '__pycache__', '.venv', 'venv', '.tox', 'target', '.gradle',
-    'generated_images', '.alice',
+    'generated_images', '.alice', 'menubar',
 ]);
 
 /**
  * Watches the project directory for file changes and triggers incremental
- * RAG re-indexing. Uses Node's native `fs.watch` with debouncing.
+ * RAG re-indexing. Uses per-directory watchers to avoid OOM from watching
+ * node_modules and other heavy directories.
  */
 export class FileWatcher {
     private watchers: FSWatcher[] = [];
@@ -37,21 +37,30 @@ export class FileWatcher {
     }
 
     /**
-     * Start watching the project directory tree.
+     * Start watching relevant source directories (NOT node_modules, .git, etc.).
+     * Uses per-directory watchers instead of recursive root watch to avoid OOM.
      */
     start(): void {
         if (this.running) return;
         this.running = true;
 
         try {
-            // Watch the project root recursively (macOS supports recursive natively)
-            const watcher = watch(this.projectRoot, { recursive: true }, (event, filename) => {
-                if (!filename) return;
-                this.handleChange(event, filename);
-            });
-
-            this.watchers.push(watcher);
-            log.info('File watcher started', { root: this.projectRoot });
+            const dirs = this.collectWatchableDirs(this.projectRoot, 0);
+            for (const dir of dirs) {
+                try {
+                    const watcher = watch(dir, (event, filename) => {
+                        if (!filename) return;
+                        // Build relative path from project root
+                        const relDir = dir.slice(this.projectRoot.length + 1);
+                        const relPath = relDir ? `${relDir}/${filename}` : filename;
+                        this.handleChange(event, relPath);
+                    });
+                    this.watchers.push(watcher);
+                } catch {
+                    // Skip dirs we can't watch
+                }
+            }
+            log.info('File watcher started', { directories: dirs.length });
         } catch (err: any) {
             log.warn('File watcher failed to start', { error: err.message });
         }
@@ -71,6 +80,29 @@ export class FileWatcher {
         this.debounceTimers.clear();
         this.running = false;
         log.info('File watcher stopped');
+    }
+
+    /**
+     * Collect directories to watch (skipping node_modules, .git, etc.).
+     * Max depth 5 to avoid runaway recursion.
+     */
+    private collectWatchableDirs(dir: string, depth: number): string[] {
+        const dirs: string[] = [dir];  // Watch this dir itself
+        if (depth >= 5) return dirs;
+
+        try {
+            const entries = readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                if (SKIP_DIRS.has(entry.name)) continue;
+                if (entry.name.startsWith('.')) continue;
+                dirs.push(...this.collectWatchableDirs(join(dir, entry.name), depth + 1));
+            }
+        } catch {
+            // Skip unreadable dirs
+        }
+
+        return dirs;
     }
 
     private handleChange(event: string, filename: string): void {
@@ -94,16 +126,13 @@ export class FileWatcher {
                     // File could be created or deleted — try to stat
                     try {
                         statSync(absolutePath);
-                        // File exists — re-index
                         await this.ragIndex.reindexFile(absolutePath);
                         log.debug('Re-indexed', { path: filename });
                     } catch {
-                        // File deleted — remove from index
                         this.ragIndex.removeFile(absolutePath);
                         log.debug('Removed from index', { path: filename });
                     }
                 } else {
-                    // change event — re-index
                     await this.ragIndex.reindexFile(absolutePath);
                     log.debug('Re-indexed', { path: filename });
                 }
