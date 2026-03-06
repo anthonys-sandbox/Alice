@@ -16,7 +16,7 @@ import { formatForGoogleChat } from '../utils/markdown.js';
 import { MCPManager } from '../mcp/client.js';
 import { getMemoryStore } from '../memory/index.js';
 import { CronJobManager } from '../scheduler/cron-jobs.js';
-import { registerCronTools } from '../runtime/tools/registry.js';
+import { registerCronTools, toolEvents } from '../runtime/tools/registry.js';
 
 const log = createLogger('Gateway');
 
@@ -789,6 +789,13 @@ export class Gateway {
     this.wss.on('connection', (ws: WebSocket) => {
       log.info('WebSocket client connected');
 
+      // Subscribe this client to real-time tool output events
+      const onToolOutput = (data: { tool: string; stream: string; chunk: string; command: string }) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'tool_output', ...data }));
+        }
+      };
+      toolEvents.on('tool_output', onToolOutput);
       // Per-connection message queue
       let processing = false;
       const queue: Array<{ text: string; attachments: Array<{ name: string; type: string; data: string }> }> = [];
@@ -912,6 +919,7 @@ export class Gateway {
 
       ws.on('close', () => {
         log.info('WebSocket client disconnected');
+        toolEvents.off('tool_output', onToolOutput);
         queue.length = 0;
       });
     });

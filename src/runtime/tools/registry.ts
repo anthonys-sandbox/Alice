@@ -1,11 +1,18 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync, write } from 'fs';
 import { dirname, resolve, extname, join } from 'path';
-import { execSync } from 'child_process';
+import { execSync, spawn } from 'child_process';
+import { EventEmitter } from 'events';
 import { createLogger } from '../../utils/logger.js';
 import { browserTools } from './browser.js';
 import type { CronJobManager } from '../../scheduler/cron-jobs.js';
 
 const log = createLogger('Tools');
+
+/**
+ * Global event emitter for streaming tool output to the UI.
+ * The gateway subscribes to 'tool_output' events and forwards them via WebSocket.
+ */
+export const toolEvents = new EventEmitter();
 
 // ============================================================
 // Tool type definitions
@@ -198,7 +205,7 @@ export const editFileTool: ToolDefinition = {
 
 export const bashTool: ToolDefinition = {
     name: 'bash',
-    description: 'Execute a shell command and return stdout + stderr. Use for running scripts, git commands, npm, etc.',
+    description: 'Execute a shell command and return stdout + stderr. Output streams in real-time to the UI console.',
     parameters: {
         type: 'object',
         properties: {
@@ -214,25 +221,68 @@ export const bashTool: ToolDefinition = {
 
         log.debug(`Executing: ${args.command}`, { cwd, timeout });
 
-        try {
-            const output = execSync(args.command, {
+        return new Promise<string>((resolvePromise) => {
+            const child = spawn('bash', ['-c', args.command], {
                 cwd,
-                timeout,
-                encoding: 'utf-8',
-                maxBuffer: 1024 * 1024, // 1MB
                 env: { ...process.env, PAGER: 'cat' },
+                stdio: ['pipe', 'pipe', 'pipe'],
             });
 
-            const trimmed = output.length > 10000
-                ? output.slice(0, 10000) + '\n\n... (output truncated, showing first 10000 chars)'
-                : output;
+            let stdout = '';
+            let stderr = '';
+            let killed = false;
 
-            return `Command: ${args.command}\nExit code: 0\n\n${trimmed}`;
-        } catch (err: any) {
-            const stdout = err.stdout || '';
-            const stderr = err.stderr || '';
-            return `Command: ${args.command}\nExit code: ${err.status ?? 1}\n\nSTDOUT:\n${stdout}\n\nSTDERR:\n${stderr}`;
-        }
+            // Stream stdout chunks in real-time
+            child.stdout.on('data', (data: Buffer) => {
+                const chunk = data.toString();
+                stdout += chunk;
+                toolEvents.emit('tool_output', {
+                    tool: 'bash',
+                    stream: 'stdout',
+                    chunk,
+                    command: args.command,
+                });
+            });
+
+            // Stream stderr chunks
+            child.stderr.on('data', (data: Buffer) => {
+                const chunk = data.toString();
+                stderr += chunk;
+                toolEvents.emit('tool_output', {
+                    tool: 'bash',
+                    stream: 'stderr',
+                    chunk,
+                    command: args.command,
+                });
+            });
+
+            // Timeout handling
+            const timer = setTimeout(() => {
+                killed = true;
+                child.kill('SIGTERM');
+            }, timeout);
+
+            child.on('close', (code) => {
+                clearTimeout(timer);
+
+                const output = stdout.length > 10000
+                    ? stdout.slice(0, 10000) + '\n\n... (output truncated, showing first 10000 chars)'
+                    : stdout;
+
+                if (killed) {
+                    resolvePromise(`Command: ${args.command}\nKilled after ${timeout}ms timeout\n\nSTDOUT:\n${output}\n\nSTDERR:\n${stderr}`);
+                } else if (code === 0) {
+                    resolvePromise(`Command: ${args.command}\nExit code: 0\n\n${output}`);
+                } else {
+                    resolvePromise(`Command: ${args.command}\nExit code: ${code ?? 1}\n\nSTDOUT:\n${output}\n\nSTDERR:\n${stderr}`);
+                }
+            });
+
+            child.on('error', (err) => {
+                clearTimeout(timer);
+                resolvePromise(`Command: ${args.command}\nError: ${err.message}`);
+            });
+        });
     },
 };
 
