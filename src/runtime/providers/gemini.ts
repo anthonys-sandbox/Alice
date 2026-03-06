@@ -298,7 +298,7 @@ export class GeminiProvider {
                 }
 
                 if (parts.length > 0) {
-                    rawParts = parts;
+                    rawParts.push(...parts);
                 }
 
                 // Handle grounding metadata (Google Search results)
