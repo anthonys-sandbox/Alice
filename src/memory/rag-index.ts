@@ -41,6 +41,7 @@ export class RAGIndex {
     private apiKey: string;
     private projectRoot: string;
     private indexing = false;
+    private embeddingRunning = false;
 
     constructor(dataDir: string, apiKey: string, projectRoot: string) {
         if (!existsSync(dataDir)) {
@@ -130,15 +131,13 @@ export class RAGIndex {
                     continue;
                 }
 
-                // File changed or new — re-index
+                // File changed or new — chunk and store (NO embedding here — fast local-only)
                 try {
                     const content = readFileSync(filePath, 'utf-8');
                     const chunks = this.chunkContent(content, relPath);
 
-                    // Delete old chunks for this file
                     this.db.prepare('DELETE FROM rag_chunks WHERE path = ?').run(relPath);
 
-                    // Insert new chunks
                     const insert = this.db.prepare(
                         'INSERT INTO rag_chunks (path, chunk_index, content, file_mtime) VALUES (?, ?, ?, ?)'
                     );
@@ -150,12 +149,6 @@ export class RAGIndex {
                     });
 
                     insertMany(chunks);
-
-                    // Generate embeddings in the background (non-blocking)
-                    this.embedChunksForFile(relPath).catch(err =>
-                        log.debug('Background embedding failed', { path: relPath, error: err.message })
-                    );
-
                     indexed++;
                 } catch (err: any) {
                     log.debug('Failed to index file', { path: relPath, error: err.message });
@@ -177,7 +170,52 @@ export class RAGIndex {
             this.indexing = false;
         }
 
+        // Start background embedding queue (non-blocking, sequential)
+        this.startBackgroundEmbedding();
+
         return { indexed, skipped, total };
+    }
+
+    /**
+     * Background embedding queue — processes UN-embedded chunks one at a time.
+     * Runs entirely in the background without blocking startup or requests.
+     */
+    private startBackgroundEmbedding(): void {
+        if (this.embeddingRunning) return;
+        this.embeddingRunning = true;
+
+        const processNext = async () => {
+            try {
+                while (true) {
+                    const row = this.db.prepare(
+                        'SELECT id, content FROM rag_chunks WHERE embedding IS NULL LIMIT 1'
+                    ).get() as { id: number; content: string } | undefined;
+
+                    if (!row) {
+                        const stats = this.getStats();
+                        log.info('Background embedding complete', stats);
+                        break;
+                    }
+
+                    const emb = await generateEmbedding(row.content, this.apiKey);
+                    if (emb) {
+                        this.db.prepare(
+                            'UPDATE rag_chunks SET embedding = ? WHERE id = ?'
+                        ).run(embeddingToBuffer(emb), row.id);
+                    }
+
+                    // 300ms between API calls (~200 RPM, well within limits)
+                    await new Promise(r => setTimeout(r, 300));
+                }
+            } catch (err: any) {
+                log.debug('Background embedding error', { error: err.message });
+            } finally {
+                this.embeddingRunning = false;
+            }
+        };
+
+        // Start after a short delay to let the gateway finish booting
+        setTimeout(() => processNext(), 3000);
     }
 
     /**
@@ -201,7 +239,8 @@ export class RAGIndex {
                 insert.run(relPath, chunk.index, chunk.content, stat.mtimeMs);
             }
 
-            await this.embedChunksForFile(relPath);
+            // Trigger background embedding if not already running
+            this.startBackgroundEmbedding();
             log.debug('Re-indexed file', { path: relPath, chunks: chunks.length });
         } catch (err: any) {
             log.debug('Re-index failed', { path: relPath, error: err.message });
@@ -361,27 +400,6 @@ export class RAGIndex {
         return chunks;
     }
 
-    private async embedChunksForFile(relPath: string): Promise<void> {
-        const rows = this.db.prepare(
-            'SELECT id, content FROM rag_chunks WHERE path = ? AND embedding IS NULL'
-        ).all(relPath) as Array<{ id: number; content: string }>;
-
-        // Cap embeddings per file to avoid API quota exhaustion on large files
-        const MAX_EMBEDDINGS_PER_FILE = 50;
-        const toEmbed = rows.slice(0, MAX_EMBEDDINGS_PER_FILE);
-
-        for (const row of toEmbed) {
-            const emb = await generateEmbedding(row.content, this.apiKey);
-            if (emb) {
-                this.db.prepare(
-                    'UPDATE rag_chunks SET embedding = ? WHERE id = ?'
-                ).run(embeddingToBuffer(emb), row.id);
-            }
-
-            // Rate-limit to avoid hitting API quotas (250ms = ~240 RPM)
-            await new Promise(r => setTimeout(r, 250));
-        }
-    }
 
     close(): void {
         this.db.close();
