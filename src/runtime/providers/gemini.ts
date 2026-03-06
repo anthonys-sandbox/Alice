@@ -37,6 +37,10 @@ export class GeminiProvider {
     private authMode: 'api-key' | 'cli';
     private config: AliceConfig;
 
+    // Context caching (API key mode only)
+    private cachedContentName: string | null = null;
+    private cachedSystemHash: string | null = null; // Track what was cached
+
     constructor(config: AliceConfig) {
         this.config = config;
         this.model = config.gemini.model;
@@ -89,6 +93,80 @@ export class GeminiProvider {
         return tools.length > 0 ? tools : undefined;
     }
 
+    /**
+     * Simple hash of system instruction for cache invalidation detection.
+     */
+    private hashString(str: string): string {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash |= 0; // Convert to 32-bit integer
+        }
+        return hash.toString(36);
+    }
+
+    /**
+     * Ensure an explicit content cache exists for the current system prompt + tools.
+     * Only used in API key mode. Falls back gracefully on failure.
+     */
+    private async ensureCache(
+        systemInstruction: string,
+        functionDeclarations: FunctionDeclaration[]
+    ): Promise<string | null> {
+        if (this.authMode !== 'api-key') return null;
+
+        const currentHash = this.hashString(systemInstruction);
+
+        // Reuse existing cache if system prompt hasn't changed
+        if (this.cachedContentName && this.cachedSystemHash === currentHash) {
+            return this.cachedContentName;
+        }
+
+        try {
+            // Delete old cache if it exists
+            if (this.cachedContentName) {
+                try {
+                    await this.ai.caches.delete({ name: this.cachedContentName });
+                } catch { /* ignore — may have expired */ }
+            }
+
+            const cache = await this.ai.caches.create({
+                model: this.model,
+                config: {
+                    systemInstruction,
+                    tools: this.buildToolsConfig(functionDeclarations) as any,
+                    ttl: '1800s', // 30 minutes
+                } as any,
+            });
+
+            this.cachedContentName = (cache as any).name;
+            this.cachedSystemHash = currentHash;
+            log.info('Context cache created', { name: this.cachedContentName });
+            return this.cachedContentName;
+        } catch (err: any) {
+            log.debug('Context caching unavailable, using inline system prompt', {
+                error: err.message,
+            });
+            return null;
+        }
+    }
+
+    /**
+     * Invalidate the context cache (called when system prompt changes, e.g. refreshContext).
+     */
+    invalidateCache(): void {
+        if (this.cachedContentName) {
+            log.info('Context cache invalidated');
+            // Fire-and-forget cleanup
+            if (this.authMode === 'api-key') {
+                this.ai.caches.delete({ name: this.cachedContentName }).catch(() => { });
+            }
+            this.cachedContentName = null;
+            this.cachedSystemHash = null;
+        }
+    }
+
     async generateContent(
         systemInstruction: string,
         messages: LLMMessage[],
@@ -106,13 +184,18 @@ export class GeminiProvider {
 
         // ── API key path (standard SDK) ──
         try {
+            // Try to use explicit context cache for system prompt + tools
+            const cacheName = await this.ensureCache(systemInstruction, functionDeclarations);
+
             const response = await this.ai.models.generateContent({
                 model: this.model,
                 contents: messages as any,
-                config: {
-                    systemInstruction,
-                    tools: this.buildToolsConfig(functionDeclarations),
-                },
+                config: cacheName
+                    ? { cachedContent: cacheName }
+                    : {
+                        systemInstruction,
+                        tools: this.buildToolsConfig(functionDeclarations),
+                    },
             });
 
             return this.parseGenAIResponse(response);
@@ -143,13 +226,18 @@ export class GeminiProvider {
 
         // ── API key path (standard SDK) ──
         try {
+            // Try to use explicit context cache for system prompt + tools
+            const cacheName = await this.ensureCache(systemInstruction, functionDeclarations);
+
             const response = await this.ai.models.generateContentStream({
                 model: this.model,
                 contents: messages as any,
-                config: {
-                    systemInstruction,
-                    tools: this.buildToolsConfig(functionDeclarations),
-                },
+                config: cacheName
+                    ? { cachedContent: cacheName }
+                    : {
+                        systemInstruction,
+                        tools: this.buildToolsConfig(functionDeclarations),
+                    },
             });
 
             let fullText = '';

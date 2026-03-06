@@ -469,6 +469,11 @@ export class Agent {
      * Reload memory + skills and rebuild the system prompt.
      */
     refreshContext(): void {
+        // Invalidate the Gemini context cache — system prompt is about to change
+        if (this.provider && 'invalidateCache' in this.provider) {
+            (this.provider as any).invalidateCache();
+        }
+
         const memory = loadMemory(this.config.memory.dir);
         const skills = loadSkills(this.config.skills.dirs);
 
@@ -593,10 +598,9 @@ export class Agent {
      * Trim conversation context if approaching token budget.
      * Keeps the most recent messages and compresses the rest into a summary.
      */
-    private trimContextIfNeeded(): void {
-        // Token budget: leave room for system prompt + response + tools
-        const MAX_CONTEXT_TOKENS = 24000;
-        const MIN_KEEP = 4; // Always keep at least the last few messages
+    private async trimContextIfNeeded(): Promise<void> {
+        const MAX_CONTEXT_TOKENS = 32000;
+        const MIN_KEEP = 4;
 
         let tokenEstimate = this.estimateTokens(this.conversationHistory);
         if (tokenEstimate <= MAX_CONTEXT_TOKENS) return;
@@ -607,8 +611,7 @@ export class Agent {
             messageCount: this.conversationHistory.length,
         });
 
-        // Aggressively trim: drop oldest messages until under budget
-        // Keep dropping until we're under the token limit
+        // Determine how many recent messages to keep
         let keepCount = Math.min(this.conversationHistory.length, 10);
         while (keepCount > MIN_KEEP) {
             const recent = this.conversationHistory.slice(-keepCount);
@@ -618,40 +621,88 @@ export class Agent {
         }
 
         if (keepCount >= this.conversationHistory.length) {
-            // Can't trim further — just keep MIN_KEEP
             keepCount = MIN_KEEP;
         }
 
-        // Adjust keepCount to avoid splitting a functionCall/functionResponse pair.
-        // If the first kept message is a functionResponse, include its preceding functionCall.
+        // Adjust keepCount to avoid splitting a functionCall/functionResponse pair
         const trimIdx = this.conversationHistory.length - keepCount;
         if (trimIdx > 0 && trimIdx < this.conversationHistory.length) {
             const firstKept = this.conversationHistory[trimIdx];
             if (firstKept.parts.some((p: any) => 'functionResponse' in p)) {
-                keepCount++; // Include the preceding functionCall turn
+                keepCount++;
             }
         }
+
+        // Preserve the first user message (original query context)
+        const firstUserIdx = this.conversationHistory.findIndex(m => m.role === 'user');
+        const firstUserMsg = firstUserIdx >= 0 ? this.conversationHistory[firstUserIdx] : null;
 
         const oldMessages = this.conversationHistory.slice(0, -keepCount);
         const recentMessages = this.conversationHistory.slice(-keepCount);
 
-        // Build a brief summary
-        const summaryParts: string[] = [];
-        for (const msg of oldMessages.slice(-5)) { // Only summarize last 5 dropped
-            const textParts = msg.parts
-                .filter((p: any) => 'text' in p && p.text)
-                .map((p: any) => (p.text as string)?.slice(0, 80));
-            if (textParts.length > 0) {
-                summaryParts.push(`[${msg.role}]: ${textParts.join(' ')}`);
+        // Build context summary — use background model if available, else naive
+        let summaryText: string;
+
+        if (this.backgroundProvider) {
+            try {
+                const contextParts: string[] = [];
+                for (const msg of oldMessages) {
+                    const texts = msg.parts
+                        .filter((p: any) => 'text' in p && p.text)
+                        .map((p: any) => (p.text as string)?.slice(0, 200));
+                    const toolParts = msg.parts
+                        .filter((p: any) => 'functionCall' in p)
+                        .map((p: any) => `[tool: ${(p as any).functionCall.name}]`);
+                    const allParts = [...texts, ...toolParts].filter(Boolean);
+                    if (allParts.length > 0) {
+                        contextParts.push(`${msg.role}: ${allParts.join(' ')}`);
+                    }
+                }
+
+                const summarizePrompt = [
+                    {
+                        role: 'user' as const, parts: [{
+                            text:
+                                `Summarize this conversation context in 2-3 sentences. Focus on: what the user asked for, what tools were used, and key results. Be concise.\n\n${contextParts.join('\n')}`
+                        }]
+                    }
+                ];
+
+                const summaryResp = await this.backgroundProvider.generateContent(
+                    'You are a concise summarizer. Output only the summary, nothing else.',
+                    summarizePrompt,
+                    [],
+                );
+
+                if (summaryResp.text) {
+                    summaryText = `[Context summary — ${oldMessages.length} earlier messages summarized by AI]\n${summaryResp.text}`;
+                    log.debug('Background model generated context summary');
+                } else {
+                    throw new Error('Empty summary response');
+                }
+            } catch (err: any) {
+                log.debug('Background summarization failed, using naive summary', { error: err.message });
+                summaryText = Agent.buildNaiveSummary(oldMessages);
             }
+        } else {
+            summaryText = Agent.buildNaiveSummary(oldMessages);
         }
 
-        const summaryText = `[Context summary — ${oldMessages.length} earlier messages removed]\n${summaryParts.join('\n')}`;
-
-        this.conversationHistory = Agent.sanitizeHistory([
+        // Reconstruct history: summary + first user message (if dropped) + recent
+        const newHistory: LLMMessage[] = [
             { role: 'user', parts: [{ text: summaryText }] },
-            ...recentMessages,
-        ]);
+        ];
+
+        // Re-insert the original user query if it was in the dropped messages
+        if (firstUserMsg && firstUserIdx < this.conversationHistory.length - keepCount) {
+            newHistory.push({ role: 'model', parts: [{ text: '[Acknowledged — continuing from context above]' }] });
+            newHistory.push(firstUserMsg);
+            newHistory.push({ role: 'model', parts: [{ text: '[Continuing with recent context]' }] });
+        }
+
+        newHistory.push(...recentMessages);
+
+        this.conversationHistory = Agent.sanitizeHistory(newHistory);
 
         const newEstimate = this.estimateTokens(this.conversationHistory);
         log.info('Context trimmed', {
@@ -659,7 +710,24 @@ export class Agent {
             after: newEstimate,
             kept: keepCount,
             messagesRemoved: oldMessages.length,
+            usedAISummary: !!this.backgroundProvider,
         });
+    }
+
+    /**
+     * Build a naive text summary of dropped messages (fallback when background model unavailable).
+     */
+    private static buildNaiveSummary(oldMessages: LLMMessage[]): string {
+        const summaryParts: string[] = [];
+        for (const msg of oldMessages.slice(-5)) {
+            const textParts = msg.parts
+                .filter((p: any) => 'text' in p && p.text)
+                .map((p: any) => (p.text as string)?.slice(0, 80));
+            if (textParts.length > 0) {
+                summaryParts.push(`[${msg.role}]: ${textParts.join(' ')}`);
+            }
+        }
+        return `[Context summary — ${oldMessages.length} earlier messages removed]\n${summaryParts.join('\n')}`;
     }
 
     /**
@@ -700,7 +768,7 @@ export class Agent {
 
             try {
                 // Trim context if approaching token budget
-                this.trimContextIfNeeded();
+                await this.trimContextIfNeeded();
                 // Sanitize before API call — ensures valid function call/response ordering
                 this.conversationHistory = Agent.sanitizeHistory(this.conversationHistory);
 
@@ -926,7 +994,7 @@ export class Agent {
 
             try {
                 // Trim context if approaching token budget
-                this.trimContextIfNeeded();
+                await this.trimContextIfNeeded();
                 // Sanitize before API call — ensures valid function call/response ordering
                 this.conversationHistory = Agent.sanitizeHistory(this.conversationHistory);
 
