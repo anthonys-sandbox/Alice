@@ -1085,6 +1085,123 @@ export class Agent {
             },
         });
 
+        // ── Smart Scheduling ────────────────────────────────────
+        registerTool({
+            name: 'find_free_time',
+            description: 'Find free time slots in your calendar for a given date range. Returns available windows of the specified duration.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    date: { type: 'string', description: 'Date to check (YYYY-MM-DD, default: today)' },
+                    duration_minutes: { type: 'number', description: 'Minimum slot duration in minutes (default: 30)' },
+                    work_start: { type: 'number', description: 'Work day start hour (default: 9)' },
+                    work_end: { type: 'number', description: 'Work day end hour (default: 17)' },
+                },
+                required: [],
+            },
+            execute: async (args: any) => {
+                const date = args.date || new Date().toISOString().split('T')[0];
+                const duration = args.duration_minutes || 30;
+                const workStart = args.work_start || 9;
+                const workEnd = args.work_end || 17;
+                const timeMin = `${date}T${String(workStart).padStart(2, '0')}:00:00`;
+                const timeMax = `${date}T${String(workEnd).padStart(2, '0')}:00:00`;
+                const events = await executeTool('calendar_list', { time_min: new Date(timeMin).toISOString(), time_max: new Date(timeMax).toISOString(), max_results: 50 });
+                return `Calendar events for ${date}:\n${events}\n\nFind gaps of at least ${duration} minutes between ${workStart}:00 and ${workEnd}:00.`;
+            },
+        });
+
+        registerTool({
+            name: 'schedule_meeting',
+            description: 'Smart meeting scheduler: checks your calendar for conflicts, suggests the best available time slot, and creates the event. Provide attendees for mutual availability check.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    title: { type: 'string', description: 'Meeting title' },
+                    duration_minutes: { type: 'number', description: 'Duration in minutes' },
+                    attendees: { type: 'string', description: 'Comma-separated attendee emails' },
+                    preferred_date: { type: 'string', description: 'Preferred date YYYY-MM-DD' },
+                    description: { type: 'string', description: 'Meeting description (optional)' },
+                },
+                required: ['title', 'duration_minutes'],
+            },
+            execute: async (args: any) => {
+                const date = args.preferred_date || new Date().toISOString().split('T')[0];
+                const timeMin = `${date}T09:00:00`;
+                const timeMax = `${date}T17:00:00`;
+                const events = await executeTool('calendar_list', { time_min: new Date(timeMin).toISOString(), time_max: new Date(timeMax).toISOString(), max_results: 50 });
+
+                // Pass to LLM to find the best slot and create the event
+                const result = await this.processBackgroundMessage(
+                    `Find a free ${args.duration_minutes}-minute slot on ${date} between 9 AM and 5 PM given these events:\n${events}\n\nOnce you find a free slot, create a calendar event using calendar_create with:
+- summary: "${args.title}"
+- attendees: ${args.attendees || 'none'}
+- description: ${args.description || 'none'}
+- duration: ${args.duration_minutes} minutes
+
+Return the created event details.`,
+                    { useMainProvider: false }
+                );
+                return result.text;
+            },
+        });
+
+        registerTool({
+            name: 'time_block',
+            description: 'Auto-block focus time on your calendar based on meeting density. Creates "Focus Time" events in free slots.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    date: { type: 'string', description: 'Date to time-block (YYYY-MM-DD, default: today)' },
+                    min_block_minutes: { type: 'number', description: 'Minimum focus block (default: 60 min)' },
+                },
+                required: [],
+            },
+            execute: async (args: any) => {
+                const date = args.date || new Date().toISOString().split('T')[0];
+                const minBlock = args.min_block_minutes || 60;
+                const events = await executeTool('calendar_list', { time_min: new Date(`${date}T09:00:00`).toISOString(), time_max: new Date(`${date}T17:00:00`).toISOString(), max_results: 50 });
+
+                const result = await this.processBackgroundMessage(
+                    `Given these calendar events for ${date}:\n${events}\n\nFind free gaps of at least ${minBlock} minutes between 9 AM and 5 PM. For each gap, create a calendar event using calendar_create with summary "🎯 Focus Time" and description "Auto-blocked focus time". Return what you created.`,
+                    { useMainProvider: false }
+                );
+                return result.text;
+            },
+        });
+
+        registerTool({
+            name: 'meeting_cost',
+            description: 'Calculate how much time you spent in meetings this week vs. last week. Shows meeting hours, meeting count, longest meeting, and busiest day.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    hourly_rate: { type: 'number', description: 'Optional hourly rate to calculate meeting cost in dollars' },
+                },
+                required: [],
+            },
+            execute: async (args: any) => {
+                const now = new Date();
+                const monday = new Date(now); monday.setDate(now.getDate() - now.getDay() + 1); monday.setHours(0, 0, 0, 0);
+                const friday = new Date(monday); friday.setDate(monday.getDate() + 4); friday.setHours(23, 59, 59, 999);
+                const lastMonday = new Date(monday); lastMonday.setDate(monday.getDate() - 7);
+                const lastFriday = new Date(lastMonday); lastFriday.setDate(lastMonday.getDate() + 4); lastFriday.setHours(23, 59, 59, 999);
+
+                const [thisWeek, lastWeek] = await Promise.all([
+                    executeTool('calendar_list', { time_min: monday.toISOString(), time_max: friday.toISOString(), max_results: 50 }),
+                    executeTool('calendar_list', { time_min: lastMonday.toISOString(), time_max: lastFriday.toISOString(), max_results: 50 }),
+                ]);
+
+                const rateNote = args.hourly_rate ? `\nHourly rate: $${args.hourly_rate}. Calculate meeting cost as hours × rate.` : '';
+
+                const result = await this.processBackgroundMessage(
+                    `Analyze meeting time for this week and last week. Calculate:\n1. Total meeting hours this week vs last week\n2. Number of meetings each week\n3. Longest meeting this week\n4. Busiest day this week\n5. Focus time percentage (meetings vs 40-hour work week)${rateNote}\n\nThis week's events:\n${thisWeek}\n\nLast week's events:\n${lastWeek}\n\nPresent as a clean summary with emoji.`,
+                    { useMainProvider: false }
+                );
+                return result.text;
+            },
+        });
+
         this.refreshContext();
     }
 

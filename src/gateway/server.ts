@@ -13,6 +13,7 @@ import { GoogleChatAdapter } from '../channels/google-chat.js';
 import { startHeartbeat, stopHeartbeat } from '../scheduler/heartbeat.js';
 import { startMeetingPrep, stopMeetingPrep, isMeetingPrepRunning, toggleMeetingPrep } from '../scheduler/meeting-prep.js';
 import { startEmailWatcher, stopEmailWatcher, isEmailWatcherRunning, toggleEmailWatcher } from '../scheduler/email-watcher.js';
+import { startProactiveEngine, stopProactiveEngine, isProactiveEngineRunning, toggleProactiveEngine } from '../scheduler/proactive-engine.js';
 import { scheduler } from '../scheduler/task-scheduler.js';
 import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
@@ -850,6 +851,7 @@ export class Gateway {
       res.json({
         meetingPrep: { running: isMeetingPrepRunning(), schedule: 'Every 15 min' },
         emailWatcher: { running: isEmailWatcherRunning(), schedule: 'Every 2 min' },
+        proactiveEngine: { running: isProactiveEngineRunning(), schedule: 'Every 30 min' },
       });
     });
 
@@ -860,6 +862,11 @@ export class Gateway {
 
     this.app.post('/api/automation/email-watcher/toggle', (_req, res) => {
       const running = toggleEmailWatcher();
+      res.json({ running });
+    });
+
+    this.app.post('/api/automation/proactive-engine/toggle', (_req, res) => {
+      const running = toggleProactiveEngine();
       res.json({ running });
     });
 
@@ -1359,6 +1366,9 @@ export class Gateway {
 
           startEmailWatcher(this.agent, this.chat);
           log.info('📧 Email watcher started');
+
+          startProactiveEngine(this.agent, this.chat);
+          log.info('🔮 Proactive intelligence engine started');
         }, 5000);
 
         // Auto-backup: commit and push to GitHub every 6 hours
@@ -4287,6 +4297,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const cronJobs = cronData.jobs || [];
         const meetingPrepRunning = autoData.meetingPrep?.running || false;
         const emailWatcherRunning = autoData.emailWatcher?.running || false;
+        const proactiveRunning = autoData.proactiveEngine?.running || false;
 
         let html = '<h2 style="color:var(--accent);margin-bottom:20px">Command Center</h2>';
 
@@ -4326,6 +4337,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const autoServices = [
           { label: '📋 Meeting Prep', running: meetingPrepRunning, id: 'toggle-meeting-prep' },
           { label: '📧 Email Watcher', running: emailWatcherRunning, id: 'toggle-email-watcher' },
+          { label: '🔮 Proactive AI', running: proactiveRunning, id: 'toggle-proactive' },
         ];
         autoServices.forEach(s => {
           const dotColor = s.running ? '#4ade80' : '#666';
@@ -4449,6 +4461,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         });
         document.getElementById('toggle-email-watcher')?.addEventListener('click', async (e) => {
           const res = await fetch('/api/automation/email-watcher/toggle', { method: 'POST' });
+          const data = await res.json();
+          loadDashboard('command_center');
+        });
+        document.getElementById('toggle-proactive')?.addEventListener('click', async (e) => {
+          const res = await fetch('/api/automation/proactive-engine/toggle', { method: 'POST' });
           const data = await res.json();
           loadDashboard('command_center');
         });
