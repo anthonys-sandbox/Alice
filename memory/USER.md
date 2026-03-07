@@ -13,6 +13,7 @@
 - Personal project: Alice, AI agent runtime designed to run natively on Mac
 - Delegated task to check Nashville weather
 - Location: New York City
+- Resides in Independence, Missouri
 
 ## Active Projects
 

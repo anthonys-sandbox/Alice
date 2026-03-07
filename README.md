@@ -31,7 +31,8 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 - 🖥️ **Native macOS app** — a standalone `.app` with its own window, powered by WKWebView
 - 📌 **Menubar quick-access** — Electron-based menubar app for instant access without switching windows
 - 💬 **Web UI** — slick browser-based chat with streaming responses and syntax highlighting
-- 🎤 **Voice dictation** — speak to Alice using on-device speech recognition (no cloud, no API keys)
+- 🎤 **Voice mode** — real-time voice conversations powered by Gemini Live API (native audio-to-audio, near-instant responses)
+- 🎙️ **Voice dictation** — speak to Alice using on-device speech recognition (no cloud, no API keys)
 - 🔧 **Use tools** — read/write files, run shell commands, search the web, generate images, manage git repos
 - 🧠 **Remember** things about you across conversations using a markdown-based memory system
 - 👁️ **See images** — attach images and Alice automatically switches to a vision model to understand them
@@ -176,13 +177,36 @@ The menubar app connects to the same Alice server instance as the web UI and nat
 
 ---
 
-## Voice Dictation
+## Voice
 
-Alice supports **voice dictation** across all interfaces — click the microphone button next to the input field to speak instead of type.
+Alice has two voice features: **Voice Mode** for real-time conversations and **Voice Dictation** for speech-to-text input.
 
-### How It Works
+### Voice Mode (Gemini Live API)
 
-Voice dictation uses a three-tier system that automatically selects the best available method:
+Voice Mode enables **real-time, bidirectional voice conversations** with Alice — similar to the Gemini app experience. Audio flows directly between your microphone and Gemini's native audio model with no intermediate STT or TTS steps.
+
+**How it works:**
+
+```
+Browser Mic → getUserMedia (16kHz PCM) → WebSocket → Server → Gemini Live API
+Gemini Live API → Audio response (24kHz PCM) → Server → WebSocket → Browser Speakers
+```
+
+- **Near-instant responses** (~200-500ms vs 3-5s with the old pipeline)
+- **Barge-in support** — interrupt Alice mid-sentence and she stops immediately
+- **Full context** — voice mode has access to all your memories, persona, and preferences
+- **Input/output transcription** — see what was said in the voice overlay
+- **Works everywhere** — browser, native app, menubar (uses `getUserMedia`, not Web Speech API)
+
+Click the **EQ bars icon** (🎛️) next to the input field to start a voice conversation. Press Escape or click End to stop.
+
+| Setting | Default | Description |
+|---|---|---|
+| `VOICE_MODEL` | `gemini-2.5-flash-native-audio-preview-12-2025` | Gemini Live API model for voice conversations |
+
+### Voice Dictation
+
+Voice dictation lets you **speak to type** — click the microphone button to dictate a message instead of typing.
 
 | Surface | Technology | Type |
 |---|---|---|
@@ -190,16 +214,12 @@ Voice dictation uses a three-tier system that automatically selects the best ava
 | **Chrome / Safari** | Web Speech API | Real-time streaming |
 | **Menubar (Electron)** | `getUserMedia` → server-side transcription | Record-then-transcribe |
 
-- **Native app**: Uses Apple's `SFSpeechRecognizer` directly through a WKWebView ↔ Swift bridge. Transcription happens entirely on-device with no cloud dependency.
-- **Web browsers**: Uses the standard Web Speech API (`webkitSpeechRecognition`). Works in Chrome and Safari.
-- **Menubar**: Electron's Web Speech API is non-functional on macOS, so the menubar records raw PCM audio via the Web Audio API, constructs a WAV file client-side, and sends it to Alice's `/api/transcribe` endpoint. The server launches `Transcribe.app` (a headless macOS helper app) which uses `SFSpeechRecognizer` for on-device transcription.
-
 ### First-Time Setup
 
 macOS will prompt for **Microphone** and **Speech Recognition** permissions on first use. You must allow both. The transcription helper app needs to be compiled:
 
 ```bash
-# Compile the transcription helper
+# Compile the transcription helper (for dictation only)
 swiftc -o scripts/Transcribe.app/Contents/MacOS/transcribe \
   scripts/transcribe.swift -framework Cocoa -framework Speech -O
 ```
@@ -381,6 +401,7 @@ Alice uses a layered configuration system:
 | `GATEWAY_PORT` | `18790` | Web UI server port |
 | `HEARTBEAT_INTERVAL` | `30` | Heartbeat interval in minutes |
 | `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `VOICE_MODEL` | `gemini-2.5-flash-native-audio-preview-12-2025` | Gemini Live API model for real-time voice conversations |
 
 ### JSON Config (`alice.config.json`)
 

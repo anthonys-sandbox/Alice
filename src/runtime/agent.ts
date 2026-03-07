@@ -766,6 +766,13 @@ export class Agent {
     }
 
     /**
+     * Get the current system prompt (used by voice mode to inject context).
+     */
+    getSystemPrompt(): string {
+        return this.systemPrompt;
+    }
+
+    /**
      * Estimate token count for a set of messages (rough: ~4 chars per token).
      */
     private estimateTokens(messages: LLMMessage[]): number {

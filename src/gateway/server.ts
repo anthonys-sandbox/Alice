@@ -1,4 +1,6 @@
 import express from 'express';
+import { GoogleGenAI, Modality } from '@google/genai';
+import type { Session as LiveSession, LiveServerMessage } from '@google/genai';
 import { hostname } from 'os';
 import { createServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -134,38 +136,36 @@ export class Gateway {
       }
     });
 
-    // Text-to-speech synthesis via Voicebox (local Qwen3-TTS)
+    // Text-to-speech synthesis via macOS say command
     this.app.post('/api/tts', express.json(), async (req, res) => {
       try {
-        const { text, profile_id } = req.body;
+        const { text } = req.body;
         if (!text) {
           res.status(400).json({ error: 'No text provided' });
           return;
         }
 
-        const voiceboxUrl = process.env.VOICEBOX_URL || 'http://localhost:8000';
-        const payload: any = { text, language: 'en' };
-        if (profile_id) payload.profile_id = profile_id;
-
-        const response = await fetch(`${voiceboxUrl}/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+        const ts = Date.now();
+        const aiffFile = join(tmpdir(), `alice-tts-api-${ts}.aiff`);
+        const wavFile = join(tmpdir(), `alice-tts-api-${ts}.wav`);
+        const voice = process.env.MACOS_VOICE || '';
+        const rate = process.env.MACOS_VOICE_RATE || '190';
+        const sayArgs = [...(voice ? ['-v', voice] : []), '-r', rate, '-o', aiffFile, text.slice(0, 1500)];
+        await new Promise<void>((resolve, reject) => {
+          execFile('/usr/bin/say', sayArgs, (err) => { if (err) reject(err); else resolve(); });
         });
-
-        if (!response.ok) {
-          const errText = await response.text();
-          res.status(response.status).json({ error: `Voicebox error: ${errText}` });
-          return;
-        }
-
-        const audioBuffer = Buffer.from(await response.arrayBuffer());
-        res.set('Content-Type', response.headers.get('content-type') || 'audio/wav');
+        await new Promise<void>((resolve, reject) => {
+          execFile('/usr/bin/afconvert', ['-f', 'WAVE', '-d', 'LEI16@22050', aiffFile, wavFile], (err) => { if (err) reject(err); else resolve(); });
+        });
+        const audioBuffer = readFileSync(wavFile);
+        try { unlinkSync(aiffFile); } catch { }
+        try { unlinkSync(wavFile); } catch { }
+        res.set('Content-Type', 'audio/wav');
         res.send(audioBuffer);
       } catch (err: any) {
         log.warn('TTS endpoint error', { error: err.message });
         // Fall back gracefully — client will use browser speechSynthesis
-        res.status(503).json({ error: 'Voicebox unavailable', fallback: true });
+        res.status(503).json({ error: 'TTS unavailable', fallback: true });
       }
     });
 
@@ -948,6 +948,135 @@ export class Gateway {
             this.agent.resolveLocation?.(null, null, null, parsed.error);
             return;
           }
+
+          // ── Voice Mode handlers (Gemini Live API) ──
+          if (parsed.type === 'voice_start') {
+            try {
+              const apiKey = this.config.gemini?.apiKey || process.env.GEMINI_API_KEY || '';
+              const liveAi = new GoogleGenAI({ apiKey });
+              const liveModel = process.env.VOICE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
+
+              // Use Alice's full system prompt (includes user memories, persona, etc.)
+              // with a voice-specific overlay for conversational style
+              const basePrompt = this.agent.getSystemPrompt();
+              const sysPrompt = basePrompt + '\n\nIMPORTANT: This is a live voice conversation. Keep responses natural, conversational, and concise. Avoid markdown formatting, code blocks, or long lists. Respond as if speaking to a friend.';
+
+              const liveSession = await liveAi.live.connect({
+                model: liveModel,
+                config: {
+                  responseModalities: [Modality.AUDIO],
+                  systemInstruction: sysPrompt,
+                  inputAudioTranscription: {},
+                  outputAudioTranscription: {},
+                },
+                callbacks: {
+                  onopen: () => {
+                    log.info('Gemini Live session opened');
+                    if (ws.readyState === WebSocket.OPEN) {
+                      ws.send(JSON.stringify({ type: 'voice_ready' }));
+                    }
+                  },
+                  onmessage: (message: LiveServerMessage) => {
+                    if (ws.readyState !== WebSocket.OPEN) return;
+
+                    // Handle interruption
+                    if (message.serverContent && (message.serverContent as any).interrupted) {
+                      ws.send(JSON.stringify({ type: 'voice_interrupted' }));
+                      return;
+                    }
+
+                    // Handle audio output
+                    if (message.serverContent?.modelTurn?.parts) {
+                      for (const part of message.serverContent.modelTurn.parts) {
+                        if ((part as any).inlineData?.data) {
+                          ws.send(JSON.stringify({
+                            type: 'voice_audio_chunk',
+                            audio: (part as any).inlineData.data,
+                          }));
+                        }
+                      }
+                    }
+
+                    // Handle turn completion
+                    if (message.serverContent?.modelTurn === undefined && message.serverContent && !(message.serverContent as any).interrupted) {
+                      ws.send(JSON.stringify({ type: 'voice_turn_complete' }));
+                    }
+
+                    // Handle input transcription
+                    if ((message as any).serverContent?.inputTranscription?.text) {
+                      ws.send(JSON.stringify({
+                        type: 'voice_input_transcript',
+                        text: (message as any).serverContent.inputTranscription.text,
+                      }));
+                    }
+
+                    // Handle output transcription
+                    if ((message as any).serverContent?.outputTranscription?.text) {
+                      ws.send(JSON.stringify({
+                        type: 'voice_output_transcript',
+                        text: (message as any).serverContent.outputTranscription.text,
+                      }));
+                    }
+
+                    // Handle tool calls
+                    if (message.toolCall?.functionCalls) {
+                      ws.send(JSON.stringify({
+                        type: 'voice_status',
+                        status: 'thinking',
+                      }));
+                    }
+                  },
+                  onerror: (e: any) => {
+                    log.error('Gemini Live session error', { error: e?.message || String(e) });
+                    if (ws.readyState === WebSocket.OPEN) {
+                      ws.send(JSON.stringify({ type: 'voice_error', error: 'Live session error: ' + (e?.message || 'unknown') }));
+                    }
+                  },
+                  onclose: (e: any) => {
+                    log.info('Gemini Live session closed', { reason: e?.reason || 'unknown' });
+                    // Only send session_closed if we had a successful connection
+                    // (onopen would have fired first)
+                  },
+                },
+              });
+
+              // Store session on the WebSocket for audio chunk forwarding
+              (ws as any)._liveSession = liveSession;
+            } catch (err: any) {
+              log.error('Failed to start Gemini Live session', { error: err.message });
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'voice_error', error: 'Failed to connect to Gemini Live: ' + err.message }));
+              }
+            }
+            return;
+          }
+
+          if (parsed.type === 'voice_audio_in' && parsed.audio) {
+            // Forward PCM audio chunk to Gemini Live session
+            const session = (ws as any)._liveSession as LiveSession | undefined;
+            if (session) {
+              try {
+                session.sendRealtimeInput({
+                  audio: {
+                    data: parsed.audio,
+                    mimeType: 'audio/pcm;rate=16000',
+                  },
+                });
+              } catch (e: any) {
+                log.warn('Failed to send audio to Live session', { error: e.message });
+              }
+            }
+            return;
+          }
+
+          if (parsed.type === 'voice_stop') {
+            const session = (ws as any)._liveSession as LiveSession | undefined;
+            if (session) {
+              try { session.close(); } catch { }
+              (ws as any)._liveSession = null;
+            }
+            return;
+          }
         } catch {
           // Plain text message — no attachments
         }
@@ -972,6 +1101,12 @@ export class Gateway {
         toolEvents.off('tool_output', onToolOutput);
         toolEvents.off('notification', onNotification);
         queue.length = 0;
+        // Clean up any active Gemini Live session
+        const liveSession = (ws as any)._liveSession;
+        if (liveSession) {
+          try { liveSession.close(); } catch { }
+          (ws as any)._liveSession = null;
+        }
       });
     });
   }
@@ -1718,6 +1853,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       display: flex;
       align-items: center;
       padding: 6px 8px 2px 12px;
+      gap: 4px;
     }
     .attach-btn {
       background: transparent;
@@ -2241,6 +2377,86 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.6; transform: scale(1.1); }
     }
+    /* ── Voice Mode overlay ── */
+    .voice-overlay {
+      position: fixed; inset: 0; z-index: 9999;
+      background: rgba(19,19,20,0.97);
+      display: none; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 24px; transition: opacity 0.3s ease;
+      opacity: 0;
+    }
+    .voice-overlay.active { display: flex; opacity: 1; }
+    .voice-orb {
+      width: 160px; height: 160px; border-radius: 50%;
+      background: radial-gradient(circle at 40% 40%, var(--accent), #6366f1, #8b5cf6);
+      box-shadow: 0 0 60px rgba(164,130,255,0.4), 0 0 120px rgba(99,102,241,0.2);
+      animation: orbIdle 3s ease-in-out infinite;
+      transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .voice-orb.listening {
+      animation: orbListening 1.5s ease-in-out infinite;
+      box-shadow: 0 0 80px rgba(164,130,255,0.6), 0 0 160px rgba(99,102,241,0.3);
+    }
+    .voice-orb.thinking {
+      animation: orbThinking 1s ease-in-out infinite;
+      background: radial-gradient(circle at 40% 40%, #f59e0b, #ef4444, #ec4899);
+      box-shadow: 0 0 60px rgba(245,158,11,0.4);
+    }
+    .voice-orb.speaking {
+      animation: orbSpeaking 0.6s ease-in-out infinite;
+      background: radial-gradient(circle at 40% 40%, #10b981, #06b6d4, var(--accent));
+      box-shadow: 0 0 80px rgba(16,185,129,0.5);
+    }
+    @keyframes orbIdle {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.03); }
+    }
+    @keyframes orbListening {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+    @keyframes orbThinking {
+      0%, 100% { transform: scale(1) rotate(0deg); }
+      50% { transform: scale(1.05) rotate(5deg); }
+    }
+    @keyframes orbSpeaking {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.12); }
+    }
+    .voice-status {
+      font-size: 16px; color: var(--text-secondary);
+      font-weight: 500; letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .voice-transcript {
+      max-width: 500px; text-align: center;
+      font-size: 14px; color: var(--text-tertiary);
+      line-height: 1.6; min-height: 40px;
+      max-height: 120px; overflow-y: auto;
+    }
+    .voice-end-btn {
+      width: 56px; height: 56px; border-radius: 50%;
+      background: #ef4444; border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s ease; margin-top: 16px;
+      box-shadow: 0 4px 20px rgba(239,68,68,0.4);
+    }
+    .voice-end-btn:hover {
+      transform: scale(1.1);
+      box-shadow: 0 4px 30px rgba(239,68,68,0.6);
+    }
+    .voice-mode-btn {
+      background: transparent; border: none; cursor: pointer;
+      color: var(--text-secondary);
+      width: 36px; height: 36px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      transition: background var(--duration-short) var(--motion-standard), color var(--duration-short);
+      flex-shrink: 0;
+    }
+    .voice-mode-btn:hover {
+      color: var(--accent); background: rgba(164,130,255,0.1);
+    }
   </style>
 </head>
 <body>
@@ -2348,8 +2564,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <svg class="mic-icon-idle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
           <svg class="mic-icon-stop" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
         </button>
-        <button id="ttsBtn" class="attach-btn" title="Enable voice output" style="opacity:0.4;">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        <button id="voiceModeBtn" class="voice-mode-btn" title="Voice conversation">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="9" width="2" height="6" rx="1"/><rect x="8" y="5" width="2" height="14" rx="1"/><rect x="12" y="3" width="2" height="18" rx="1"/><rect x="16" y="7" width="2" height="10" rx="1"/><rect x="20" y="10" width="2" height="4" rx="1"/></svg>
         </button>
         <button id="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11zm7.318-19.539l-10.94 10.939"/></svg></button>
         </div>
@@ -2365,6 +2581,17 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       <input type="file" id="fileInput" accept="image/*,.pdf,.txt,.csv,.json,.md" multiple style="display:none;" />
     </div>
   </div><!-- /main -->
+
+  <!-- Voice Mode Overlay -->
+  <div id="voiceOverlay" class="voice-overlay">
+    <div id="voiceOrb" class="voice-orb"></div>
+    <div id="voiceStatus" class="voice-status">Connecting…</div>
+    <div id="voiceTranscript" class="voice-transcript"></div>
+    <button id="voiceEndBtn" class="voice-end-btn" title="End voice conversation">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+    </button>
+  </div>
+
 
   <script>
     // White SVG sparkle icon for avatars
@@ -2392,6 +2619,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     var wsRetryDelay = 1000;
     function connectWS() {
       ws = new WebSocket('ws://' + location.host);
+      window._aliceWs = ws;
       ws.onopen = () => {
         wsRetryDelay = 1000;
         var status = document.getElementById('status');
@@ -2742,6 +2970,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     function wsOnMessage(e) {
       const data = JSON.parse(e.data);
 
+      // Skip voice mode messages — handled by voice mode's own listener
+      if (data.type && data.type.startsWith('voice_')) return;
+
       // Server-sent typing indicator (shown while Alice processes)
       if (data.type === 'typing') {
         if (!thinkingRow) {
@@ -2934,8 +3165,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         }
         send.disabled = false;
         messages.scrollTop = messages.scrollHeight;
-        // TTS: speak the response if voice output is enabled
-        if (window.speakResponse) window.speakResponse(spokenText);
+
         return;
       }
 
@@ -3279,76 +3509,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       }
     }
 
-    // ── TTS (Text-to-Speech) via Voicebox ──
-    const ttsBtn = document.getElementById('ttsBtn');
-    let ttsEnabled = localStorage.getItem('alice-tts') === '1';
-    let ttsAudio = null;
 
-    function updateTtsBtn() {
-      if (!ttsBtn) return;
-      ttsBtn.style.opacity = ttsEnabled ? '1' : '0.4';
-      ttsBtn.title = ttsEnabled ? 'Disable voice output' : 'Enable voice output';
-    }
-    updateTtsBtn();
-
-    if (ttsBtn) {
-      ttsBtn.addEventListener('click', () => {
-        ttsEnabled = !ttsEnabled;
-        localStorage.setItem('alice-tts', ttsEnabled ? '1' : '0');
-        updateTtsBtn();
-        // Stop any playing audio
-        if (!ttsEnabled && ttsAudio) {
-          ttsAudio.pause();
-          ttsAudio = null;
-        }
-      });
-    }
-
-    // Speak Alice's response text — cascade: native TTS → Voicebox → browser
-    window.speakResponse = async function(text) {
-      if (!ttsEnabled || !text || text.length < 5) return;
-
-      // Strip markdown for cleaner speech
-      const cleanText = text
-        .replace(/\`\`\`[\s\S]*?\`\`\`/g, ' code block ')
-        .replace(/\*\*([^*]+)\*\*/g, '$1')
-        .replace(/\*([^*]+)\*/g, '$1')
-        .replace(/#+\s/g, '')
-        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-        .replace(/[\n\r]+/g, '. ')
-        .slice(0, 500);
-
-      // 1. Native TTS bridge (Alice.app via AVSpeechSynthesizer)
-      if (window._nativeTTS && window._nativeTTS.available) {
-        window._nativeTTS.speak(cleanText);
-        return;
-      }
-
-      // 2. Voicebox API
-      try {
-        const resp = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: cleanText }),
-        });
-
-        if (resp.ok) {
-          const blob = await resp.blob();
-          const url = URL.createObjectURL(blob);
-          ttsAudio = new Audio(url);
-          ttsAudio.play().catch(() => {});
-          ttsAudio.onended = () => { URL.revokeObjectURL(url); ttsAudio = null; };
-          return;
-        }
-      } catch {}
-
-      // 3. Browser speechSynthesis fallback
-      if (window.speechSynthesis) {
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.rate = 1.1;
-        window.speechSynthesis.speak(utterance);
-      }
-    };
 
     // ── Sidebar ──────────────────────────
     const sidebar = document.getElementById('sidebar');
@@ -4372,6 +4533,300 @@ if ('serviceWorker' in navigator) {
     console.warn('SW registration failed:', err);
   });
 }
+
+// ── Voice Mode (Gemini Live API) ──────────────────────────
+(function() {
+  const voiceModeBtn = document.getElementById('voiceModeBtn');
+  const overlay = document.getElementById('voiceOverlay');
+  const orb = document.getElementById('voiceOrb');
+  const statusEl = document.getElementById('voiceStatus');
+  const transcriptEl = document.getElementById('voiceTranscript');
+  const endBtn = document.getElementById('voiceEndBtn');
+
+  if (!voiceModeBtn || !overlay) return;
+
+  let voiceActive = false;
+  let mediaStream = null;
+  let audioCtx = null;
+  let scriptNode = null;
+  let playbackCtx = null;
+  let playbackQueue = [];
+  let isPlaying = false;
+  let inputTranscript = '';
+  let outputTranscript = '';
+
+  function setVoiceState(state) {
+    orb.className = 'voice-orb ' + state;
+    const labels = {
+      '': 'Connecting…',
+      'listening': 'Listening…',
+      'thinking': 'Thinking…',
+      'speaking': 'Speaking…',
+    };
+    statusEl.textContent = labels[state] || state;
+  }
+
+  // Convert Float32 audio samples to 16-bit PCM
+  function float32ToPcm16(float32) {
+    var pcm16 = new Int16Array(float32.length);
+    for (var i = 0; i < float32.length; i++) {
+      var s = Math.max(-1, Math.min(1, float32[i]));
+      pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return pcm16;
+  }
+
+  // Downsample from source rate to 16kHz
+  function downsample(buffer, fromRate) {
+    if (fromRate === 16000) return buffer;
+    var ratio = fromRate / 16000;
+    var newLen = Math.round(buffer.length / ratio);
+    var result = new Float32Array(newLen);
+    for (var i = 0; i < newLen; i++) {
+      result[i] = buffer[Math.round(i * ratio)];
+    }
+    return result;
+  }
+
+  // ArrayBuffer to base64
+  function bufferToBase64(buf) {
+    var bytes = new Uint8Array(buf);
+    var binary = '';
+    for (var i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  // Play queued PCM audio chunks (24kHz, 16-bit, mono) — gap-free scheduling
+  var nextPlayTime = 0;
+  var scheduledSources = [];
+
+  function scheduleChunk(base64) {
+    if (!playbackCtx) {
+      playbackCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+      nextPlayTime = playbackCtx.currentTime;
+    }
+
+    var binary = atob(base64);
+    var bytes = new Uint8Array(binary.length);
+    for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+
+    // Convert 16-bit PCM to Float32
+    var int16 = new Int16Array(bytes.buffer);
+    var float32 = new Float32Array(int16.length);
+    for (var j = 0; j < int16.length; j++) {
+      float32[j] = int16[j] / 32768.0;
+    }
+
+    var audioBuffer = playbackCtx.createBuffer(1, float32.length, 24000);
+    audioBuffer.getChannelData(0).set(float32);
+    var source = playbackCtx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(playbackCtx.destination);
+
+    // Schedule this chunk right after the previous one
+    var startAt = Math.max(nextPlayTime, playbackCtx.currentTime);
+    source.start(startAt);
+    nextPlayTime = startAt + audioBuffer.duration;
+
+    scheduledSources.push(source);
+    source.onended = function() {
+      var idx = scheduledSources.indexOf(source);
+      if (idx >= 0) scheduledSources.splice(idx, 1);
+      // When all chunks are done playing, go back to listening
+      if (scheduledSources.length === 0 && playbackQueue.length === 0 && voiceActive) {
+        isPlaying = false;
+        setVoiceState('listening');
+      }
+    };
+  }
+
+  function playNextChunk() {
+    while (playbackQueue.length > 0) {
+      scheduleChunk(playbackQueue.shift());
+    }
+    isPlaying = true;
+  }
+
+  function stopPlayback() {
+    playbackQueue.length = 0;
+    isPlaying = false;
+    nextPlayTime = 0;
+    for (var i = 0; i < scheduledSources.length; i++) {
+      try { scheduledSources[i].stop(); } catch {}
+    }
+    scheduledSources.length = 0;
+    if (playbackCtx) {
+      try { playbackCtx.close(); } catch {}
+      playbackCtx = null;
+    }
+  }
+
+  async function startVoiceMode() {
+    voiceActive = true;
+    overlay.classList.add('active');
+    transcriptEl.textContent = '';
+    inputTranscript = '';
+    outputTranscript = '';
+    setVoiceState('');
+
+    // Request microphone access
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (err) {
+      alert('Microphone access denied. Voice mode requires microphone permission.');
+      voiceActive = false;
+      overlay.classList.remove('active');
+      return;
+    }
+
+    // Send voice_start to server (triggers Gemini Live session creation)
+    if (window._aliceWs && window._aliceWs.readyState === 1) {
+      window._aliceWs.send(JSON.stringify({ type: 'voice_start' }));
+    }
+
+    // Set up audio capture with ScriptProcessorNode
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var source = audioCtx.createMediaStreamSource(mediaStream);
+    // 4096 samples per buffer for ~85ms chunks at 48kHz
+    scriptNode = audioCtx.createScriptProcessor(4096, 1, 1);
+
+    scriptNode.onaudioprocess = function(e) {
+      if (!voiceActive) return;
+      var inputData = e.inputBuffer.getChannelData(0);
+      // Downsample to 16kHz
+      var downsampled = downsample(inputData, audioCtx.sampleRate);
+      var pcm16 = float32ToPcm16(downsampled);
+      var base64 = bufferToBase64(pcm16.buffer);
+
+      // Send to server
+      if (window._aliceWs && window._aliceWs.readyState === 1) {
+        window._aliceWs.send(JSON.stringify({ type: 'voice_audio_in', audio: base64 }));
+      }
+    };
+
+    source.connect(scriptNode);
+    scriptNode.connect(audioCtx.destination);
+  }
+
+  function endVoiceMode() {
+    voiceActive = false;
+    overlay.classList.remove('active');
+    stopPlayback();
+
+    // Stop microphone
+    if (scriptNode) {
+      scriptNode.disconnect();
+      scriptNode = null;
+    }
+    if (audioCtx) {
+      audioCtx.close().catch(function() {});
+      audioCtx = null;
+    }
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(function(t) { t.stop(); });
+      mediaStream = null;
+    }
+
+    // Tell server to close the Live session
+    if (window._aliceWs && window._aliceWs.readyState === 1) {
+      window._aliceWs.send(JSON.stringify({ type: 'voice_stop' }));
+    }
+
+    setVoiceState('');
+  }
+
+  voiceModeBtn.addEventListener('click', function() {
+    if (voiceActive) {
+      endVoiceMode();
+    } else {
+      startVoiceMode();
+    }
+  });
+
+  endBtn.addEventListener('click', endVoiceMode);
+
+  // Handle Escape key
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && voiceActive) {
+      endVoiceMode();
+    }
+  });
+
+  // Handle voice WebSocket messages
+  function hookVoiceMessages() {
+    var checkWs = setInterval(function() {
+      if (window._aliceWs) {
+        clearInterval(checkWs);
+        window._aliceWs.addEventListener('message', function(event) {
+          var data;
+          try { data = JSON.parse(event.data); } catch { return; }
+          if (!voiceActive) return;
+
+          if (data.type === 'voice_ready') {
+            setVoiceState('listening');
+          }
+
+          if (data.type === 'voice_status') {
+            setVoiceState(data.status);
+          }
+
+          if (data.type === 'voice_audio_chunk') {
+            // Queue Gemini's audio response for playback
+            setVoiceState('speaking');
+            playbackQueue.push(data.audio);
+            playNextChunk();
+          }
+
+          if (data.type === 'voice_interrupted') {
+            // Gemini detected user barge-in, stop playback
+            stopPlayback();
+            setVoiceState('listening');
+            outputTranscript = '';
+          }
+
+          if (data.type === 'voice_turn_complete') {
+            // Model finished speaking
+            if (playbackQueue.length === 0 && !isPlaying) {
+              setVoiceState('listening');
+              outputTranscript = '';
+            }
+          }
+
+          if (data.type === 'voice_input_transcript') {
+            inputTranscript += data.text;
+            transcriptEl.textContent = inputTranscript;
+          }
+
+          if (data.type === 'voice_output_transcript') {
+            outputTranscript += data.text;
+            transcriptEl.textContent = outputTranscript;
+          }
+
+          if (data.type === 'voice_session_closed') {
+            if (voiceActive) endVoiceMode();
+          }
+
+          if (data.type === 'voice_error') {
+            transcriptEl.textContent = 'Error: ' + (data.error || 'Something went wrong');
+            setVoiceState('listening');
+            setTimeout(function() {
+              if (voiceActive) {
+                transcriptEl.textContent = '';
+                inputTranscript = '';
+              }
+            }, 2000);
+          }
+        });
+      }
+    }, 200);
+  }
+  hookVoiceMessages();
+})();
+
 <\/script>
   </body>
   </html>`;
