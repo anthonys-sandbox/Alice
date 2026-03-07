@@ -12,6 +12,8 @@ import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
 import { PlaybookEngine } from './playbook-engine.js';
 import { deepResearch } from './deep-research.js';
+import { generateDocument } from './doc-generator.js';
+import { briefPerson, relationshipHealth } from './people-intel.js';
 import { join } from 'path';
 
 const log = createLogger('Agent');
@@ -1199,6 +1201,58 @@ Return the created event details.`,
                     { useMainProvider: false }
                 );
                 return result.text;
+            },
+        });
+
+        // ── Document Generation ──────────────────────────────────
+        registerTool({
+            name: 'generate_document',
+            description: 'Generate a professional document and create it as a Google Doc. Supports: proposal, meeting-notes, status-report, memo, custom. Can pull data from email/calendar.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    type: { type: 'string', description: 'Document type: proposal, meeting-notes, status-report, memo, custom' },
+                    title: { type: 'string', description: 'Document title' },
+                    topic: { type: 'string', description: 'Main topic or subject' },
+                    details: { type: 'string', description: 'Additional context or details' },
+                    email_query: { type: 'string', description: 'Optional Gmail query to pull data from' },
+                    calendar_range: { type: 'string', description: 'Optional calendar start time RFC3339' },
+                },
+                required: ['type', 'topic'],
+            },
+            execute: async (args: any) => {
+                const result = await generateDocument(this, args.type, args);
+                return JSON.stringify({
+                    title: result.title,
+                    docId: result.docId || 'not created',
+                    content_preview: result.text.slice(0, 1500),
+                }, null, 2);
+            },
+        });
+
+        // ── People Intelligence ──────────────────────────────────
+        registerTool({
+            name: 'brief_person',
+            description: 'Generate a comprehensive intelligence brief on a person. Aggregates email history, meeting frequency, shared Drive docs, and contact info into a concise profile.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    identifier: { type: 'string', description: 'Person name or email to research' },
+                },
+                required: ['identifier'],
+            },
+            execute: async (args: any) => {
+                const brief = await briefPerson(this, args.identifier);
+                return JSON.stringify(brief, null, 2);
+            },
+        });
+
+        registerTool({
+            name: 'relationship_health',
+            description: 'Run a relationship health check across your contacts. Categories contacts into Strong (🟢), Cooling (🟡), Going Cold (🔴) based on email and meeting frequency.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                return await relationshipHealth(this);
             },
         });
 
