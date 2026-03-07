@@ -1044,6 +1044,7 @@ export function toGeminiFunctionDeclarations() {
         'github_repos', 'github_issues', 'github_create_issue', 'github_prs', 'github_search_code',
         'delegate_tasks', 'kb_search', 'kb_add', 'kb_list', 'kb_stats',
         'compose_email', 'list_approvals', 'approve_action', 'reject_action',
+        'browse_templates', 'install_template',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))

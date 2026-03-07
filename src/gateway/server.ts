@@ -309,6 +309,39 @@ export class Gateway {
       res.json({ sessionId: this.agent.getSessionId() });
     });
 
+    // Fork a conversation from a specific point
+    this.app.post('/api/sessions/:id/fork', (req, res) => {
+      try {
+        const sourceMessages = this.agent.getSessionMessages(req.params.id);
+        const upToIndex = req.body.upToIndex ?? sourceMessages.length;
+        const messagesToCopy = sourceMessages.slice(0, upToIndex);
+
+        // Create a new session
+        this.agent.clearHistory();
+        const newSessionId = this.agent.getSessionId();
+
+        // Copy messages into the new session
+        const store = this.agent.getSessionStore();
+        for (const msg of messagesToCopy) {
+          store.saveMessage(newSessionId, msg);
+        }
+
+        // Get source session title for the fork name
+        const sessions = this.agent.listSessions();
+        const source = sessions.find((s: any) => s.id === req.params.id);
+        const forkTitle = `Fork: ${source?.title || 'Untitled'} (${messagesToCopy.length} msgs)`;
+        store.updateTitle(newSessionId, forkTitle);
+
+        res.json({
+          sessionId: newSessionId,
+          messageCount: messagesToCopy.length,
+          title: forkTitle,
+        });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // Switch to a session
     this.app.post('/api/sessions/:id/switch', (req, res) => {
       this.agent.switchSession(req.params.id);

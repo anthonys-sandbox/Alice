@@ -1568,6 +1568,111 @@ Use emoji and clean formatting.`,
             },
         });
 
+        // ── Template Marketplace ──────────────────────────────
+        registerTool({
+            name: 'browse_templates',
+            description: 'Browse available playbook templates from the community marketplace. Categories: sales, engineering, hr, personal, productivity.',
+            parameters: { type: 'object', properties: { category: { type: 'string', description: 'Filter by category (optional)' } }, required: [] },
+            execute: async (args: any) => {
+                // List local template starters + any community ones
+                const { existsSync, readdirSync, readFileSync } = await import('fs');
+                const playbookDir = join(config.memory.dir, 'playbooks');
+                const templates: Array<{ name: string; description: string; steps: number; category: string }> = [];
+
+                // Built-in templates
+                const builtIn = [
+                    { name: 'research-company', description: 'Research a company across web, email, and contacts', steps: 4, category: 'sales' },
+                    { name: 'vendor-onboard', description: 'Create vendor folder, doc, and task list', steps: 3, category: 'productivity' },
+                    { name: 'travel-prep', description: 'Check calendar conflicts and create travel tasks', steps: 3, category: 'personal' },
+                    { name: 'email-to-doc', description: 'Convert email thread to Google Doc', steps: 3, category: 'productivity' },
+                    { name: 'weekly-standup', description: 'Generate standup notes from calendar and email', steps: 4, category: 'engineering' },
+                    { name: 'deal-tracker', description: 'Track deal progress across email and calendar', steps: 5, category: 'sales' },
+                    { name: 'interview-prep', description: 'Brief on candidate from email, LinkedIn, and notes', steps: 4, category: 'hr' },
+                    { name: 'sprint-retro', description: 'Generate sprint retro doc from GitHub and calendar', steps: 4, category: 'engineering' },
+                ];
+
+                const category = args.category?.toLowerCase();
+                const filtered = category ? builtIn.filter(t => t.category === category) : builtIn;
+
+                // Check which are installed
+                const installed = new Set<string>();
+                if (existsSync(playbookDir)) {
+                    readdirSync(playbookDir).forEach(f => {
+                        if (f.endsWith('.json')) installed.add(f.replace('.json', ''));
+                    });
+                }
+
+                return filtered.map(t =>
+                    `${installed.has(t.name) ? '\u2705' : '\u2b55'} **${t.name}** [${t.category}]\n   ${t.description} (${t.steps} steps)${installed.has(t.name) ? ' — installed' : ''}`
+                ).join('\n\n');
+            },
+        });
+
+        registerTool({
+            name: 'install_template',
+            description: 'Install a playbook template from the marketplace.',
+            parameters: { type: 'object', properties: { name: { type: 'string', description: 'Template name to install' } }, required: ['name'] },
+            execute: async (args: any) => {
+                const { existsSync, writeFileSync, mkdirSync } = await import('fs');
+                const playbookDir = join(config.memory.dir, 'playbooks');
+
+                // Template definitions
+                const templates: Record<string, any> = {
+                    'weekly-standup': {
+                        name: 'weekly-standup', description: 'Generate standup notes from calendar and email',
+                        trigger: 'keyword', keyword: 'standup',
+                        steps: [
+                            { tool: 'calendar_list', args: { time_min: '{{week_start}}', time_max: '{{week_end}}' } },
+                            { tool: 'gmail_search', args: { query: 'newer_than:7d is:sent' } },
+                            { tool: 'docs_create', args: { title: 'Standup - {{date}}', body: '{{summary}}' } },
+                            { tool: 'chat_send', args: { message: 'Standup notes ready: {{doc_url}}' } },
+                        ],
+                    },
+                    'deal-tracker': {
+                        name: 'deal-tracker', description: 'Track deal progress across email and calendar',
+                        trigger: 'manual',
+                        steps: [
+                            { tool: 'gmail_search', args: { query: 'subject:{{deal_name}} newer_than:30d' } },
+                            { tool: 'calendar_list', args: { query: '{{deal_name}}' } },
+                            { tool: 'people_search', args: { query: '{{contact_name}}' } },
+                            { tool: 'docs_create', args: { title: 'Deal: {{deal_name}}', body: '{{analysis}}' } },
+                            { tool: 'chat_send', args: { message: 'Deal tracker updated: {{doc_url}}' } },
+                        ],
+                    },
+                    'interview-prep': {
+                        name: 'interview-prep', description: 'Brief on candidate from email and notes',
+                        trigger: 'manual',
+                        steps: [
+                            { tool: 'gmail_search', args: { query: '{{candidate_name}}' } },
+                            { tool: 'drive_search', args: { query: '{{candidate_name}}' } },
+                            { tool: 'calendar_list', args: { query: '{{candidate_name}}' } },
+                            { tool: 'docs_create', args: { title: 'Interview Brief: {{candidate_name}}', body: '{{brief}}' } },
+                        ],
+                    },
+                    'sprint-retro': {
+                        name: 'sprint-retro', description: 'Generate sprint retro doc from GitHub and calendar',
+                        trigger: 'manual',
+                        steps: [
+                            { tool: 'github_issues', args: { repo: '{{repo}}', state: 'closed' } },
+                            { tool: 'github_prs', args: { repo: '{{repo}}', state: 'closed' } },
+                            { tool: 'calendar_list', args: { time_min: '{{sprint_start}}', time_max: '{{sprint_end}}' } },
+                            { tool: 'docs_create', args: { title: 'Sprint Retro: {{sprint_name}}', body: '{{analysis}}' } },
+                        ],
+                    },
+                };
+
+                const tmpl = templates[args.name];
+                if (!tmpl) return `Template "${args.name}" not found. Use browse_templates to see available ones.`;
+
+                if (!existsSync(playbookDir)) mkdirSync(playbookDir, { recursive: true });
+                const filePath = join(playbookDir, `${args.name}.json`);
+                if (existsSync(filePath)) return `Template "${args.name}" is already installed.`;
+
+                writeFileSync(filePath, JSON.stringify(tmpl, null, 2));
+                return `\u2705 Installed template "${args.name}" to ${filePath}`;
+            },
+        });
+
         this.refreshContext();
     }
 
