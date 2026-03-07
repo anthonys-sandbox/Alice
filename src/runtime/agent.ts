@@ -2421,12 +2421,71 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
 
     /**
      * Switch to an existing session by ID.
+     * Auto-generates a summary of the old session (fire-and-forget).
      */
     switchSession(sessionId: string): void {
+        const oldSessionId = this.currentSessionId;
+        const oldMessages = this.conversationHistory;
+
         const messages = this.sessionStore.loadMessages(sessionId);
         this.conversationHistory = messages;
         this.currentSessionId = sessionId;
         log.info('Switched to session', { id: sessionId, messages: messages.length });
+
+        // Fire-and-forget: summarize the old session in the background
+        if (oldSessionId && oldMessages.length >= 4) {
+            this.autoSummarizeSession(oldSessionId, oldMessages).catch(() => { });
+        }
+    }
+
+    /**
+     * Generate and save a summary for a session (background, non-blocking).
+     */
+    private async autoSummarizeSession(sessionId: string, messages: LLMMessage[]): Promise<void> {
+        // Skip if already summarized
+        const existing = this.sessionStore.getSessionSummary(sessionId);
+        if (existing) return;
+
+        try {
+            // Build a condensed transcript (last 20 messages, truncated)
+            const transcript = messages
+                .slice(-20)
+                .map(m => {
+                    const text = m.parts
+                        .filter((p: any) => 'text' in p && p.text)
+                        .map((p: any) => p.text)
+                        .join(' ');
+                    return `[${m.role}]: ${text.slice(0, 300)}`;
+                })
+                .join('\n');
+
+            const result = await this.processBackgroundMessage(
+                `Summarize this conversation in exactly this JSON format. No markdown, no code fence, just raw JSON:
+{"summary": "1-2 sentence summary of what was discussed and accomplished", "topics": ["topic1", "topic2", "topic3"]}
+
+Conversation:
+${transcript.slice(0, 3000)}`,
+                { useMainProvider: false }
+            );
+
+            // Parse the response
+            const cleaned = result.text
+                .replace(/```json\n?/g, '')
+                .replace(/```\n?/g, '')
+                .trim();
+            const parsed = JSON.parse(cleaned);
+
+            if (parsed.summary) {
+                this.sessionStore.saveSessionSummary(
+                    sessionId,
+                    parsed.summary,
+                    Array.isArray(parsed.topics) ? parsed.topics : []
+                );
+                log.info('Auto-generated session summary', { sessionId });
+            }
+        } catch (err: any) {
+            log.warn('Failed to auto-summarize session', { sessionId, error: err.message });
+        }
     }
 
     /**
