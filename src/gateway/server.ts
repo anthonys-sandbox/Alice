@@ -2914,17 +2914,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
         <span class="sidebar-item-title">Command Center</span>
       </div>
-      <div class="sidebar-item sidebar-nav-item" data-page="tools">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474a2.5 2.5 0 1 1 3.014 3.015a1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474a2.5 2.5 0 1 0-3.014 3.015a1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474a2.5 2.5 0 1 1-3.014-3.015a1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474a2.5 2.5 0 1 0 3.014-3.015a1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></svg>
-        <span class="sidebar-item-title">Tools & Plugins</span>
+      <div class="sidebar-item sidebar-nav-item" data-page="integrations">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        <span class="sidebar-item-title">Integrations</span>
       </div>
       <div class="sidebar-item sidebar-nav-item" data-page="memory">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>
         <span class="sidebar-item-title">Memory</span>
-      </div>
-      <div class="sidebar-item sidebar-nav-item" data-page="reminders">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0m-10.47-5.674A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
-        <span class="sidebar-item-title">Reminders</span>
       </div>
       <div class="sidebar-item sidebar-nav-item" data-page="playbooks">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m9 10 2 2 4-4"/></svg>
@@ -2933,10 +2929,6 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       <div class="sidebar-item sidebar-nav-item" data-page="personas">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11h.01M14 6h.01M18 6h.01M6.5 13.1h.01M22 5c0 9-4 12-6 12s-6-3-6-12q0-3 6-3c6 0 6 1 6 3"/><path d="M17.4 9.9c-.8.8-2 .8-2.8 0m-4.5-2.8C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6c4.5 7.8 9.5 8.4 11.2 7.4c.9-.5 1.9-2.1 1.9-4.7"/><path d="M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"/></svg>
         <span class="sidebar-item-title">Personas</span>
-      </div>
-      <div class="sidebar-item sidebar-nav-item" data-page="connections">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        <span class="sidebar-item-title">Connections</span>
       </div>
       <div class="sidebar-item sidebar-nav-item" data-page="settings">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -4154,11 +4146,32 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     }
 
     async function loadDashboard(page) {
-      if (page === 'tools') {
-        const res = await fetch('/api/tools').then(r => r.json());
-        let html = '<h2 style="color:var(--accent);margin-bottom:16px">Tools &amp; Plugins</h2>';
+      if (page === 'tools' || page === 'integrations') {
+        const [res, connData] = await Promise.all([
+          fetch('/api/tools').then(r => r.json()),
+          fetch('/api/connections').then(r => r.json()).catch(() => ({ connections: [] })),
+        ]);
+        let html = '<h2 style="color:var(--accent);margin-bottom:16px">Integrations</h2>';
 
-        // Search bar
+        // ── Connected Services section ──
+        const connections = connData.connections || [];
+        if (connections.length > 0) {
+          html += '<div style="margin-bottom:20px">';
+          html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🔌</span> Connected Services <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + connections.length + ' active</span></div>';
+          html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:16px">';
+          connections.forEach(c => {
+            const dot = c.status === 'connected' ? '#4ade80' : '#ef4444';
+            html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px">';
+            html += '<span style="width:8px;height:8px;border-radius:50%;background:' + dot + ';flex-shrink:0"></span>';
+            html += '<div><div style="font-size:13px;color:var(--text-primary);font-weight:500">' + c.name + '</div>';
+            html += '<div style="font-size:11px;color:var(--text-tertiary)">' + (c.tools || 0) + ' tools</div></div>';
+            html += '</div>';
+          });
+          html += '</div></div>';
+        }
+
+        // ── Tools search ──
+        html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🧰</span> All Tools</div>';
         html += '<div style="margin-bottom:16px"><input id="tool-search" type="text" placeholder="Search tools..." style="width:100%;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text-primary);font-size:14px;outline:none" /></div>';
 
         // Categorize tools
@@ -4597,6 +4610,49 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '</div></div>';
         html += '</div>';
 
+        // ── Reminders section (merged from standalone page) ──
+        const remData = await fetch('/api/reminders').then(r => r.json()).catch(() => ({ reminders: [] }));
+        const reminders = remData.reminders || [];
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
+        html += '<details' + (reminders.length > 0 ? ' open' : '') + '><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span style="font-size:16px">⏰</span> Reminders <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + reminders.length + ' active</span></summary>';
+        if (reminders.length === 0) {
+          html += '<div style="color:var(--text-tertiary);font-size:13px;padding:12px 0">No active reminders. Use <code>/remind</code> or ask Alice to set one.</div>';
+        } else {
+          html += '<div style="margin-top:10px;display:grid;gap:6px">';
+          reminders.forEach(r => {
+            const timeStr = r.time ? new Date(r.time).toLocaleString() : '';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;font-size:13px">';
+            html += '<div style="color:var(--text-primary)">' + (r.message || r.text || 'Reminder') + '</div>';
+            html += '<div style="color:var(--text-tertiary);font-size:11px;white-space:nowrap">' + timeStr + '</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+        html += '</details></div>';
+
+        // ── Knowledge Base section (merged from standalone page) ──
+        const kbCC = await fetch('/api/kb').then(r => r.json()).catch(() => ({ entries: [], stats: { total: 0 } }));
+        const kbTotal = kbCC.stats?.total || 0;
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span style="font-size:16px">🧠</span> Knowledge Base <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + kbTotal + ' entries</span></summary>';
+        html += '<div style="margin-top:10px;display:flex;gap:8px">';
+        html += '<input id="cc-kb-search" type="text" placeholder="Search knowledge…" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;outline:none">';
+        html += '<button id="cc-kb-search-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;font-weight:500">Search</button>';
+        html += '</div>';
+        // Show type breakdown
+        const kbTypes = Object.entries(kbCC.stats?.byType || {});
+        if (kbTypes.length > 0) {
+          html += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">';
+          const typeClrs = { fact: '#60a5fa', decision: '#c084fc', preference: '#4ade80', research: '#facc15', insight: '#fb923c' };
+          kbTypes.forEach(([type, count]) => {
+            const clr = typeClrs[type] || '#888';
+            html += '<span style="font-size:11px;padding:2px 8px;border-radius:6px;background:' + clr + '15;color:' + clr + '">' + type + ': ' + count + '</span>';
+          });
+          html += '</div>';
+        }
+        html += '<div id="cc-kb-results" style="margin-top:8px"></div>';
+        html += '</details></div>';
+
         // ── Two column: Cron Jobs + Top Tools ──
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
 
@@ -4741,7 +4797,40 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           });
         });
 
+        // Wire KB search in Command Center
+        const ccKbSearchBtn = document.getElementById('cc-kb-search-btn');
+        const ccKbInput = document.getElementById('cc-kb-search');
+        if (ccKbSearchBtn && ccKbInput) {
+          const doSearch = async () => {
+            const q = ccKbInput.value.trim();
+            if (!q) return;
+            const results = await fetch('/api/kb/search?q=' + encodeURIComponent(q)).then(r => r.json()).catch(() => ({ entries: [] }));
+            const container = document.getElementById('cc-kb-results');
+            if (!container) return;
+            const entries = results.entries || [];
+            if (entries.length === 0) {
+              container.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px;padding:6px 0">No results found.</div>';
+            } else {
+              container.innerHTML = entries.map(e =>
+                '<div style="padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;font-size:13px;margin-bottom:4px">' +
+                '<div style="color:var(--text-primary)">' + (e.content || e.text || '') + '</div>' +
+                '<div style="color:var(--text-tertiary);font-size:11px;margin-top:2px">' + (e.type || '') + (e.tags?.length ? ' · ' + e.tags.join(', ') : '') + '</div>' +
+                '</div>'
+              ).join('');
+            }
+          };
+          ccKbSearchBtn.addEventListener('click', doSearch);
+          ccKbInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') doSearch(); });
+        }
+
       } else if (page === 'connections') {
+        // Redirect to integrations (merged)
+        loadDashboard('integrations');
+        return;
+      } else if (page === 'reminders') {
+        // Redirect to command center (merged)
+        loadDashboard('command_center');
+        return;
         const [data, toolsData] = await Promise.all([
           fetch('/api/connections').then(r => r.json()),
           fetch('/api/tools').then(r => r.json()).catch(() => ({ tools: [] })),
