@@ -635,6 +635,70 @@ export class Agent {
                 return this.requestLocation();
             },
         });
+        // Register deep research tool — autonomous multi-step research via Interactions API
+        registerTool({
+            name: 'deep_research',
+            description: 'Run a deep, multi-step research task using Gemini Deep Research agent. The agent autonomously browses the web, reads multiple sources, identifies knowledge gaps, and produces a comprehensive report with citations. Use for complex research questions that require synthesizing information from many sources. This is a long-running operation (1-5 minutes).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'The research question or topic to investigate thoroughly' },
+                    additional_context: { type: 'string', description: 'Optional additional context or constraints for the research' },
+                },
+                required: ['query'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const apiKey = this.config.gemini?.apiKey || process.env.GEMINI_API_KEY;
+                if (!apiKey) return 'Error: GEMINI_API_KEY is required for deep research.';
+
+                const { GoogleGenAI } = await import('@google/genai');
+                const client = new GoogleGenAI({ apiKey });
+
+                const input = args.additional_context
+                    ? `${args.query}\n\nAdditional context: ${args.additional_context}`
+                    : args.query;
+
+                log.info('Starting deep research', { query: args.query });
+                const interaction = await (client as any).interactions.create({
+                    input,
+                    agent: 'deep-research-pro-preview-12-2025',
+                    background: true,
+                });
+
+                const interactionId = interaction.id;
+                log.info('Deep research started', { id: interactionId });
+
+                // Poll for completion (max 10 minutes)
+                const maxWaitMs = 10 * 60 * 1000;
+                const pollIntervalMs = 10_000;
+                const startTime = Date.now();
+
+                while (Date.now() - startTime < maxWaitMs) {
+                    await new Promise(r => setTimeout(r, pollIntervalMs));
+                    const result = await (client as any).interactions.get(interactionId);
+
+                    if (result.status === 'completed') {
+                        const outputs = result.outputs || [];
+                        const report = outputs.length > 0
+                            ? outputs[outputs.length - 1].text || 'Research completed but no text output.'
+                            : 'Research completed but no outputs returned.';
+                        log.info('Deep research completed', { id: interactionId, reportChars: report.length });
+                        return report;
+                    }
+
+                    if (result.status === 'failed') {
+                        const errMsg = result.error || 'Unknown error';
+                        log.error('Deep research failed', { id: interactionId, error: errMsg });
+                        return `Deep research failed: ${errMsg}`;
+                    }
+
+                    // Still running — log progress
+                    log.debug('Deep research polling', { id: interactionId, status: result.status, elapsed: Math.round((Date.now() - startTime) / 1000) });
+                }
+
+                return `Deep research timed out after 10 minutes. Interaction ID: ${interactionId} — you can check on it later.`;
+            },
+        });
 
         this.refreshContext();
     }

@@ -1130,6 +1130,24 @@ export class Gateway {
             return;
           }
 
+          // Forward screen share video frames to Gemini Live session
+          if (parsed.type === 'voice_video_frame' && parsed.frame) {
+            const session = (ws as any)._liveSession as LiveSession | undefined;
+            if (session) {
+              try {
+                session.sendRealtimeInput({
+                  media: {
+                    data: parsed.frame,
+                    mimeType: 'image/jpeg',
+                  },
+                });
+              } catch (e: any) {
+                log.warn('Failed to send video frame to Live session', { error: e.message });
+              }
+            }
+            return;
+          }
+
           if (parsed.type === 'voice_stop') {
             // Save accumulated transcripts to session store
             const inputTranscript = (ws as any)._voiceInputTranscript || '';
@@ -2514,6 +2532,33 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       transform: scale(1.1);
       box-shadow: 0 4px 30px rgba(239,68,68,0.6);
     }
+    .voice-controls {
+      display: flex; gap: 16px; align-items: center; margin-top: 16px;
+    }
+    .voice-share-btn {
+      width: 48px; height: 48px; border-radius: 50%;
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s ease; color: rgba(255,255,255,0.7);
+    }
+    .voice-share-btn:hover {
+      background: rgba(255,255,255,0.2);
+      color: white;
+    }
+    .voice-share-btn.active {
+      background: rgba(99,102,241,0.3); border-color: #818cf8;
+      color: #818cf8;
+    }
+    .voice-share-preview {
+      position: absolute; bottom: 120px; right: 24px;
+      width: 200px; border-radius: 12px; overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      display: none;
+    }
+    .voice-share-preview video {
+      width: 100%; display: block;
+    }
     .voice-mode-btn {
       background: transparent; border: none; cursor: pointer;
       color: var(--text-secondary);
@@ -2655,9 +2700,19 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     <div id="voiceOrb" class="voice-orb"></div>
     <div id="voiceStatus" class="voice-status">Connecting…</div>
     <div id="voiceTranscript" class="voice-transcript"></div>
-    <button id="voiceEndBtn" class="voice-end-btn" title="End voice conversation">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-    </button>
+    <div class="voice-controls">
+      <button id="voiceShareBtn" class="voice-share-btn" title="Share your screen">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+      </button>
+      <button id="voiceEndBtn" class="voice-end-btn" title="End voice conversation">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      </button>
+    </div>
+    <div id="voiceSharePreview" class="voice-share-preview">
+      <video id="voiceShareVideo" autoplay muted playsinline></video>
+    </div>
   </div>
 
 
@@ -4784,6 +4839,7 @@ if ('serviceWorker' in navigator) {
     voiceActive = false;
     overlay.classList.remove('active');
     stopPlayback();
+    stopScreenShare();
 
     // Stop microphone
     if (scriptNode) {
@@ -4816,6 +4872,77 @@ if ('serviceWorker' in navigator) {
   });
 
   endBtn.addEventListener('click', endVoiceMode);
+
+  // ── Screen Share ──
+  var shareBtn = document.getElementById('voiceShareBtn');
+  var sharePreview = document.getElementById('voiceSharePreview');
+  var shareVideo = document.getElementById('voiceShareVideo');
+  var shareStream = null;
+  var shareInterval = null;
+  var shareCanvas = document.createElement('canvas');
+  var shareCtx2d = shareCanvas.getContext('2d');
+
+  function stopScreenShare() {
+    if (shareInterval) { clearInterval(shareInterval); shareInterval = null; }
+    if (shareStream) {
+      shareStream.getTracks().forEach(function(t) { t.stop(); });
+      shareStream = null;
+    }
+    if (shareVideo) shareVideo.srcObject = null;
+    if (sharePreview) sharePreview.style.display = 'none';
+    if (shareBtn) shareBtn.classList.remove('active');
+  }
+
+  async function toggleScreenShare() {
+    if (shareStream) {
+      stopScreenShare();
+      return;
+    }
+    try {
+      shareStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 1, max: 2 }, width: { ideal: 768 }, height: { ideal: 768 } },
+        audio: false,
+      });
+
+      // Show preview
+      shareVideo.srcObject = shareStream;
+      sharePreview.style.display = 'block';
+      shareBtn.classList.add('active');
+
+      // Handle user stopping share via browser UI
+      shareStream.getVideoTracks()[0].onended = function() {
+        stopScreenShare();
+      };
+
+      // Capture and send frames at ~1 FPS
+      shareInterval = setInterval(function() {
+        if (!shareStream || !voiceActive) { stopScreenShare(); return; }
+        var track = shareStream.getVideoTracks()[0];
+        if (!track || track.readyState !== 'live') { stopScreenShare(); return; }
+
+        var settings = track.getSettings();
+        var w = settings.width || 768;
+        var h = settings.height || 768;
+        // Scale down to max 768px
+        var scale = Math.min(768 / w, 768 / h, 1);
+        shareCanvas.width = Math.round(w * scale);
+        shareCanvas.height = Math.round(h * scale);
+        shareCtx2d.drawImage(shareVideo, 0, 0, shareCanvas.width, shareCanvas.height);
+
+        var dataUrl = shareCanvas.toDataURL('image/jpeg', 0.6);
+        var base64 = dataUrl.split(',')[1];
+        if (window._aliceWs && window._aliceWs.readyState === 1) {
+          window._aliceWs.send(JSON.stringify({ type: 'voice_video_frame', frame: base64 }));
+        }
+      }, 1000);
+    } catch (err) {
+      console.warn('Screen share failed:', err);
+    }
+  }
+
+  if (shareBtn) {
+    shareBtn.addEventListener('click', toggleScreenShare);
+  }
 
   // Handle Escape key
   document.addEventListener('keydown', function(e) {
