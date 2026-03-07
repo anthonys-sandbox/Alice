@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { join } from 'path';
 import { mkdirSync, existsSync, readFileSync, writeFileSync, copyFileSync } from 'fs';
 import { createLogger } from '../utils/logger.js';
+import { generateEmbedding, cosineSimilarity, embeddingToBuffer, bufferToEmbedding } from './embeddings.js';
 
 const log = createLogger('MemoryStore');
 
@@ -81,6 +82,12 @@ export class MemoryStore {
             CREATE INDEX IF NOT EXISTS idx_rel_from ON entity_relationships(from_id);
             CREATE INDEX IF NOT EXISTS idx_rel_to ON entity_relationships(to_id);
         `);
+
+        // Add embedding column if not already present
+        try {
+            this.db.exec('ALTER TABLE memory_items ADD COLUMN embedding BLOB');
+            log.info('Added embedding column to memory_items');
+        } catch { /* column already exists */ }
     }
 
     // ── CRUD Operations ───────────────────────────────────────
@@ -219,8 +226,49 @@ export class MemoryStore {
     }
 
     /**
-     * Get total item count, optionally by file.
+     * Semantic search across memory items using Gemini embeddings.
+     * Falls back to keyword search if no embeddings are available.
      */
+    async semanticSearchItems(query: string, apiKey: string, limit = 10): Promise<MemoryItem[]> {
+        const queryEmbedding = await generateEmbedding(query, apiKey);
+        if (!queryEmbedding) {
+            return this.searchItems(query);
+        }
+
+        const rows = this.db.prepare(
+            'SELECT * FROM memory_items WHERE embedding IS NOT NULL'
+        ).all() as any[];
+
+        if (rows.length === 0) {
+            return this.searchItems(query);
+        }
+
+        const scored = rows.map(row => {
+            const itemEmb = bufferToEmbedding(row.embedding);
+            return { item: this.rowToItem(row), similarity: cosineSimilarity(queryEmbedding, itemEmb) };
+        });
+
+        scored.sort((a, b) => b.similarity - a.similarity);
+        return scored.slice(0, limit).filter(s => s.similarity > 0.3).map(s => s.item);
+    }
+
+    /**
+     * Generate and store embedding for a memory item (fire-and-forget).
+     */
+    async embedItem(id: number, content: string, apiKey: string): Promise<void> {
+        try {
+            const embedding = await generateEmbedding(content, apiKey);
+            if (embedding) {
+                this.db.prepare('UPDATE memory_items SET embedding = ? WHERE id = ?').run(embeddingToBuffer(embedding), id);
+            }
+        } catch (err: any) {
+            log.warn('Failed to embed memory item', { id, error: err.message });
+        }
+    }
+
+    /**
+ * Get total item count, optionally by file.
+ */
     getCount(file?: string): number {
         if (file) {
             return (this.db.prepare(

@@ -84,6 +84,35 @@ Only create tasks for things that genuinely require action — don't create task
 };
 
 // ============================================================
+// Weekly Status Generator — runs every Friday at 5 PM
+// ============================================================
+
+const WEEKLY_STATUS: Omit<CronJob, 'lastRun' | 'lastResult' | 'createdAt'> = {
+    id: 'job_weekly_status',
+    name: 'Weekly Status Report',
+    cronExpr: '0 17 * * 5', // Fridays at 5:00 PM local time
+    prompt: `You are Alice, Anthony's AI assistant generating a weekly status report. Use workspace tools to gather data, then format a comprehensive summary:
+
+1. **Email Highlights**: Use gmail_search for "newer_than:7d" to get this week's email activity. Identify the most important threads and any outstanding action items.
+
+2. **Calendar Review**: Use calendar_list for the past 7 days. Count meetings attended, note key meetings, and calculate total meeting time.
+
+3. **Tasks Completed**: Use tasks_list to see completed tasks this week. Highlight key accomplishments.
+
+4. **Drive Activity**: Use drive_search for recently modified files to see what documents were worked on.
+
+5. **Weekly Summary**: Write a 2-3 paragraph executive summary covering:
+   - Key accomplishments and deliverables
+   - Important decisions made or pending
+   - Top priorities for next week
+   - Any blockers or risks
+
+Format as a clean, scannable report with headers. Be factual — only reference things found in the actual data.`,
+    isolated: true,
+    enabled: true,
+};
+
+// ============================================================
 // CronJobManager
 // ============================================================
 
@@ -762,6 +791,7 @@ export class CronJobManager {
             log.info('No cron jobs found — seeding defaults');
             this.addJob(MORNING_BRIEFING);
             this.addJob(DAILY_TRIAGE);
+            this.addJob(WEEKLY_STATUS);
         }
 
         // Schedule all enabled jobs

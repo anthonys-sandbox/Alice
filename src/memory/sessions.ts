@@ -112,6 +112,16 @@ export class SessionStore {
             );
         `);
 
+        // Session summaries for continuity across conversations
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS session_summaries (
+                session_id TEXT PRIMARY KEY,
+                summary TEXT NOT NULL,
+                topics TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        `);
+
         // Seed default Alice persona if none exist
         const count = this.db.prepare('SELECT COUNT(*) as c FROM personas').get() as { c: number };
         if (count.c === 0) {
@@ -350,6 +360,50 @@ export class SessionStore {
     deleteSession(sessionId: string): void {
         this.db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
         log.info('Session deleted', { id: sessionId });
+    }
+
+    // ── Session Continuity ────────────────────────────
+
+    /**
+     * Save a session summary for cross-session continuity.
+     */
+    saveSessionSummary(sessionId: string, summary: string, topics: string[]): void {
+        this.db.prepare(
+            'INSERT OR REPLACE INTO session_summaries (session_id, summary, topics) VALUES (?, ?, ?)'
+        ).run(sessionId, summary, JSON.stringify(topics));
+        log.info('Session summary saved', { sessionId, topicCount: topics.length });
+    }
+
+    /**
+     * Get a specific session's summary.
+     */
+    getSessionSummary(sessionId: string): { summary: string; topics: string[] } | null {
+        const row = this.db.prepare(
+            'SELECT summary, topics FROM session_summaries WHERE session_id = ?'
+        ).get(sessionId) as any;
+        if (!row) return null;
+        return { summary: row.summary, topics: JSON.parse(row.topics || '[]') };
+    }
+
+    /**
+     * Get recent session summaries for context continuity.
+     * Returns the last N summaries with session titles.
+     */
+    getRecentSummaries(limit = 5): Array<{ sessionId: string; title: string; summary: string; topics: string[] }> {
+        const rows = this.db.prepare(`
+            SELECT ss.session_id, COALESCE(s.title, 'Untitled') as title, ss.summary, ss.topics
+            FROM session_summaries ss
+            LEFT JOIN sessions s ON s.id = ss.session_id
+            ORDER BY ss.created_at DESC
+            LIMIT ?
+        `).all(limit) as any[];
+
+        return rows.map(r => ({
+            sessionId: r.session_id,
+            title: r.title,
+            summary: r.summary,
+            topics: JSON.parse(r.topics || '[]'),
+        }));
     }
 
     /**
