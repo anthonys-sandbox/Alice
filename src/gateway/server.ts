@@ -879,6 +879,116 @@ export class Gateway {
         res.json({ summaries: [] });
       }
     });
+
+    // ── Playbooks ──────────────────────────────────────
+    this.app.get('/api/playbooks', (_req, res) => {
+      try {
+        const { PlaybookEngine } = require('../runtime/playbook-engine.js');
+        const engine = new PlaybookEngine(this.agent.getConfig().memory.dir);
+        res.json({ playbooks: engine.listPlaybooks() });
+      } catch (err: any) {
+        res.json({ playbooks: [], error: err.message });
+      }
+    });
+
+    this.app.post('/api/playbooks/:name/run', async (req, res) => {
+      try {
+        const { PlaybookEngine } = require('../runtime/playbook-engine.js');
+        const engine = new PlaybookEngine(this.agent.getConfig().memory.dir);
+        const result = await engine.executePlaybook(req.params.name, req.body.context || {});
+        res.json(result);
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ── Knowledge Base ─────────────────────────────────
+    this.app.get('/api/kb', (req, res) => {
+      try {
+        const { KnowledgeBase } = require('../memory/knowledge-base.js');
+        const kb = new KnowledgeBase(this.agent.getConfig().memory.dir);
+        const type = req.query.type as string | undefined;
+        const entries = kb.listEntries({ type, limit: 50 });
+        const stats = kb.getStats();
+        kb.close();
+        res.json({ entries, stats });
+      } catch (err: any) {
+        res.json({ entries: [], stats: { total: 0, byType: {} }, error: err.message });
+      }
+    });
+
+    this.app.get('/api/kb/search', (req, res) => {
+      try {
+        const { KnowledgeBase } = require('../memory/knowledge-base.js');
+        const kb = new KnowledgeBase(this.agent.getConfig().memory.dir);
+        const query = req.query.q as string;
+        const results = query ? kb.search(query) : [];
+        kb.close();
+        res.json({ results });
+      } catch (err: any) {
+        res.json({ results: [], error: err.message });
+      }
+    });
+
+    this.app.post('/api/kb', (req, res) => {
+      try {
+        const { KnowledgeBase } = require('../memory/knowledge-base.js');
+        const kb = new KnowledgeBase(this.agent.getConfig().memory.dir);
+        const id = kb.addEntry(req.body.topic, req.body.content, {
+          entryType: req.body.type || 'fact',
+          tags: req.body.tags || [],
+        });
+        kb.close();
+        res.json({ id, success: true });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    this.app.delete('/api/kb/:id', (req, res) => {
+      try {
+        const { KnowledgeBase } = require('../memory/knowledge-base.js');
+        const kb = new KnowledgeBase(this.agent.getConfig().memory.dir);
+        const deleted = kb.deleteEntry(parseInt(req.params.id));
+        kb.close();
+        res.json({ deleted });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // ── Notification Preferences ───────────────────────
+    this.app.get('/api/notification-prefs', (_req, res) => {
+      try {
+        const { NotificationLearner } = require('../scheduler/notification-learner.js');
+        const learner = new NotificationLearner(this.agent.getConfig().memory.dir);
+        res.json({
+          quietHoursStart: learner.getPreference('quiet_hours_start'),
+          quietHoursEnd: learner.getPreference('quiet_hours_end'),
+          focusMode: learner.getPreference('focus_mode') === 'true',
+          batchDigest: learner.getPreference('batch_digest') === 'true',
+          stats: learner.getStats(),
+        });
+        learner.close();
+      } catch (err: any) {
+        res.json({ quietHoursStart: '22:00', quietHoursEnd: '07:00', focusMode: false, batchDigest: false, stats: {} });
+      }
+    });
+
+    this.app.post('/api/notification-prefs', (req, res) => {
+      try {
+        const { NotificationLearner } = require('../scheduler/notification-learner.js');
+        const learner = new NotificationLearner(this.agent.getConfig().memory.dir);
+        if (req.body.quietHoursStart) learner.setPreference('quiet_hours_start', req.body.quietHoursStart);
+        if (req.body.quietHoursEnd) learner.setPreference('quiet_hours_end', req.body.quietHoursEnd);
+        if (typeof req.body.focusMode === 'boolean') learner.setPreference('focus_mode', String(req.body.focusMode));
+        if (typeof req.body.batchDigest === 'boolean') learner.setPreference('batch_digest', String(req.body.batchDigest));
+        learner.close();
+        res.json({ success: true });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
   }
 
   private setupWebSocket(): void {
@@ -2783,6 +2893,14 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0m-10.47-5.674A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
         <span class="sidebar-item-title">Reminders</span>
       </div>
+      <div class="sidebar-item sidebar-nav-item" data-page="playbooks">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m9 10 2 2 4-4"/></svg>
+        <span class="sidebar-item-title">Playbooks</span>
+      </div>
+      <div class="sidebar-item sidebar-nav-item" data-page="knowledge">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        <span class="sidebar-item-title">Knowledge Base</span>
+      </div>
       <div class="sidebar-item sidebar-nav-item" data-page="personas">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11h.01M14 6h.01M18 6h.01M6.5 13.1h.01M22 5c0 9-4 12-6 12s-6-3-6-12q0-3 6-3c6 0 6 1 6 3"/><path d="M17.4 9.9c-.8.8-2 .8-2.8 0m-4.5-2.8C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6c4.5 7.8 9.5 8.4 11.2 7.4c.9-.5 1.9-2.1 1.9-4.7"/><path d="M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"/></svg>
         <span class="sidebar-item-title">Personas</span>
@@ -3284,12 +3402,85 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       });
     }
 
+    // Slash command definitions
+    const SLASH_COMMANDS = [
+      { cmd: '/research', desc: 'Deep research on a topic', transform: (args) => 'Use deep_research to research: ' + args },
+      { cmd: '/brief', desc: 'Intel brief on a person', transform: (args) => 'Use brief_person to create a comprehensive brief on: ' + args },
+      { cmd: '/doc', desc: 'Generate a document', transform: (args) => { const [type, ...rest] = args.split(' '); return 'Use generate_document to create a ' + type + ' about: ' + rest.join(' '); } },
+      { cmd: '/time', desc: 'Analyze time usage', transform: (args) => 'Use time_analysis to analyze my time usage ' + (args || 'this week') },
+      { cmd: '/playbook', desc: 'Run a playbook', transform: (args) => 'Use run_playbook to execute the playbook: ' + args },
+      { cmd: '/schedule', desc: 'Find free time', transform: (args) => 'Use find_free_time to find available ' + (args || 'slots this week') },
+      { cmd: '/kb', desc: 'Search knowledge base', transform: (args) => 'Use kb_search to search for: ' + args },
+      { cmd: '/cost', desc: 'Meeting cost analysis', transform: (args) => 'Use meeting_cost to calculate meeting costs' },
+    ];
+
+    // Slash command autocomplete popup
+    const slashPopup = document.createElement('div');
+    slashPopup.id = 'slash-popup';
+    slashPopup.style.cssText = 'display:none;position:absolute;bottom:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:6px;margin-bottom:8px;max-height:240px;overflow-y:auto;box-shadow:0 -4px 16px rgba(0,0,0,0.2);z-index:100';
+    document.querySelector('.input-area')?.style?.setProperty('position', 'relative');
+    document.querySelector('.input-area')?.appendChild(slashPopup);
+
+    input.addEventListener('input', () => {
+      const val = input.value;
+      if (val.startsWith('/') && !val.includes(' ')) {
+        const filter = val.toLowerCase();
+        const matches = SLASH_COMMANDS.filter(c => c.cmd.startsWith(filter));
+        if (matches.length > 0 && val !== '/') {
+          slashPopup.innerHTML = matches.map(c =>
+            '<div class="slash-item" data-cmd="' + c.cmd + '" style="padding:8px 12px;cursor:pointer;border-radius:8px;display:flex;align-items:center;gap:10px;transition:background 0.15s"><span style="color:var(--accent);font-weight:600;font-size:14px">' + c.cmd + '</span><span style="color:var(--text-tertiary);font-size:12px">' + c.desc + '</span></div>'
+          ).join('');
+          slashPopup.style.display = 'block';
+          slashPopup.querySelectorAll('.slash-item').forEach(item => {
+            item.addEventListener('mouseenter', () => { item.style.background = 'var(--surface-hover)'; });
+            item.addEventListener('mouseleave', () => { item.style.background = ''; });
+            item.addEventListener('click', () => {
+              input.value = item.dataset.cmd + ' ';
+              input.focus();
+              slashPopup.style.display = 'none';
+            });
+          });
+        } else if (val === '/') {
+          slashPopup.innerHTML = SLASH_COMMANDS.map(c =>
+            '<div class="slash-item" data-cmd="' + c.cmd + '" style="padding:8px 12px;cursor:pointer;border-radius:8px;display:flex;align-items:center;gap:10px;transition:background 0.15s"><span style="color:var(--accent);font-weight:600;font-size:14px">' + c.cmd + '</span><span style="color:var(--text-tertiary);font-size:12px">' + c.desc + '</span></div>'
+          ).join('');
+          slashPopup.style.display = 'block';
+          slashPopup.querySelectorAll('.slash-item').forEach(item => {
+            item.addEventListener('mouseenter', () => { item.style.background = 'var(--surface-hover)'; });
+            item.addEventListener('mouseleave', () => { item.style.background = ''; });
+            item.addEventListener('click', () => {
+              input.value = item.dataset.cmd + ' ';
+              input.focus();
+              slashPopup.style.display = 'none';
+            });
+          });
+        } else {
+          slashPopup.style.display = 'none';
+        }
+      } else {
+        slashPopup.style.display = 'none';
+      }
+    });
+
     function sendMessage() {
-      const text = input.value.trim();
+      let text = input.value.trim();
       if ((!text && pendingAttachments.length === 0) || send.disabled) return;
 
+      // Handle slash commands
+      const slashMatch = SLASH_COMMANDS.find(c => text.startsWith(c.cmd + ' ') || text === c.cmd);
+      if (slashMatch) {
+        const args = text.slice(slashMatch.cmd.length).trim();
+        if (!args && slashMatch.cmd !== '/time' && slashMatch.cmd !== '/cost') {
+          addMsg('Usage: ' + slashMatch.cmd + ' <arguments>', 'assistant');
+          input.value = '';
+          return;
+        }
+        text = slashMatch.transform(args);
+      }
+      slashPopup.style.display = 'none';
+
       // Show user message with attachment previews
-      const displayText = text || '(attached file' + (pendingAttachments.length > 1 ? 's' : '') + ')';
+      const displayText = input.value.trim() || '(attached file' + (pendingAttachments.length > 1 ? 's' : '') + ')';
       addMsg(displayText, 'user', null, pendingAttachments);
 
       // Send as JSON with attachments
@@ -4282,11 +4473,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         });
 
       } else if (page === 'command_center') {
-        const [stats, cronData, connData, autoData] = await Promise.all([
+        const [stats, cronData, connData, autoData, pbData, kbData] = await Promise.all([
           fetch('/api/stats').then(r => r.json()),
           fetch('/api/cron-jobs').then(r => r.json()).catch(() => ({ jobs: [] })),
           fetch('/api/connections').then(r => r.json()).catch(() => ({ connections: [] })),
           fetch('/api/automation').then(r => r.json()).catch(() => ({ meetingPrep: { running: false }, emailWatcher: { running: false } })),
+          fetch('/api/playbooks').then(r => r.json()).catch(() => ({ playbooks: [] })),
+          fetch('/api/kb').then(r => r.json()).catch(() => ({ stats: { total: 0 } })),
         ]);
         const upH = Math.floor(stats.uptime / 3600);
         const upM = Math.floor((stats.uptime % 3600) / 60);
@@ -4310,6 +4503,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           { label: 'API Calls', value: stats.apiCalls || 0, color: '#f472b6' },
           { label: 'Sessions', value: stats.sessionCount, color: '#facc15' },
           { label: 'Active Model', value: (stats.activeModel || '').split('/').pop(), color: '#fb923c' },
+          { label: 'Playbooks', value: (pbData.playbooks || []).length, color: '#34d399' },
+          { label: 'KB Entries', value: kbData.stats?.total || 0, color: '#f472b6' },
         ];
         cards.forEach(c => {
           html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden">';
@@ -4363,6 +4558,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           { label: '💓 Heartbeat', id: 'qa-heartbeat' },
           { label: '📦 Git Backup', id: 'qa-backup' },
           { label: '🔄 Refresh', id: 'qa-refresh' },
+          { label: '🔬 Deep Research', id: 'qa-research' },
+          { label: '👤 Person Brief', id: 'qa-person-brief' },
+          { label: '⏱️ Time Analysis', id: 'qa-time' },
+          { label: '📄 Generate Doc', id: 'qa-gen-doc' },
         ];
         actions.forEach(a => {
           html += '<button id="' + a.id + '" class="qa-btn" style="background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s;text-align:left">' + a.label + '</button>';
@@ -4468,6 +4667,40 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           const res = await fetch('/api/automation/proactive-engine/toggle', { method: 'POST' });
           const data = await res.json();
           loadDashboard('command_center');
+        });
+
+        // Quick tool buttons
+        document.getElementById('qa-research')?.addEventListener('click', async (e) => {
+          const q = prompt('What would you like to research?');
+          if (!q) return;
+          e.target.textContent = '⏳ Researching…';
+          await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Use deep_research to research: ' + q }) });
+          e.target.textContent = '✅ Started!';
+          setTimeout(() => { e.target.textContent = '🔬 Deep Research'; }, 3000);
+        });
+        document.getElementById('qa-person-brief')?.addEventListener('click', async (e) => {
+          const who = prompt('Who to brief on? (name or email)');
+          if (!who) return;
+          e.target.textContent = '⏳ Briefing…';
+          await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Use brief_person to create a brief on: ' + who }) });
+          e.target.textContent = '✅ Started!';
+          setTimeout(() => { e.target.textContent = '👤 Person Brief'; }, 3000);
+        });
+        document.getElementById('qa-time')?.addEventListener('click', async (e) => {
+          e.target.textContent = '⏳ Analyzing…';
+          await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Use time_analysis to analyze my time usage this week' }) });
+          e.target.textContent = '✅ Started!';
+          setTimeout(() => { e.target.textContent = '⏱️ Time Analysis'; }, 3000);
+        });
+        document.getElementById('qa-gen-doc')?.addEventListener('click', async (e) => {
+          const type = prompt('Document type? (proposal, meeting-notes, status-report, memo)');
+          if (!type) return;
+          const topic = prompt('Topic / subject?');
+          if (!topic) return;
+          e.target.textContent = '⏳ Generating…';
+          await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Use generate_document to create a ' + type + ' about: ' + topic }) });
+          e.target.textContent = '✅ Started!';
+          setTimeout(() => { e.target.textContent = '📄 Generate Doc'; }, 3000);
         });
 
         // Wire cron run buttons
@@ -4619,7 +4852,55 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '<textarea id="identityEditor" style="width:100%;min-height:160px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--font);font-size:13px;resize:vertical;line-height:1.6">' + (data.identity || '') + '</textarea>';
         html += '</div>';
 
+        // Notification preferences
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-top:16px;margin-bottom:16px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🔔</span> Notification Preferences</div>';
+        html += '<div id="notif-prefs-loading" style="color:var(--text-tertiary);font-size:13px">Loading…</div>';
+        html += '</div>';
+
+        // GitHub integration status
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🐙</span> GitHub Integration</div>';
+        const ghToken = data.config?.githubToken || '';
+        if (ghToken) {
+          html += '<div style="font-size:13px;color:#4ade80">✅ GITHUB_TOKEN is set — GitHub tools are active</div>';
+        } else {
+          html += '<div style="font-size:13px;color:var(--text-tertiary)">❌ GITHUB_TOKEN not set. Add <code>GITHUB_TOKEN=ghp_xxx</code> to your <code>.env</code> file to enable GitHub integration.</div>';
+        }
+        html += '</div>';
+
         showDashboardView(html);
+
+        // Load notification prefs async
+        fetch('/api/notification-prefs').then(r => r.json()).then(prefs => {
+          const container = document.getElementById('notif-prefs-loading');
+          if (!container) return;
+          let phtml = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px">';
+          phtml += '<div><label style="color:var(--text-secondary)">Quiet Hours Start</label><input id="np-start" type="time" value="' + (prefs.quietHoursStart || '22:00') + '" style="display:block;margin-top:4px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;width:100%"></div>';
+          phtml += '<div><label style="color:var(--text-secondary)">Quiet Hours End</label><input id="np-end" type="time" value="' + (prefs.quietHoursEnd || '07:00') + '" style="display:block;margin-top:4px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;width:100%"></div>';
+          phtml += '<div style="display:flex;align-items:center;gap:8px"><input id="np-focus" type="checkbox" ' + (prefs.focusMode ? 'checked' : '') + '><label for="np-focus" style="color:var(--text-secondary)">Focus Mode (suppress all notifications)</label></div>';
+          phtml += '<div style="display:flex;align-items:center;gap:8px"><input id="np-batch" type="checkbox" ' + (prefs.batchDigest ? 'checked' : '') + '><label for="np-batch" style="color:var(--text-secondary)">Batch Digest (group notifications)</label></div>';
+          phtml += '</div>';
+          phtml += '<button id="np-save" style="margin-top:12px;background:var(--accent);color:#131314;border:none;padding:8px 18px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500">Save Preferences</button>';
+          container.innerHTML = phtml;
+
+          document.getElementById('np-save')?.addEventListener('click', async () => {
+            const btn = document.getElementById('np-save');
+            btn.textContent = '⏳ Saving…';
+            await fetch('/api/notification-prefs', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                quietHoursStart: document.getElementById('np-start').value,
+                quietHoursEnd: document.getElementById('np-end').value,
+                focusMode: document.getElementById('np-focus').checked,
+                batchDigest: document.getElementById('np-batch').checked,
+              }),
+            });
+            btn.textContent = '✅ Saved!';
+            setTimeout(() => { btn.textContent = 'Save Preferences'; }, 2000);
+          });
+        });
 
         // Wire model switch button
         document.getElementById('switch-model-btn')?.addEventListener('click', async () => {
@@ -4753,6 +5034,167 @@ const WEB_UI_HTML = `<!DOCTYPE html>
             if (confirm('Delete this persona?')) {
               await fetch('/api/personas/' + btn.dataset.id, { method: 'DELETE' });
               loadDashboard('personas');
+            }
+          });
+        });
+      }
+
+      // ── Playbooks page ──────────────────────────────────
+      else if (page === 'playbooks') {
+        const pbData = await fetch('/api/playbooks').then(r => r.json()).catch(() => ({ playbooks: [] }));
+        const playbooks = pbData.playbooks || [];
+
+        let html = '<h2 style="color:var(--accent);margin-bottom:20px;display:flex;align-items:center;gap:10px">📋 Playbooks <span style="font-size:13px;color:var(--text-tertiary);font-weight:400">' + playbooks.length + ' available</span></h2>';
+
+        if (playbooks.length === 0) {
+          html += '<div style="text-align:center;padding:60px 20px;color:var(--text-tertiary)"><p style="font-size:48px;margin:0">📋</p><p style="font-size:15px;margin:8px 0">No playbooks yet</p><p style="font-size:13px">Add <code>.json</code> playbook files to <code>memory/playbooks/</code></p></div>';
+        } else {
+          html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">';
+          playbooks.forEach(pb => {
+            const triggerBadge = pb.trigger === 'manual' ? '🖱️ Manual' : pb.trigger === 'keyword' ? '🔑 Keyword' : '⏰ Schedule';
+            html += '<div class="pb-card" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;transition:border-color 0.2s">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">';
+            html += '<div style="font-weight:600;color:var(--text-primary);font-size:15px">' + pb.name + '</div>';
+            html += '<span style="font-size:11px;background:var(--bg-tertiary);color:var(--text-tertiary);padding:2px 8px;border-radius:6px;white-space:nowrap">' + triggerBadge + '</span>';
+            html += '</div>';
+            html += '<div style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;line-height:1.4">' + pb.description + '</div>';
+            html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+            html += '<span style="font-size:12px;color:var(--text-tertiary)">' + pb.steps + ' steps</span>';
+            html += '<button class="pb-run-btn" data-name="' + pb.name + '" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:6px 16px;cursor:pointer;font-size:13px;font-weight:500;transition:opacity 0.2s">▶ Run</button>';
+            html += '</div></div>';
+          });
+          html += '</div>';
+        }
+        dashboardView.innerHTML = html;
+
+        // Wire run buttons
+        dashboardView.querySelectorAll('.pb-run-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const name = btn.dataset.name;
+            btn.textContent = '⏳ Running…';
+            btn.disabled = true;
+            try {
+              const res = await fetch('/api/playbooks/' + name + '/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ context: {} }),
+              });
+              const result = await res.json();
+              btn.textContent = result.success ? '✅ Done' : '⚠️ Partial';
+              setTimeout(() => { btn.textContent = '▶ Run'; btn.disabled = false; }, 3000);
+            } catch {
+              btn.textContent = '❌ Error';
+              setTimeout(() => { btn.textContent = '▶ Run'; btn.disabled = false; }, 3000);
+            }
+          });
+        });
+      }
+
+      // ── Knowledge Base page ─────────────────────────────
+      else if (page === 'knowledge') {
+        const kbData = await fetch('/api/kb').then(r => r.json()).catch(() => ({ entries: [], stats: { total: 0, byType: {} } }));
+        const entries = kbData.entries || [];
+        const stats = kbData.stats || { total: 0, byType: {} };
+
+        let html = '<h2 style="color:var(--accent);margin-bottom:20px;display:flex;align-items:center;gap:10px">🧠 Knowledge Base <span style="font-size:13px;color:var(--text-tertiary);font-weight:400">' + stats.total + ' entries</span></h2>';
+
+        // Stats + type breakdown
+        const typeEntries = Object.entries(stats.byType || {});
+        if (typeEntries.length > 0) {
+          html += '<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+          const typeColors = { fact: '#60a5fa', decision: '#c084fc', preference: '#4ade80', research: '#facc15', insight: '#fb923c' };
+          typeEntries.forEach(([type, count]) => {
+            const color = typeColors[type] || '#888';
+            html += '<span style="font-size:12px;padding:3px 10px;border-radius:8px;background:' + color + '15;color:' + color + ';font-weight:500">' + type + ': ' + count + '</span>';
+          });
+          html += '</div>';
+        }
+
+        // Search bar
+        html += '<div style="margin-bottom:16px;display:flex;gap:8px">';
+        html += '<input id="kb-search" type="text" placeholder="Search knowledge base…" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text-primary);font-size:14px;outline:none">';
+        html += '<button id="kb-search-btn" style="background:var(--accent);color:#fff;border:none;border-radius:10px;padding:10px 16px;cursor:pointer;font-size:13px;font-weight:500">Search</button>';
+        html += '</div>';
+
+        // Add entry form
+        html += '<details style="margin-bottom:16px"><summary style="cursor:pointer;color:var(--accent);font-size:14px;font-weight:500;padding:8px 0">＋ Add Entry</summary>';
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-top:8px;display:grid;gap:10px">';
+        html += '<input id="kb-topic" placeholder="Topic" style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px">';
+        html += '<textarea id="kb-content" placeholder="Content / knowledge…" rows="3" style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;resize:vertical"></textarea>';
+        html += '<div style="display:flex;gap:8px">';
+        html += '<select id="kb-type" style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px"><option>fact</option><option>decision</option><option>preference</option><option>research</option><option>insight</option></select>';
+        html += '<input id="kb-tags" placeholder="Tags (comma-separated)" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px">';
+        html += '<button id="kb-add-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:500">Add</button>';
+        html += '</div></div></details>';
+
+        // Entry list
+        html += '<div id="kb-entries">';
+        if (entries.length === 0) {
+          html += '<div style="text-align:center;padding:40px;color:var(--text-tertiary)"><p style="font-size:40px;margin:0">🧠</p><p>No entries yet. Add knowledge via chat or the form above.</p></div>';
+        } else {
+          entries.forEach(e => {
+            const tags = (e.tags || []).map(t => '<span style="font-size:11px;background:var(--bg-tertiary);color:var(--text-tertiary);padding:1px 6px;border-radius:4px">' + t + '</span>').join(' ');
+            html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+            html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px">' + e.topic + '</div>';
+            html += '<div style="display:flex;gap:6px;align-items:center"><span style="font-size:11px;color:var(--text-tertiary)">#' + e.id + '</span>';
+            html += '<button class="kb-del-btn" data-id="' + e.id + '" style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:14px" title="Delete">✕</button></div>';
+            html += '</div>';
+            html += '<div style="font-size:13px;color:var(--text-secondary);margin:6px 0;line-height:1.4">' + e.content + '</div>';
+            html += '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">';
+            const typeC = { fact: '#60a5fa', decision: '#c084fc', preference: '#4ade80', research: '#facc15', insight: '#fb923c' };
+            html += '<span style="font-size:11px;padding:2px 8px;border-radius:6px;background:' + (typeC[e.entryType] || '#888') + '15;color:' + (typeC[e.entryType] || '#888') + '">' + e.entryType + '</span>';
+            html += tags;
+            html += '<span style="font-size:11px;color:var(--text-tertiary);margin-left:auto">' + (e.createdAt || '').split('T')[0] + '</span>';
+            html += '</div></div>';
+          });
+        }
+        html += '</div>';
+        dashboardView.innerHTML = html;
+
+        // Wire search
+        document.getElementById('kb-search-btn')?.addEventListener('click', async () => {
+          const q = document.getElementById('kb-search').value.trim();
+          if (!q) return;
+          const res = await fetch('/api/kb/search?q=' + encodeURIComponent(q)).then(r => r.json());
+          const results = res.results || [];
+          const el = document.getElementById('kb-entries');
+          if (results.length === 0) {
+            el.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-tertiary)">No results for "' + q + '"</div>';
+          } else {
+            let rhtml = '';
+            results.forEach(r => {
+              rhtml += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px">';
+              rhtml += '<div style="font-weight:600;color:var(--text-primary)">' + r.topic + '</div>';
+              rhtml += '<div style="font-size:13px;color:var(--text-secondary);margin:4px 0">' + r.content.slice(0, 200) + '</div>';
+              rhtml += '</div>';
+            });
+            el.innerHTML = rhtml;
+          }
+        });
+        document.getElementById('kb-search')?.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('kb-search-btn')?.click(); });
+
+        // Wire add
+        document.getElementById('kb-add-btn')?.addEventListener('click', async () => {
+          const topic = document.getElementById('kb-topic').value.trim();
+          const content = document.getElementById('kb-content').value.trim();
+          if (!topic || !content) return;
+          const type = document.getElementById('kb-type').value;
+          const tags = document.getElementById('kb-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+          await fetch('/api/kb', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic, content, type, tags }),
+          });
+          loadDashboard('knowledge');
+        });
+
+        // Wire delete
+        dashboardView.querySelectorAll('.kb-del-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (confirm('Delete this KB entry?')) {
+              await fetch('/api/kb/' + btn.dataset.id, { method: 'DELETE' });
+              loadDashboard('knowledge');
             }
           });
         });
