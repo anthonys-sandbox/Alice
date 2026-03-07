@@ -375,64 +375,67 @@ export class Agent {
         // Register parallel_tasks tool — run multiple sub-agents concurrently
         registerTool({
             name: 'parallel_tasks',
-            description: 'Run multiple tasks in parallel using independent sub-agents. Each task gets its own agent with its own conversation and tool access. All tasks execute concurrently. Use when you have multiple independent research, analysis, or coding tasks that can run simultaneously.',
+            description: 'Run multiple tasks in parallel using independent sub-agents. Each task gets its own agent with its own conversation and tool access. All tasks execute concurrently and return combined results. Use when you need to do multiple independent things at once (e.g., research two topics simultaneously).',
             parameters: {
                 type: 'object',
                 properties: {
-                    tasks: {
-                        type: 'string',
-                        description: 'JSON array of task objects. Each object has: "task" (string, required), "tools" (comma-separated tool names, optional), "max_iterations" (number, optional, default 10). Example: [{"task":"Research X","tools":"web_search,web_fetch"},{"task":"Analyze Y"}]',
-                    },
+                    task_1: { type: 'string', description: 'First task description' },
+                    task_2: { type: 'string', description: 'Second task description' },
+                    task_3: { type: 'string', description: 'Third task description (optional)' },
+                    task_4: { type: 'string', description: 'Fourth task description (optional)' },
+                    task_5: { type: 'string', description: 'Fifth task description (optional)' },
                 },
-                required: ['tasks'],
+                required: ['task_1', 'task_2'],
             },
             execute: async (args: Record<string, any>) => {
-                const { SubAgent } = await import('./sub-agent.js');
-
-                let taskList: Array<{ task: string; tools?: string; max_iterations?: number }>;
                 try {
-                    taskList = JSON.parse(args.tasks);
-                } catch {
-                    return 'Error: tasks must be a valid JSON array of task objects.';
+                    const { SubAgent } = await import('./sub-agent.js');
+
+                    // Collect all task_N parameters
+                    const taskDescriptions: string[] = [];
+                    for (let i = 1; i <= 5; i++) {
+                        const desc = args[`task_${i}`];
+                        if (desc && typeof desc === 'string' && desc.trim()) {
+                            taskDescriptions.push(desc.trim());
+                        }
+                    }
+
+                    if (taskDescriptions.length < 2) {
+                        return 'Error: at least 2 tasks are required.';
+                    }
+
+                    const activePersona = this.sessionStore.getActivePersona();
+                    const persona = activePersona ? {
+                        name: activePersona.name,
+                        soul: activePersona.soulContent,
+                        identity: activePersona.identityContent,
+                    } : undefined;
+
+                    const subTasks = taskDescriptions.map(task => ({
+                        task,
+                        maxIterations: 10,
+                        persona,
+                    }));
+
+                    log.info('Running parallel tasks', { count: subTasks.length });
+                    const results = await SubAgent.runParallel(
+                        subTasks,
+                        this.config,
+                        this.provider,
+                        this.backgroundProvider,
+                    );
+
+                    // Format results
+                    const parts = results.map((r, i) => {
+                        const status = r.success ? '✅' : '❌';
+                        return `### Task ${i + 1}: ${taskDescriptions[i]}\n${status} ${r.iterations} iterations, tools: ${r.toolsUsed.join(', ') || 'none'}\n\n${r.text}`;
+                    });
+
+                    return `**Parallel Results** (${results.length} tasks):\n\n${parts.join('\n\n---\n\n')}`;
+                } catch (err: any) {
+                    log.error('parallel_tasks failed', { error: err.message });
+                    return `Parallel tasks failed: ${err.message}`;
                 }
-
-                if (!Array.isArray(taskList) || taskList.length === 0) {
-                    return 'Error: tasks must be a non-empty array.';
-                }
-
-                if (taskList.length > 5) {
-                    return 'Error: maximum 5 parallel tasks allowed.';
-                }
-
-                const activePersona = this.sessionStore.getActivePersona();
-                const persona = activePersona ? {
-                    name: activePersona.name,
-                    soul: activePersona.soulContent,
-                    identity: activePersona.identityContent,
-                } : undefined;
-
-                const subTasks = taskList.map(t => ({
-                    task: t.task,
-                    tools: t.tools ? t.tools.split(',').map(s => s.trim()) : undefined,
-                    maxIterations: t.max_iterations ?? 10,
-                    persona,
-                }));
-
-                log.info('Running parallel tasks', { count: subTasks.length });
-                const results = await SubAgent.runParallel(
-                    subTasks,
-                    this.config,
-                    this.provider,
-                    this.backgroundProvider,
-                );
-
-                // Format results
-                const parts = results.map((r, i) => {
-                    const status = r.success ? '✅' : '❌';
-                    return `### Task ${i + 1}: ${taskList[i].task}\n${status} ${r.iterations} iterations, tools: ${r.toolsUsed.join(', ') || 'none'}\n\n${r.text}`;
-                });
-
-                return `**Parallel Results** (${results.length} tasks):\n\n${parts.join('\n\n---\n\n')}`;
             },
         });
 
