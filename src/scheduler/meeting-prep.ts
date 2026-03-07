@@ -14,7 +14,12 @@ const preppedMeetings = new Set<string>(); // Track already-prepped event IDs
  * gathers context (Drive docs, recent emails with attendees, related tasks),
  * and posts a prep card to Google Chat 15 min before each meeting.
  */
+let _agent: Agent | null = null;
+let _chat: GoogleChatAdapter | null = null;
+
 export function startMeetingPrep(agent: Agent, chat: GoogleChatAdapter): void {
+    _agent = agent;
+    _chat = chat;
     log.info('Starting meeting auto-prep (every 15 min)');
 
     prepTask = cron.schedule('*/15 * * * *', async () => {
@@ -140,4 +145,19 @@ export function stopMeetingPrep(): void {
         prepTask = null;
         log.info('Meeting auto-prep stopped');
     }
+}
+
+export function isMeetingPrepRunning(): boolean {
+    return prepTask !== null;
+}
+
+export function toggleMeetingPrep(): boolean {
+    if (prepTask) {
+        stopMeetingPrep();
+        return false;
+    } else if (_agent && _chat) {
+        startMeetingPrep(_agent, _chat);
+        return true;
+    }
+    return false;
 }

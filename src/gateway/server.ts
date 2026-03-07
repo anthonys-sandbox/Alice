@@ -11,8 +11,8 @@ import { tmpdir } from 'os';
 import { Agent } from '../runtime/agent.js';
 import { GoogleChatAdapter } from '../channels/google-chat.js';
 import { startHeartbeat, stopHeartbeat } from '../scheduler/heartbeat.js';
-import { startMeetingPrep, stopMeetingPrep } from '../scheduler/meeting-prep.js';
-import { startEmailWatcher, stopEmailWatcher } from '../scheduler/email-watcher.js';
+import { startMeetingPrep, stopMeetingPrep, isMeetingPrepRunning, toggleMeetingPrep } from '../scheduler/meeting-prep.js';
+import { startEmailWatcher, stopEmailWatcher, isEmailWatcherRunning, toggleEmailWatcher } from '../scheduler/email-watcher.js';
 import { scheduler } from '../scheduler/task-scheduler.js';
 import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
@@ -843,6 +843,34 @@ export class Gateway {
         });
         res.json({ job: updated });
       } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── Automation status & toggle ──────────────────────
+    this.app.get('/api/automation', (_req, res) => {
+      res.json({
+        meetingPrep: { running: isMeetingPrepRunning(), schedule: 'Every 15 min' },
+        emailWatcher: { running: isEmailWatcherRunning(), schedule: 'Every 2 min' },
+      });
+    });
+
+    this.app.post('/api/automation/meeting-prep/toggle', (_req, res) => {
+      const running = toggleMeetingPrep();
+      res.json({ running });
+    });
+
+    this.app.post('/api/automation/email-watcher/toggle', (_req, res) => {
+      const running = toggleEmailWatcher();
+      res.json({ running });
+    });
+
+    // ── Session summaries ──────────────────────────────
+    this.app.get('/api/session-summaries', (_req, res) => {
+      try {
+        const summaries = this.agent.getSessionStore().getRecentSummaries(20);
+        res.json({ summaries });
+      } catch (err: any) {
+        res.json({ summaries: [] });
+      }
     });
   }
 
@@ -4244,10 +4272,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         });
 
       } else if (page === 'command_center') {
-        const [stats, cronData, connData] = await Promise.all([
+        const [stats, cronData, connData, autoData] = await Promise.all([
           fetch('/api/stats').then(r => r.json()),
           fetch('/api/cron-jobs').then(r => r.json()).catch(() => ({ jobs: [] })),
           fetch('/api/connections').then(r => r.json()).catch(() => ({ connections: [] })),
+          fetch('/api/automation').then(r => r.json()).catch(() => ({ meetingPrep: { running: false }, emailWatcher: { running: false } })),
         ]);
         const upH = Math.floor(stats.uptime / 3600);
         const upM = Math.floor((stats.uptime % 3600) / 60);
@@ -4256,6 +4285,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const onlineCount = (connData.connections || []).filter(c => c.status === 'online').length;
         const totalConns = (connData.connections || []).length;
         const cronJobs = cronData.jobs || [];
+        const meetingPrepRunning = autoData.meetingPrep?.running || false;
+        const emailWatcherRunning = autoData.emailWatcher?.running || false;
 
         let html = '<h2 style="color:var(--accent);margin-bottom:20px">Command Center</h2>';
 
@@ -4289,7 +4320,25 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '<div style="color:var(--text-secondary)">Fallback: <span style="color:' + (stats.usingFallback ? '#f87171' : '#4ade80') + ';font-weight:500">' + (stats.usingFallback ? 'Active' : 'Standby') + '</span></div>';
         html += '<div style="color:var(--text-secondary)">Connections: <span style="color:' + (onlineCount === totalConns ? '#4ade80' : '#facc15') + ';font-weight:500">' + onlineCount + '/' + totalConns + ' online</span></div>';
         html += '<div style="color:var(--text-secondary)">Cron Jobs: <span style="color:var(--text-primary);font-weight:500">' + cronJobs.length + ' active</span></div>';
-        html += '</div></div>';
+        html += '</div>';
+        // Automation services row
+        html += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap">';
+        const autoServices = [
+          { label: '📋 Meeting Prep', running: meetingPrepRunning, id: 'toggle-meeting-prep' },
+          { label: '📧 Email Watcher', running: emailWatcherRunning, id: 'toggle-email-watcher' },
+        ];
+        autoServices.forEach(s => {
+          const dotColor = s.running ? '#4ade80' : '#666';
+          const statusText = s.running ? 'Active' : 'Paused';
+          html += '<div style="display:flex;align-items:center;gap:6px;font-size:12px">';
+          html += '<div style="width:6px;height:6px;border-radius:50%;background:' + dotColor + ';box-shadow:0 0 4px ' + dotColor + '44"></div>';
+          html += '<span style="color:var(--text-secondary)">' + s.label + ':</span>';
+          html += '<span style="color:' + dotColor + ';font-weight:500">' + statusText + '</span>';
+          html += '<button id="' + s.id + '" style="background:none;border:1px solid var(--border);color:var(--text-tertiary);border-radius:6px;padding:1px 6px;cursor:pointer;font-size:10px">' + (s.running ? 'Pause' : 'Start') + '</button>';
+          html += '</div>';
+        });
+        html += '</div>';
+        html += '</div>';
 
         // Quick Actions
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
@@ -4297,6 +4346,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         const actions = [
           { label: '☀️ Run Briefing', id: 'qa-briefing' },
+          { label: '🔍 Run Triage', id: 'qa-triage' },
+          { label: '📊 Weekly Report', id: 'qa-weekly' },
           { label: '💓 Heartbeat', id: 'qa-heartbeat' },
           { label: '📦 Git Backup', id: 'qa-backup' },
           { label: '🔄 Refresh', id: 'qa-refresh' },
@@ -4375,6 +4426,32 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           setTimeout(() => { e.target.textContent = '📦 Git Backup'; }, 2000);
         });
         document.getElementById('qa-refresh')?.addEventListener('click', () => loadDashboard('command_center'));
+
+        // New quick actions: Run Triage, Weekly Report
+        document.getElementById('qa-triage')?.addEventListener('click', async (e) => {
+          e.target.textContent = '⏳ Running...';
+          await fetch('/api/cron-jobs/job_daily_triage/run', { method: 'POST' });
+          e.target.textContent = '✅ Done!';
+          setTimeout(() => { e.target.textContent = '🔍 Run Triage'; }, 2000);
+        });
+        document.getElementById('qa-weekly')?.addEventListener('click', async (e) => {
+          e.target.textContent = '⏳ Generating...';
+          await fetch('/api/cron-jobs/job_weekly_status/run', { method: 'POST' });
+          e.target.textContent = '✅ Done!';
+          setTimeout(() => { e.target.textContent = '📊 Weekly Report'; }, 2000);
+        });
+
+        // Automation toggles
+        document.getElementById('toggle-meeting-prep')?.addEventListener('click', async (e) => {
+          const res = await fetch('/api/automation/meeting-prep/toggle', { method: 'POST' });
+          const data = await res.json();
+          loadDashboard('command_center');
+        });
+        document.getElementById('toggle-email-watcher')?.addEventListener('click', async (e) => {
+          const res = await fetch('/api/automation/email-watcher/toggle', { method: 'POST' });
+          const data = await res.json();
+          loadDashboard('command_center');
+        });
 
         // Wire cron run buttons
         document.querySelectorAll('.cron-run-btn').forEach(btn => {
@@ -4678,16 +4755,24 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 // Load sessions into sidebar
 async function loadSessions() {
   try {
-    const res = await fetch('/api/sessions');
-    const data = await res.json();
+    const [sessRes, sumRes] = await Promise.all([
+      fetch('/api/sessions'),
+      fetch('/api/session-summaries').catch(() => ({ json: () => ({ summaries: [] }) })),
+    ]);
+    const data = await sessRes.json();
+    const sumData = await sumRes.json();
     currentSessionId = data.currentId;
-    renderSessions(data.sessions, data.currentId);
+    // Build a lookup map of session summaries
+    const summaryMap = {};
+    (sumData.summaries || []).forEach(s => { summaryMap[s.sessionId] = s.summary; });
+    renderSessions(data.sessions, data.currentId, summaryMap);
   } catch (err) {
     console.error('Failed to load sessions:', err);
   }
 }
 
-function renderSessions(sessions, activeId) {
+function renderSessions(sessions, activeId, summaryMap) {
+  summaryMap = summaryMap || {};
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
@@ -4709,9 +4794,13 @@ function renderSessions(sessions, activeId) {
     items.forEach(s => {
       const active = s.id === activeId ? ' active' : '';
       const title = (s.title || 'Untitled').replace(/</g, '&lt;');
+      const summary = summaryMap[s.id] ? summaryMap[s.id].slice(0, 60).replace(/</g, '&lt;') : '';
       html += '<div class="sidebar-item' + active + '" data-id="' + s.id + '">'
+        + '<div style="flex:1;min-width:0">'
         + '<span class="sidebar-item-title">' + title + '</span>'
-        + '<div style="display:flex;gap:2px;align-items:center;">'
+        + (summary ? '<div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">' + summary + '</div>' : '')
+        + '</div>'
+        + '<div style="display:flex;gap:2px;align-items:center;flex-shrink:0">'
         + '<button class="sidebar-item-export" data-id="' + s.id + '" title="Export as Markdown" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:2px 4px;font-size:13px;opacity:0.6;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">⬇</button>'
         + '<button class="sidebar-item-delete" data-id="' + s.id + '" title="Delete">\u00d7</button>'
         + '</div>'

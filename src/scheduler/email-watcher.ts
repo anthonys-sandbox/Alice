@@ -13,7 +13,12 @@ let lastCheckTime: string | null = null;
  * Email Watch & Alerts: polls Gmail every 2 minutes for new urgent emails.
  * Classifies urgency via background LLM, alerts in Google Chat for urgent items.
  */
+let _agent: Agent | null = null;
+let _chat: GoogleChatAdapter | null = null;
+
 export function startEmailWatcher(agent: Agent, chat: GoogleChatAdapter): void {
+    _agent = agent;
+    _chat = chat;
     log.info('Starting email watcher (every 2 min)');
 
     // Initialize with current time so we don't alert on old emails
@@ -118,4 +123,19 @@ export function stopEmailWatcher(): void {
         watchTask = null;
         log.info('Email watcher stopped');
     }
+}
+
+export function isEmailWatcherRunning(): boolean {
+    return watchTask !== null;
+}
+
+export function toggleEmailWatcher(): boolean {
+    if (watchTask) {
+        stopEmailWatcher();
+        return false;
+    } else if (_agent && _chat) {
+        startEmailWatcher(_agent, _chat);
+        return true;
+    }
+    return false;
 }
