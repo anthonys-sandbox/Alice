@@ -16,6 +16,8 @@ import { generateDocument } from './doc-generator.js';
 import { briefPerson, relationshipHealth } from './people-intel.js';
 import { listRepos, listIssues, createIssue, listPRs, searchCode } from '../integrations/github.js';
 import { KnowledgeBase } from '../memory/knowledge-base.js';
+import { composeEmail } from './email-composer.js';
+import { ApprovalWorkflow } from './approval-workflow.js';
 import { join } from 'path';
 
 const log = createLogger('Agent');
@@ -1490,6 +1492,80 @@ Use emoji and clean formatting.`,
             description: 'Get knowledge base statistics.',
             parameters: { type: 'object', properties: {}, required: [] },
             execute: async () => JSON.stringify(kb.getStats(), null, 2),
+        });
+
+        // ── Smart Email Composer ─────────────────────────────
+        registerTool({
+            name: 'compose_email',
+            description: 'Draft or send an email with tone control. Supports: formal, casual, urgent, friendly, concise. Can reference thread history and match recipient communication style.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    to: { type: 'string', description: 'Recipient email' },
+                    subject: { type: 'string', description: 'Email subject (optional, will generate if omitted)' },
+                    context: { type: 'string', description: 'What to write about / instructions' },
+                    tone: { type: 'string', description: 'Tone: formal, casual, urgent, friendly, concise (default: friendly)' },
+                    reply_to: { type: 'string', description: 'Message ID to reply to (optional)' },
+                    thread_id: { type: 'string', description: 'Thread ID (optional)' },
+                    action: { type: 'string', description: 'draft or send (default: draft)' },
+                },
+                required: ['to', 'context'],
+            },
+            execute: async (args: any) => {
+                const result = await composeEmail(this, {
+                    to: args.to,
+                    subject: args.subject,
+                    context: args.context,
+                    tone: args.tone || 'friendly',
+                    replyToId: args.reply_to,
+                    threadId: args.thread_id,
+                    action: args.action || 'draft',
+                });
+                return JSON.stringify(result, null, 2);
+            },
+        });
+
+        // ── Approval Workflow ────────────────────────────────
+        const approvals = new ApprovalWorkflow(config.memory.dir);
+
+        registerTool({
+            name: 'list_approvals',
+            description: 'List pending approval requests that need your review.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                const pending = approvals.getPending();
+                if (pending.length === 0) return 'No pending approvals.';
+                return pending.map(a =>
+                    `🔔 [${a.id}] ${a.tool}\nPreview: ${a.preview}\nCreated: ${a.createdAt}`
+                ).join('\n\n---\n\n');
+            },
+        });
+
+        registerTool({
+            name: 'approve_action',
+            description: 'Approve a pending action by its approval ID.',
+            parameters: { type: 'object', properties: { id: { type: 'string', description: 'Approval ID' }, note: { type: 'string', description: 'Optional note' } }, required: ['id'] },
+            execute: async (args: any) => {
+                const approved = approvals.approve(args.id, args.note);
+                if (!approved) return 'Approval not found or already resolved.';
+                // Execute the approved tool
+                try {
+                    const result = await executeTool(approved.tool, approved.args);
+                    return `✅ Approved and executed ${approved.tool}.\nResult: ${typeof result === 'string' ? result.slice(0, 500) : JSON.stringify(result).slice(0, 500)}`;
+                } catch (err: any) {
+                    return `✅ Approved but execution failed: ${err.message}`;
+                }
+            },
+        });
+
+        registerTool({
+            name: 'reject_action',
+            description: 'Reject a pending action by its approval ID.',
+            parameters: { type: 'object', properties: { id: { type: 'string', description: 'Approval ID' }, note: { type: 'string', description: 'Reason for rejection' } }, required: ['id'] },
+            execute: async (args: any) => {
+                const rejected = approvals.reject(args.id, args.note);
+                return rejected ? '❌ Action rejected.' : 'Approval not found or already resolved.';
+            },
         });
 
         this.refreshContext();

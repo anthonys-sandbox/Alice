@@ -3412,6 +3412,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       { cmd: '/schedule', desc: 'Find free time', transform: (args) => 'Use find_free_time to find available ' + (args || 'slots this week') },
       { cmd: '/kb', desc: 'Search knowledge base', transform: (args) => 'Use kb_search to search for: ' + args },
       { cmd: '/cost', desc: 'Meeting cost analysis', transform: (args) => 'Use meeting_cost to calculate meeting costs' },
+      { cmd: '/compose', desc: 'Draft an email with tone', transform: (args) => { const parts = args.split(' '); return 'Use compose_email to draft an email to ' + parts[0] + ' about: ' + parts.slice(1).join(' '); } },
+      { cmd: '/approvals', desc: 'View pending approvals', transform: () => 'Use list_approvals to show all pending approval requests' },
     ];
 
     // Slash command autocomplete popup
