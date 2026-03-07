@@ -1256,6 +1256,123 @@ Return the created event details.`,
             },
         });
 
+        // ── Multi-Modal Input ─────────────────────────────────────
+        registerTool({
+            name: 'analyze_image',
+            description: 'Analyze an image using Gemini Vision. Can identify objects, read text, describe scenes, answer questions about images.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    image_url: { type: 'string', description: 'URL or local path to the image' },
+                    question: { type: 'string', description: 'What to analyze or ask about the image (default: general description)' },
+                },
+                required: ['image_url'],
+            },
+            execute: async (args: any) => {
+                const question = args.question || 'Describe this image in detail. If there is text, read it. If there are errors or UI elements, identify them.';
+                const result = await this.processBackgroundMessage(
+                    `Analyze this image: ${args.image_url}\n\nQuestion: ${question}`,
+                    { useMainProvider: true }
+                );
+                return result.text;
+            },
+        });
+
+        registerTool({
+            name: 'analyze_screenshot',
+            description: 'Take a screenshot of a URL and analyze it visually. Useful for checking websites, UI reviews, error diagnosis.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    url: { type: 'string', description: 'URL to screenshot and analyze' },
+                    question: { type: 'string', description: 'What to look for (optional)' },
+                },
+                required: ['url'],
+            },
+            execute: async (args: any) => {
+                try {
+                    const screenshotResult = await executeTool('screenshot', { url: args.url });
+                    const question = args.question || 'Describe what you see on this page. Note any issues, errors, or notable UI elements.';
+                    const result = await this.processBackgroundMessage(
+                        `I took a screenshot of ${args.url}. Result: ${screenshotResult}\n\n${question}`,
+                        { useMainProvider: true }
+                    );
+                    return result.text;
+                } catch (err: any) {
+                    return `Screenshot failed: ${err.message}. Try analyze_image with a direct image URL instead.`;
+                }
+            },
+        });
+
+        // ── Habit Tracking ──────────────────────────────────────
+        registerTool({
+            name: 'time_analysis',
+            description: 'Analyze your time usage: meeting hours vs focus hours, meeting types, busiest days, trends compared to previous period.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    period: { type: 'string', description: 'Analysis period: "week", "month" (default: week)' },
+                },
+                required: [],
+            },
+            execute: async (args: any) => {
+                const period = args.period || 'week';
+                const now = new Date();
+                let startDate: Date, endDate: Date, prevStartDate: Date, prevEndDate: Date;
+
+                if (period === 'month') {
+                    startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                    endDate = now;
+                    prevStartDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                    prevEndDate = new Date(now.getFullYear(), now.getMonth(), 0);
+                } else {
+                    const day = now.getDay();
+                    startDate = new Date(now); startDate.setDate(now.getDate() - day + 1); startDate.setHours(0, 0, 0, 0);
+                    endDate = now;
+                    prevStartDate = new Date(startDate); prevStartDate.setDate(startDate.getDate() - 7);
+                    prevEndDate = new Date(startDate); prevEndDate.setDate(startDate.getDate() - 1); prevEndDate.setHours(23, 59, 59, 999);
+                }
+
+                const [current, previous] = await Promise.all([
+                    executeTool('calendar_list', { time_min: startDate.toISOString(), time_max: endDate.toISOString(), max_results: 100 }),
+                    executeTool('calendar_list', { time_min: prevStartDate.toISOString(), time_max: prevEndDate.toISOString(), max_results: 100 }),
+                ]);
+
+                const result = await this.processBackgroundMessage(
+                    `Provide a comprehensive time analysis comparing this ${period} vs. last ${period}.
+
+This ${period}'s events:
+${current}
+
+Previous ${period}'s events:
+${previous}
+
+Calculate and present:
+📊 **Time Breakdown**
+- Total meeting hours vs. available work hours
+- Focus time percentage
+- Meeting count
+
+📈 **Trends**
+- Comparison to previous ${period} (more/fewer meetings, more/less focus time)
+
+📅 **Patterns**
+- Busiest day
+- Most common meeting types (1:1, team, external)
+- Longest meeting
+- Average meeting length
+
+💡 **Insights**
+- Whether meeting load is sustainable
+- Suggestions for improvement
+
+Use emoji and clean formatting.`,
+                    { useMainProvider: false }
+                );
+                return result.text;
+            },
+        });
+
         this.refreshContext();
     }
 

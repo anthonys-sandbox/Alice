@@ -1040,6 +1040,7 @@ export function toGeminiFunctionDeclarations() {
         'list_playbooks', 'run_playbook', 'deep_research',
         'find_free_time', 'schedule_meeting', 'time_block', 'meeting_cost',
         'generate_document', 'brief_person', 'relationship_health',
+        'analyze_image', 'analyze_screenshot', 'time_analysis',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))
