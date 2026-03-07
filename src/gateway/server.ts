@@ -748,6 +748,28 @@ export class Gateway {
       } catch (err: any) { res.status(500).json({ error: err.message }); }
     });
 
+    // ── Knowledge Graph API ─────────────────────────
+    this.app.get('/api/knowledge-graph', (_req, res) => {
+      try {
+        const store = getMemoryStore();
+        if (!store) { res.json({ entities: [] }); return; }
+
+        const query = _req.query.q as string | undefined;
+        const entities = query
+          ? store.searchEntities(query)
+          : store.listEntities();
+
+        const enriched = entities.map((e: any) => ({
+          ...e,
+          relations: store.getRelations(e.name),
+        }));
+
+        res.json({ entities: enriched });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // ── Cron Jobs API ─────────────────────────────
     this.app.get('/api/cron-jobs', (_req, res) => {
       try {
@@ -2559,6 +2581,122 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     .voice-share-preview video {
       width: 100%; display: block;
     }
+    .voice-tool-pill {
+      display: none; padding: 6px 16px; border-radius: 20px;
+      background: rgba(99,102,241,0.2); border: 1px solid rgba(99,102,241,0.3);
+      color: #a5b4fc; font-size: 12px; font-weight: 500;
+      margin-top: 8px; gap: 6px; align-items: center;
+      animation: voiceToolPulse 1.5s ease-in-out infinite;
+    }
+    .voice-tool-pill.visible { display: inline-flex; }
+    @keyframes voiceToolPulse {
+      0%, 100% { opacity: 0.7; } 50% { opacity: 1; }
+    }
+    .notification-bell {
+      position: relative; background: transparent; border: none;
+      cursor: pointer; color: var(--text-secondary); width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; transition: all 0.2s;
+    }
+    .notification-bell:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+    .notification-badge {
+      position: absolute; top: 2px; right: 2px; width: 8px; height: 8px;
+      border-radius: 50%; background: #ef4444; display: none;
+    }
+    .notification-badge.visible { display: block; }
+    .notification-dropdown {
+      display: none; position: absolute; top: 40px; right: 0;
+      width: 360px; max-height: 400px; overflow-y: auto;
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      z-index: 1000; padding: 8px 0;
+    }
+    .notification-dropdown.open { display: block; }
+    .notification-dropdown-header {
+      padding: 12px 16px; font-weight: 600; font-size: 14px;
+      color: var(--text-primary); border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .notification-item {
+      padding: 10px 16px; font-size: 13px; color: var(--text-secondary);
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .notification-item:last-child { border-bottom: none; }
+    .notification-time { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
+    .notification-empty {
+      padding: 24px 16px; text-align: center;
+      color: var(--text-tertiary); font-size: 13px;
+    }
+    .deep-research-bar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 16px; border-radius: 12px;
+      background: var(--bg-tertiary); border: 1px solid rgba(99,102,241,0.2);
+      margin: 8px 0; font-size: 13px; color: var(--text-secondary);
+    }
+    .deep-research-bar .progress-track {
+      flex: 1; height: 4px; border-radius: 2px;
+      background: rgba(255,255,255,0.1); overflow: hidden;
+    }
+    .deep-research-bar .progress-fill {
+      height: 100%; border-radius: 2px;
+      background: linear-gradient(90deg, #818cf8, #a78bfa);
+      animation: researchProgress 3s ease-in-out infinite;
+    }
+    @keyframes researchProgress {
+      0% { width: 10%; } 50% { width: 70%; } 100% { width: 10%; }
+    }
+    .kg-btn {
+      background: transparent; border: none; cursor: pointer;
+      color: var(--text-secondary); width: 32px; height: 32px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 50%; transition: all 0.2s;
+    }
+    .kg-btn:hover { color: var(--text-primary); background: var(--bg-tertiary); }
+    .kg-modal {
+      display: none; position: fixed; inset: 0; z-index: 10000;
+      background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    .kg-modal.open { display: flex; }
+    .kg-panel {
+      width: 90%; max-width: 800px; max-height: 80vh;
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: 16px; overflow: hidden; display: flex; flex-direction: column;
+    }
+    .kg-header {
+      padding: 16px 20px; font-weight: 600; font-size: 16px;
+      border-bottom: 1px solid var(--border); display: flex;
+      justify-content: space-between; align-items: center;
+    }
+    .kg-body {
+      flex: 1; overflow-y: auto; padding: 16px 20px;
+    }
+    .kg-entity-card {
+      padding: 12px 16px; border-radius: 10px;
+      background: var(--bg-tertiary); margin-bottom: 10px;
+      border: 1px solid var(--border);
+    }
+    .kg-entity-name { font-weight: 600; font-size: 14px; color: var(--text-primary); }
+    .kg-entity-type {
+      display: inline-block; padding: 2px 8px; border-radius: 12px;
+      background: rgba(99,102,241,0.15); color: #a5b4fc;
+      font-size: 11px; font-weight: 500; margin-left: 8px;
+    }
+    .kg-entity-desc { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+    .kg-entity-rels { margin-top: 8px; }
+    .kg-rel {
+      font-size: 12px; color: var(--text-tertiary); padding: 2px 0;
+    }
+    .kg-rel-arrow { color: #818cf8; }
+    .kg-empty { text-align: center; padding: 40px; color: var(--text-tertiary); }
+    .kg-search {
+      width: 100%; padding: 8px 12px; border-radius: 8px;
+      background: var(--bg-primary); border: 1px solid var(--border);
+      color: var(--text-primary); font-size: 13px; margin-bottom: 12px;
+      outline: none;
+    }
+    .kg-search:focus { border-color: #818cf8; }
     .voice-mode-btn {
       background: transparent; border: none; cursor: pointer;
       color: var(--text-secondary);
@@ -2677,6 +2815,22 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <svg class="mic-icon-idle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
           <svg class="mic-icon-stop" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
         </button>
+        <button id="kgBtn" class="kg-btn" title="Knowledge Graph">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="20" cy="18" r="2"/><line x1="6" y1="7" x2="10" y2="10"/><line x1="18" y1="7" x2="14" y2="10"/><line x1="6" y1="17" x2="10" y2="14"/><line x1="18" y1="17" x2="14" y2="14"/></svg>
+        </button>
+        <div style="position:relative;">
+          <button id="notifBell" class="notification-bell" title="Notifications">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0m-10.47-5.674A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
+            <span id="notifBadge" class="notification-badge"></span>
+          </button>
+          <div id="notifDropdown" class="notification-dropdown">
+            <div class="notification-dropdown-header">
+              <span>Notifications</span>
+              <button id="notifClear" style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:12px;">Clear all</button>
+            </div>
+            <div id="notifList"><div class="notification-empty">No notifications yet</div></div>
+          </div>
+        </div>
         <button id="voiceModeBtn" class="voice-mode-btn" title="Voice conversation">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="9" width="2" height="6" rx="1"/><rect x="8" y="5" width="2" height="14" rx="1"/><rect x="12" y="3" width="2" height="18" rx="1"/><rect x="16" y="7" width="2" height="10" rx="1"/><rect x="20" y="10" width="2" height="4" rx="1"/></svg>
         </button>
@@ -2700,6 +2854,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     <div id="voiceOrb" class="voice-orb"></div>
     <div id="voiceStatus" class="voice-status">Connecting…</div>
     <div id="voiceTranscript" class="voice-transcript"></div>
+    <div id="voiceToolPill" class="voice-tool-pill">🔧 <span id="voiceToolName">Searching…</span></div>
     <div class="voice-controls">
       <button id="voiceShareBtn" class="voice-share-btn" title="Share your screen">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2712,6 +2867,20 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     </div>
     <div id="voiceSharePreview" class="voice-share-preview">
       <video id="voiceShareVideo" autoplay muted playsinline></video>
+    </div>
+  </div>
+
+  <!-- Knowledge Graph Modal -->
+  <div id="kgModal" class="kg-modal">
+    <div class="kg-panel">
+      <div class="kg-header">
+        <span>🧠 Knowledge Graph</span>
+        <button id="kgClose" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:18px;">✕</button>
+      </div>
+      <div class="kg-body">
+        <input id="kgSearch" class="kg-search" placeholder="Search entities…" />
+        <div id="kgEntities"></div>
+      </div>
     </div>
   </div>
 
@@ -4678,15 +4847,18 @@ if ('serviceWorker' in navigator) {
   let inputTranscript = '';
   let outputTranscript = '';
 
+  var screenSharing = false;
   function setVoiceState(state) {
     orb.className = 'voice-orb ' + state;
-    const labels = {
+    var labels = {
       '': 'Connecting…',
       'listening': 'Listening…',
       'thinking': 'Thinking…',
       'speaking': 'Speaking…',
     };
-    statusEl.textContent = labels[state] || state;
+    var label = labels[state] || state;
+    if (screenSharing && state) label += ' · 🖥️ Sharing';
+    statusEl.textContent = label;
   }
 
   // Convert Float32 audio samples to 16-bit PCM
@@ -5015,11 +5187,213 @@ if ('serviceWorker' in navigator) {
               }
             }, 2000);
           }
+
+          // Voice tool call indicator
+          if (data.type === 'voice_tool_call') {
+            var toolPill = document.getElementById('voiceToolPill');
+            var toolName = document.getElementById('voiceToolName');
+            if (toolPill && toolName) {
+              var friendlyNames = {
+                web_search: 'Searching the web…',
+                search_memory: 'Searching memory…',
+                semantic_search: 'Searching knowledge…',
+                browse_page: 'Reading a page…',
+                set_reminder: 'Setting reminder…',
+                generate_image: 'Creating image…',
+                get_location: 'Getting location…',
+                deep_research: 'Running deep research…',
+                knowledge_graph: 'Querying knowledge graph…',
+                add_knowledge: 'Updating knowledge graph…',
+              };
+              var name = data.tool || data.name || 'tool';
+              toolName.textContent = friendlyNames[name] || ('Using ' + name + '…');
+              toolPill.classList.add('visible');
+              setTimeout(function() { toolPill.classList.remove('visible'); }, 8000);
+            }
+          }
         });
       }
     }, 200);
   }
   hookVoiceMessages();
+
+  // --- Notification Center ---
+  var notifHistory = [];
+  var notifBell = document.getElementById('notifBell');
+  var notifDropdown = document.getElementById('notifDropdown');
+  var notifBadge = document.getElementById('notifBadge');
+  var notifList = document.getElementById('notifList');
+  var notifClear = document.getElementById('notifClear');
+
+  function addNotification(msg, priority) {
+    notifHistory.unshift({ message: msg, priority: priority || 'info', time: new Date() });
+    if (notifHistory.length > 50) notifHistory.pop();
+    notifBadge.classList.add('visible');
+    renderNotifList();
+  }
+
+  function renderNotifList() {
+    if (!notifList) return;
+    if (notifHistory.length === 0) {
+      notifList.innerHTML = '<div class="notification-empty">No notifications yet</div>';
+      return;
+    }
+    var icons = { info: 'ℹ️', warning: '⚠️', urgent: '🚨' };
+    notifList.innerHTML = notifHistory.map(function(n) {
+      var ago = formatTimeAgo(n.time);
+      return '<div class="notification-item">' +
+        '<span>' + (icons[n.priority] || '🔔') + '</span>' +
+        '<span style="flex:1;">' + escapeHtml(n.message) + '</span>' +
+        '<span class="notification-time">' + ago + '</span></div>';
+    }).join('');
+  }
+
+  function formatTimeAgo(date) {
+    var s = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+  }
+
+  if (notifBell) {
+    notifBell.addEventListener('click', function(e) {
+      e.stopPropagation();
+      notifDropdown.classList.toggle('open');
+      notifBadge.classList.remove('visible');
+      renderNotifList();
+    });
+  }
+  if (notifClear) {
+    notifClear.addEventListener('click', function() {
+      notifHistory = [];
+      renderNotifList();
+    });
+  }
+  document.addEventListener('click', function() {
+    if (notifDropdown) notifDropdown.classList.remove('open');
+  });
+  if (notifDropdown) {
+    notifDropdown.addEventListener('click', function(e) { e.stopPropagation(); });
+  }
+
+  // --- Knowledge Graph Modal ---
+  var kgBtn = document.getElementById('kgBtn');
+  var kgModal = document.getElementById('kgModal');
+  var kgClose = document.getElementById('kgClose');
+  var kgSearch = document.getElementById('kgSearch');
+  var kgEntities = document.getElementById('kgEntities');
+
+  function openKgModal() {
+    kgModal.classList.add('open');
+    fetchKgData();
+  }
+
+  function closeKgModal() {
+    kgModal.classList.remove('open');
+  }
+
+  function fetchKgData(query) {
+    var url = '/api/knowledge-graph';
+    if (query) url += '?q=' + encodeURIComponent(query);
+    fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+      renderKgEntities(data.entities || []);
+    }).catch(function() {
+      kgEntities.innerHTML = '<div class="kg-empty">Failed to load knowledge graph</div>';
+    });
+  }
+
+  function renderKgEntities(entities) {
+    if (entities.length === 0) {
+      kgEntities.innerHTML = '<div class="kg-empty">No entities found. Ask Alice to add knowledge!</div>';
+      return;
+    }
+    kgEntities.innerHTML = entities.map(function(e) {
+      var rels = (e.relations || []).map(function(r) {
+        return '<div class="kg-rel"><span class="kg-rel-arrow">' +
+          (r.direction === 'from' ? '→' : '←') + '</span> ' +
+          escapeHtml(r.relation) + ' → <strong>' + escapeHtml(r.entity) + '</strong></div>';
+      }).join('');
+      return '<div class="kg-entity-card">' +
+        '<div><span class="kg-entity-name">' + escapeHtml(e.name) + '</span>' +
+        '<span class="kg-entity-type">' + escapeHtml(e.type) + '</span></div>' +
+        (e.description ? '<div class="kg-entity-desc">' + escapeHtml(e.description) + '</div>' : '') +
+        (rels ? '<div class="kg-entity-rels">' + rels + '</div>' : '') +
+        '</div>';
+    }).join('');
+  }
+
+  if (kgBtn) kgBtn.addEventListener('click', openKgModal);
+  if (kgClose) kgClose.addEventListener('click', closeKgModal);
+  if (kgModal) kgModal.addEventListener('click', function(e) { if (e.target === kgModal) closeKgModal(); });
+  if (kgSearch) {
+    var kgDebounce;
+    kgSearch.addEventListener('input', function() {
+      clearTimeout(kgDebounce);
+      kgDebounce = setTimeout(function() { fetchKgData(kgSearch.value); }, 300);
+    });
+  }
+
+  // --- Screen share badge updates ---
+  var origToggleShare = window.toggleScreenShare;
+  // Track screen sharing state for voice status badge
+  var sharePreview = document.getElementById('voiceSharePreview');
+  if (sharePreview) {
+    var observer = new MutationObserver(function() {
+      screenSharing = sharePreview.style.display !== 'none' && sharePreview.style.display !== '';
+    });
+    observer.observe(sharePreview, { attributes: true, attributeFilter: ['style'] });
+  }
+
+  // --- Deep Research + Parallel Tasks Progress ---
+  // Hook into main WS to catch tool_output events for progress
+  var researchCheckWs = setInterval(function() {
+    if (window._aliceWs) {
+      clearInterval(researchCheckWs);
+      window._aliceWs.addEventListener('message', function(event) {
+        var data;
+        try { data = JSON.parse(event.data); } catch { return; }
+
+        // Notification handler
+        if (data.type === 'notification') {
+          addNotification(data.message || 'Notification', data.priority);
+        }
+
+        // Deep research progress
+        if (data.type === 'tool_output' && data.tool === 'deep_research' && data.status === 'progress') {
+          var existing = document.getElementById('deep-research-progress');
+          if (!existing) {
+            var chatArea = document.getElementById('messages');
+            if (chatArea) {
+              var bar = document.createElement('div');
+              bar.id = 'deep-research-progress';
+              bar.className = 'deep-research-bar';
+              bar.innerHTML = '🔬 <span>Deep Research in progress… <span id="dr-elapsed">0s</span></span>' +
+                '<div class="progress-track"><div class="progress-fill"></div></div>';
+              chatArea.appendChild(bar);
+              chatArea.scrollTop = chatArea.scrollHeight;
+              // Start elapsed timer
+              var drStart = Date.now();
+              var drTimer = setInterval(function() {
+                var el = document.getElementById('dr-elapsed');
+                if (el) el.textContent = Math.floor((Date.now() - drStart) / 1000) + 's';
+                else clearInterval(drTimer);
+              }, 1000);
+            }
+          }
+        }
+        if (data.type === 'tool_output' && data.tool === 'deep_research' && data.status === 'complete') {
+          var bar = document.getElementById('deep-research-progress');
+          if (bar) bar.remove();
+        }
+      });
+    }
+  }, 200);
+
 })();
 
 <\/script>

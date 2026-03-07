@@ -846,6 +846,7 @@ export class Agent {
 
                 const interactionId = interaction.id;
                 log.info('Deep research started', { id: interactionId });
+                toolEvents.emit('tool_output', { tool: 'deep_research', status: 'progress', message: 'Research started' });
 
                 // Poll for completion (max 10 minutes)
                 const maxWaitMs = 10 * 60 * 1000;
@@ -862,12 +863,14 @@ export class Agent {
                             ? outputs[outputs.length - 1].text || 'Research completed but no text output.'
                             : 'Research completed but no outputs returned.';
                         log.info('Deep research completed', { id: interactionId, reportChars: report.length });
+                        toolEvents.emit('tool_output', { tool: 'deep_research', status: 'complete' });
                         return report;
                     }
 
                     if (result.status === 'failed') {
                         const errMsg = result.error || 'Unknown error';
                         log.error('Deep research failed', { id: interactionId, error: errMsg });
+                        toolEvents.emit('tool_output', { tool: 'deep_research', status: 'complete' });
                         return `Deep research failed: ${errMsg}`;
                     }
 
