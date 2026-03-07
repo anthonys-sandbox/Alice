@@ -1071,6 +1071,259 @@ export class Agent {
             },
         });
 
+        // ── Docs ──
+        registerTool({
+            name: 'docs_get',
+            description: 'Read the content of a Google Doc by its document ID. Returns the document structure and text.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    document_id: { type: 'string', description: 'The Google Docs document ID (from the URL)' },
+                },
+                required: ['document_id'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['docs', 'documents', 'get', '--params', JSON.stringify({ documentId: args.document_id })]);
+            },
+        });
+
+        registerTool({
+            name: 'docs_create',
+            description: 'Create a new blank Google Doc with a title.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    title: { type: 'string', description: 'Document title' },
+                },
+                required: ['title'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['docs', 'documents', 'create', '--json', JSON.stringify({ title: args.title })]);
+            },
+        });
+
+        // ── Slides ──
+        registerTool({
+            name: 'slides_get',
+            description: 'Read a Google Slides presentation. Returns slide content, speaker notes, and structure.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    presentation_id: { type: 'string', description: 'The presentation ID (from the URL)' },
+                },
+                required: ['presentation_id'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['slides', 'presentations', 'get', '--params', JSON.stringify({ presentationId: args.presentation_id })]);
+            },
+        });
+
+        // ── Tasks ──
+        registerTool({
+            name: 'tasks_list',
+            description: 'List Google Tasks from a task list. Shows task titles, due dates, and completion status.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    task_list: { type: 'string', description: 'Task list ID (default: "@default" for primary list)' },
+                    show_completed: { type: 'boolean', description: 'Include completed tasks (default: false)' },
+                },
+                required: [],
+            },
+            execute: async (args: Record<string, any>) => {
+                const params: any = { tasklist: args.task_list || '@default', showCompleted: args.show_completed || false };
+                return runGws(['tasks', 'tasks', 'list', '--params', JSON.stringify(params)]);
+            },
+        });
+
+        registerTool({
+            name: 'tasks_create',
+            description: 'Create a new Google Task. Optionally set due date and notes.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    title: { type: 'string', description: 'Task title' },
+                    notes: { type: 'string', description: 'Task notes/description (optional)' },
+                    due: { type: 'string', description: 'Due date in RFC3339 format (optional)' },
+                    task_list: { type: 'string', description: 'Task list ID (default: "@default")' },
+                },
+                required: ['title'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const task: any = { title: args.title };
+                if (args.notes) task.notes = args.notes;
+                if (args.due) task.due = args.due;
+                return runGws(['tasks', 'tasks', 'insert', '--params', JSON.stringify({ tasklist: args.task_list || '@default' }), '--json', JSON.stringify(task)]);
+            },
+        });
+
+        // ── People / Contacts ──
+        registerTool({
+            name: 'contacts_search',
+            description: 'Search Google Contacts by name, email, or other info. Returns matching contacts with details.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Search query (name, email, phone, etc.)' },
+                    max_results: { type: 'number', description: 'Max results (default 10)' },
+                },
+                required: ['query'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['people', 'people', 'searchContacts', '--params', JSON.stringify({
+                    query: args.query,
+                    readMask: 'names,emailAddresses,phoneNumbers,organizations',
+                    pageSize: args.max_results || 10,
+                })]);
+            },
+        });
+
+        // ── Chat ──
+        registerTool({
+            name: 'chat_send',
+            description: 'Send a message to a Google Chat space. Requires the space resource name.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    space: { type: 'string', description: 'Chat space resource name (e.g. "spaces/AAAA...")' },
+                    message: { type: 'string', description: 'Message text to send' },
+                },
+                required: ['space', 'message'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['chat', 'spaces.messages', 'create', '--params', JSON.stringify({ parent: args.space }), '--json', JSON.stringify({ text: args.message })]);
+            },
+        });
+
+        registerTool({
+            name: 'chat_list_spaces',
+            description: 'List all Google Chat spaces the user is a member of.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                return runGws(['chat', 'spaces', 'list', '--params', JSON.stringify({ pageSize: 50 })]);
+            },
+        });
+
+        // ── Keep ──
+        registerTool({
+            name: 'keep_list',
+            description: 'List Google Keep notes. Returns note titles and content.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    max_results: { type: 'number', description: 'Max number of notes (default 20)' },
+                },
+                required: [],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['keep', 'notes', 'list', '--params', JSON.stringify({ pageSize: args.max_results || 20 })]);
+            },
+        });
+
+        registerTool({
+            name: 'keep_create',
+            description: 'Create a new Google Keep note with a title and body text.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    title: { type: 'string', description: 'Note title' },
+                    body: { type: 'string', description: 'Note body text' },
+                },
+                required: ['title', 'body'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['keep', 'notes', 'create', '--json', JSON.stringify({
+                    title: args.title,
+                    body: { text: { text: args.body } },
+                })]);
+            },
+        });
+
+        // ── Meet ──
+        registerTool({
+            name: 'meet_create',
+            description: 'Create a new Google Meet conference link.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                return runGws(['meet', 'conferenceRecords', 'list', '--params', JSON.stringify({ pageSize: 1 })]);
+            },
+        });
+
+        // ── Forms ──
+        registerTool({
+            name: 'forms_responses',
+            description: 'Read responses from a Google Form. Returns all submitted answers.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    form_id: { type: 'string', description: 'The Google Form ID (from the URL)' },
+                },
+                required: ['form_id'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['forms', 'forms.responses', 'list', '--params', JSON.stringify({ formId: args.form_id })]);
+            },
+        });
+
+        // ── Workflow Helpers (cross-service productivity) ──
+        registerTool({
+            name: 'standup_report',
+            description: 'Generate a standup report: today\'s calendar events + open tasks, formatted as a summary. Great for daily briefings.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                return runGws(['workflow', '+standup-report']);
+            },
+        });
+
+        registerTool({
+            name: 'meeting_prep',
+            description: 'Prepare for the next meeting: pulls agenda, attendees, and linked documents. Run before an upcoming meeting.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                return runGws(['workflow', '+meeting-prep']);
+            },
+        });
+
+        registerTool({
+            name: 'email_to_task',
+            description: 'Convert a Gmail message into a Google Tasks entry. Extracts subject and creates a task with a link back to the email.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    message_id: { type: 'string', description: 'The Gmail message ID to convert' },
+                },
+                required: ['message_id'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['workflow', '+email-to-task', '--params', JSON.stringify({ messageId: args.message_id })]);
+            },
+        });
+
+        registerTool({
+            name: 'weekly_digest',
+            description: 'Generate a weekly digest: this week\'s meetings + unread email count. Great for end-of-week summaries.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                return runGws(['workflow', '+weekly-digest']);
+            },
+        });
+
+        registerTool({
+            name: 'file_announce',
+            description: 'Announce a Google Drive file in a Chat space. Posts a message with the file name and link.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    file_id: { type: 'string', description: 'The Drive file ID to announce' },
+                    space: { type: 'string', description: 'The Chat space to post to (e.g. "spaces/AAAA...")' },
+                },
+                required: ['file_id', 'space'],
+            },
+            execute: async (args: Record<string, any>) => {
+                return runGws(['workflow', '+file-announce', '--params', JSON.stringify({ fileId: args.file_id, space: args.space })]);
+            },
+        });
+
         this.refreshContext();
     }
 
