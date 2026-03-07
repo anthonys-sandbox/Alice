@@ -951,6 +951,9 @@ export class Gateway {
 
           // ── Voice Mode handlers (Gemini Live API) ──
           if (parsed.type === 'voice_start') {
+            // Initialize transcript accumulators
+            (ws as any)._voiceInputTranscript = '';
+            (ws as any)._voiceOutputTranscript = '';
             try {
               const apiKey = this.config.gemini?.apiKey || process.env.GEMINI_API_KEY || '';
               const liveAi = new GoogleGenAI({ apiKey });
@@ -961,6 +964,22 @@ export class Gateway {
               const basePrompt = this.agent.getSystemPrompt();
               const sysPrompt = basePrompt + '\n\nIMPORTANT: This is a live voice conversation. Keep responses natural, conversational, and concise. Avoid markdown formatting, code blocks, or long lists. Respond as if speaking to a friend.';
 
+              // Select voice-appropriate tools (skip file writing, code, heavy tools)
+              const voiceToolNames = new Set([
+                'web_search', 'search_memory', 'semantic_search', 'set_reminder',
+                'cancel_reminder', 'list_reminders', 'get_location', 'web_fetch',
+                'bash', 'read_file', 'list_directory', 'git_status',
+                'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
+              ]);
+              const { getAllTools } = await import('../runtime/tools/registry.js');
+              const voiceTools = getAllTools()
+                .filter(t => voiceToolNames.has(t.name) || t.name.startsWith('mcp_'))
+                .map(t => ({
+                  name: t.name,
+                  description: t.description,
+                  parameters: t.parameters,
+                }));
+
               const liveSession = await liveAi.live.connect({
                 model: liveModel,
                 config: {
@@ -968,6 +987,7 @@ export class Gateway {
                   systemInstruction: sysPrompt,
                   inputAudioTranscription: {},
                   outputAudioTranscription: {},
+                  tools: [{ functionDeclarations: voiceTools }],
                 },
                 callbacks: {
                   onopen: () => {
@@ -1004,26 +1024,67 @@ export class Gateway {
 
                     // Handle input transcription
                     if ((message as any).serverContent?.inputTranscription?.text) {
+                      const txt = (message as any).serverContent.inputTranscription.text;
+                      (ws as any)._voiceInputTranscript += txt;
                       ws.send(JSON.stringify({
                         type: 'voice_input_transcript',
-                        text: (message as any).serverContent.inputTranscription.text,
+                        text: txt,
                       }));
                     }
 
                     // Handle output transcription
                     if ((message as any).serverContent?.outputTranscription?.text) {
+                      const txt = (message as any).serverContent.outputTranscription.text;
+                      (ws as any)._voiceOutputTranscript += txt;
                       ws.send(JSON.stringify({
                         type: 'voice_output_transcript',
-                        text: (message as any).serverContent.outputTranscription.text,
+                        text: txt,
                       }));
                     }
 
-                    // Handle tool calls
+                    // Handle tool calls — execute and return results
                     if (message.toolCall?.functionCalls) {
                       ws.send(JSON.stringify({
                         type: 'voice_status',
                         status: 'thinking',
                       }));
+
+                      // Async IIFE — onmessage is sync but tool execution is async
+                      (async () => {
+                        const { executeTool } = await import('../runtime/tools/registry.js');
+                        const session = (ws as any)._liveSession as LiveSession | undefined;
+                        if (!session) return;
+
+                        const functionResponses: Array<{ name: string; id: string; response: Record<string, any> }> = [];
+                        for (const fc of message.toolCall!.functionCalls!) {
+                          const toolName = fc.name || 'unknown';
+                          log.info('Voice tool call', { name: toolName, args: Object.keys(fc.args || {}) });
+                          ws.send(JSON.stringify({
+                            type: 'voice_tool_call',
+                            tool: toolName,
+                          }));
+
+                          try {
+                            const result = await executeTool(toolName, fc.args || {});
+                            functionResponses.push({
+                              name: toolName,
+                              id: fc.id || '',
+                              response: { result },
+                            });
+                          } catch (err: any) {
+                            functionResponses.push({
+                              name: toolName,
+                              id: fc.id || '',
+                              response: { error: err.message || 'Tool execution failed' },
+                            });
+                          }
+                        }
+
+                        // Send tool results back to Gemini Live
+                        session.sendToolResponse({ functionResponses });
+                      })().catch(err => {
+                        log.error('Voice tool execution failed', { error: err.message });
+                      });
                     }
                   },
                   onerror: (e: any) => {
@@ -1070,6 +1131,13 @@ export class Gateway {
           }
 
           if (parsed.type === 'voice_stop') {
+            // Save accumulated transcripts to session store
+            const inputTranscript = (ws as any)._voiceInputTranscript || '';
+            const outputTranscript = (ws as any)._voiceOutputTranscript || '';
+            this.agent.saveVoiceTranscript(inputTranscript, outputTranscript);
+            (ws as any)._voiceInputTranscript = '';
+            (ws as any)._voiceOutputTranscript = '';
+
             const session = (ws as any)._liveSession as LiveSession | undefined;
             if (session) {
               try { session.close(); } catch { }

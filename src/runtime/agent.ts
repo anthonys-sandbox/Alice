@@ -773,6 +773,25 @@ export class Agent {
     }
 
     /**
+     * Save voice conversation transcripts to the session store.
+     * Called by Gateway when a voice session ends.
+     */
+    saveVoiceTranscript(userText: string, assistantText: string): void {
+        if (!userText.trim() && !assistantText.trim()) return;
+
+        if (userText.trim()) {
+            this.pushMessage({ role: 'user', parts: [{ text: `[Voice] ${userText.trim()}` }] });
+        }
+        if (assistantText.trim()) {
+            this.pushMessage({ role: 'model', parts: [{ text: `[Voice] ${assistantText.trim()}` }] });
+        }
+        log.info('Voice transcript saved', {
+            userChars: userText.length,
+            assistantChars: assistantText.length,
+        });
+    }
+
+    /**
      * Estimate token count for a set of messages (rough: ~4 chars per token).
      */
     private estimateTokens(messages: LLMMessage[]): number {
