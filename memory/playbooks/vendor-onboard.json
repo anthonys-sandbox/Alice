@@ -1,0 +1,34 @@
+{
+    "name": "vendor-onboard",
+    "description": "Onboard a new vendor: create Drive folder, draft intro email, create follow-up tasks.",
+    "trigger": "manual",
+    "steps": [
+        {
+            "tool": "docs_create",
+            "args": {
+                "title": "Vendor Notes — {{vendor_name}}"
+            },
+            "output_var": "vendor_doc",
+            "description": "Create a vendor notes document"
+        },
+        {
+            "tool": "tasks_create",
+            "args": {
+                "title": "Review {{vendor_name}} contract",
+                "notes": "Vendor onboarding: review terms, pricing, and SLAs",
+                "due": "{{due_date}}"
+            },
+            "output_var": "task_review",
+            "description": "Create contract review task"
+        },
+        {
+            "tool": "tasks_create",
+            "args": {
+                "title": "Schedule kickoff call with {{vendor_name}}",
+                "notes": "Contact: {{contact_email}}"
+            },
+            "output_var": "task_kickoff",
+            "description": "Create kickoff task"
+        }
+    ]
+}

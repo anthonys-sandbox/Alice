@@ -1,0 +1,44 @@
+{
+    "name": "research-company",
+    "description": "Research a company: web search, check email history, summarize findings in a Google Doc.",
+    "trigger": "manual",
+    "steps": [
+        {
+            "tool": "web_search",
+            "args": {
+                "query": "{{company}} company overview products services"
+            },
+            "output_var": "web_results",
+            "description": "Search the web for company info"
+        },
+        {
+            "tool": "gmail_search",
+            "args": {
+                "query": "{{company}}",
+                "max_results": 5
+            },
+            "output_var": "email_history",
+            "description": "Check email history with this company",
+            "continue_on_error": true
+        },
+        {
+            "tool": "drive_search",
+            "args": {
+                "search_term": "{{company}}"
+            },
+            "output_var": "drive_docs",
+            "description": "Search Drive for related docs",
+            "continue_on_error": true
+        },
+        {
+            "tool": "contacts_search",
+            "args": {
+                "query": "{{company}}",
+                "max_results": 5
+            },
+            "output_var": "contacts",
+            "description": "Find related contacts",
+            "continue_on_error": true
+        }
+    ]
+}

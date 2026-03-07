@@ -1,0 +1,35 @@
+{
+    "name": "travel-prep",
+    "description": "Prepare for travel: check calendar for conflicts, create OOO task, draft out-of-office email.",
+    "trigger": "manual",
+    "steps": [
+        {
+            "tool": "calendar_list",
+            "args": {
+                "time_min": "{{start_date}}",
+                "time_max": "{{end_date}}",
+                "max_results": 20
+            },
+            "output_var": "conflicts",
+            "description": "Check calendar for conflicts during travel"
+        },
+        {
+            "tool": "tasks_create",
+            "args": {
+                "title": "Set up OOO for {{destination}} trip",
+                "notes": "Traveling {{start_date}} to {{end_date}}. Reschedule conflicts found:\n{{conflicts}}"
+            },
+            "output_var": "ooo_task",
+            "description": "Create OOO setup task"
+        },
+        {
+            "tool": "tasks_create",
+            "args": {
+                "title": "Book travel to {{destination}}",
+                "notes": "Dates: {{start_date}} to {{end_date}}"
+            },
+            "output_var": "booking_task",
+            "description": "Create booking task"
+        }
+    ]
+}

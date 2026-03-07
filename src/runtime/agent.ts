@@ -10,6 +10,8 @@ import { MemoryStore } from '../memory/memory-store.js';
 import { RAGIndex } from '../memory/rag-index.js';
 import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
+import { PlaybookEngine } from './playbook-engine.js';
+import { deepResearch } from './deep-research.js';
 import { join } from 'path';
 
 const log = createLogger('Agent');
@@ -1021,6 +1023,67 @@ export class Agent {
         registerTool({ name: 'weekly_digest', description: 'Weekly digest: this week\'s meetings + unread count.', parameters: { type: 'object', properties: {}, required: [] }, execute: async () => runGws(['workflow', '+weekly-digest']) });
 
         registerTool({ name: 'file_announce', description: 'Announce a Drive file in a Chat space.', parameters: { type: 'object', properties: { file_id: { type: 'string', description: 'Drive file ID' }, space: { type: 'string', description: 'Chat space (e.g. "spaces/AAAA...")' } }, required: ['file_id', 'space'] }, execute: async (a: any) => runGws(['workflow', '+file-announce', '--params', JSON.stringify({ fileId: a.file_id, space: a.space })]) });
+
+        // ── Playbook Engine ─────────────────────────────────────
+        const playbookEngine = new PlaybookEngine(config.memory.dir);
+
+        registerTool({
+            name: 'list_playbooks',
+            description: 'List all available workflow playbooks. Returns name, description, trigger type, and step count for each.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => JSON.stringify(playbookEngine.listPlaybooks(), null, 2),
+        });
+
+        registerTool({
+            name: 'run_playbook',
+            description: 'Execute a workflow playbook by name. Playbooks are multi-step recipes that chain tools together. Use list_playbooks first to see available ones. Pass context variables to customize execution.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    name: { type: 'string', description: 'Playbook name' },
+                    context: { type: 'object', description: 'Key-value context variables for the playbook (e.g. { "company": "Acme Corp", "email": "john@acme.com" })' },
+                },
+                required: ['name'],
+            },
+            execute: async (args: any) => {
+                const result = await playbookEngine.executePlaybook(args.name, args.context || {});
+                return JSON.stringify({
+                    success: result.success,
+                    stepsCompleted: result.stepsCompleted,
+                    stepsTotal: result.stepsTotal,
+                    errors: result.errors,
+                    duration: `${result.duration}ms`,
+                    lastOutput: result.outputs['prev']?.slice(0, 1000),
+                }, null, 2);
+            },
+        });
+
+        // ── Deep Research ───────────────────────────────────────
+        registerTool({
+            name: 'deep_research',
+            description: 'Perform deep multi-source research on a topic. Generates sub-queries, searches the web in parallel, fetches and reads sources, then synthesizes a comprehensive summary with citations. Use for thorough research tasks.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Research question or topic' },
+                    max_sources: { type: 'number', description: 'Max sources to fetch (default 8)' },
+                    save_to_memory: { type: 'boolean', description: 'Save findings to memory (default false)' },
+                },
+                required: ['query'],
+            },
+            execute: async (args: any) => {
+                const result = await deepResearch(args.query, this, {
+                    maxSources: args.max_sources,
+                    saveToMemory: args.save_to_memory,
+                });
+                return JSON.stringify({
+                    summary: result.summary,
+                    sources: result.sources,
+                    subQueries: result.subQueries,
+                    duration: `${result.duration}ms`,
+                }, null, 2);
+            },
+        });
 
         this.refreshContext();
     }

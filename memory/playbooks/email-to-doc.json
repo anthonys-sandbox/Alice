@@ -1,0 +1,23 @@
+{
+    "name": "email-to-doc",
+    "description": "Convert an email thread into a formatted Google Doc summary.",
+    "trigger": "manual",
+    "steps": [
+        {
+            "tool": "gmail_read",
+            "args": {
+                "message_id": "{{message_id}}"
+            },
+            "output_var": "email_content",
+            "description": "Read the full email"
+        },
+        {
+            "tool": "docs_create",
+            "args": {
+                "title": "Email Summary — {{subject}}"
+            },
+            "output_var": "doc_created",
+            "description": "Create a new Google Doc for the summary"
+        }
+    ]
+}
