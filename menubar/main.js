@@ -18,6 +18,7 @@ const mb = menubar({
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            autoplayPolicy: 'no-user-gesture-required',
         },
     },
     tooltip: 'Alice AI',

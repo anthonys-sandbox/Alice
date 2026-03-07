@@ -5,6 +5,23 @@ import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('MemoryStore');
 
+export interface Entity {
+    id: number;
+    name: string;
+    type: string;  // 'person' | 'project' | 'concept' | 'tool' | 'place'
+    description: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface EntityRelation {
+    id: number;
+    fromId: number;
+    toId: number;
+    relation: string;  // 'works_on' | 'knows' | 'uses' | 'related_to' | custom
+    createdAt: string;
+}
+
 export interface MemoryItem {
     id: number;
     file: string;       // 'memory' or 'user'
@@ -41,6 +58,28 @@ export class MemoryStore {
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_memory_file ON memory_items(file);
+
+            CREATE TABLE IF NOT EXISTS entities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                type TEXT NOT NULL DEFAULT 'concept',
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_entity_type ON entities(type);
+            CREATE INDEX IF NOT EXISTS idx_entity_name ON entities(name COLLATE NOCASE);
+
+            CREATE TABLE IF NOT EXISTS entity_relationships (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                to_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                relation TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(from_id, to_id, relation)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rel_from ON entity_relationships(from_id);
+            CREATE INDEX IF NOT EXISTS idx_rel_to ON entity_relationships(to_id);
         `);
     }
 
@@ -351,5 +390,89 @@ export class MemoryStore {
 
     close(): void {
         this.db.close();
+    }
+
+    // ── Entity Graph ─────────────────────────────────────────────
+
+    /** Add or update an entity. Returns the entity ID. */
+    upsertEntity(name: string, type: string, description: string = ''): number {
+        const existing = this.db.prepare(
+            'SELECT id FROM entities WHERE name = ? COLLATE NOCASE'
+        ).get(name) as any;
+
+        if (existing) {
+            this.db.prepare(
+                "UPDATE entities SET type = ?, description = ?, updated_at = datetime('now') WHERE id = ?"
+            ).run(type, description, existing.id);
+            return existing.id;
+        }
+
+        const result = this.db.prepare(
+            'INSERT INTO entities (name, type, description) VALUES (?, ?, ?)'
+        ).run(name, type, description);
+        log.info('Entity added', { name, type });
+        return Number(result.lastInsertRowid);
+    }
+
+    /** Add a relationship between two entities. */
+    addRelation(fromName: string, toName: string, relation: string): boolean {
+        const from = this.db.prepare('SELECT id FROM entities WHERE name = ? COLLATE NOCASE').get(fromName) as any;
+        const to = this.db.prepare('SELECT id FROM entities WHERE name = ? COLLATE NOCASE').get(toName) as any;
+        if (!from || !to) return false;
+
+        try {
+            this.db.prepare(
+                'INSERT OR IGNORE INTO entity_relationships (from_id, to_id, relation) VALUES (?, ?, ?)'
+            ).run(from.id, to.id, relation);
+            log.info('Relation added', { from: fromName, to: toName, relation });
+            return true;
+        } catch { return false; }
+    }
+
+    /** Get an entity by name. */
+    getEntity(name: string): Entity | null {
+        const row = this.db.prepare(
+            'SELECT * FROM entities WHERE name = ? COLLATE NOCASE'
+        ).get(name) as any;
+        return row ? { id: row.id, name: row.name, type: row.type, description: row.description, createdAt: row.created_at, updatedAt: row.updated_at } : null;
+    }
+
+    /** Get all entities, optionally filtered by type. */
+    listEntities(type?: string): Entity[] {
+        const rows = type
+            ? this.db.prepare('SELECT * FROM entities WHERE type = ? ORDER BY name').all(type) as any[]
+            : this.db.prepare('SELECT * FROM entities ORDER BY type, name').all() as any[];
+        return rows.map(r => ({ id: r.id, name: r.name, type: r.type, description: r.description, createdAt: r.created_at, updatedAt: r.updated_at }));
+    }
+
+    /** Get all relationships for an entity (both directions). */
+    getRelations(name: string): { entity: string; relation: string; direction: 'from' | 'to' }[] {
+        const entity = this.db.prepare('SELECT id FROM entities WHERE name = ? COLLATE NOCASE').get(name) as any;
+        if (!entity) return [];
+
+        const outgoing = this.db.prepare(`
+            SELECT e.name, r.relation FROM entity_relationships r
+            JOIN entities e ON e.id = r.to_id
+            WHERE r.from_id = ?
+        `).all(entity.id) as any[];
+
+        const incoming = this.db.prepare(`
+            SELECT e.name, r.relation FROM entity_relationships r
+            JOIN entities e ON e.id = r.from_id
+            WHERE r.to_id = ?
+        `).all(entity.id) as any[];
+
+        return [
+            ...outgoing.map((r: any) => ({ entity: r.name, relation: r.relation, direction: 'from' as const })),
+            ...incoming.map((r: any) => ({ entity: r.name, relation: r.relation, direction: 'to' as const })),
+        ];
+    }
+
+    /** Search entities by name (fuzzy LIKE match). */
+    searchEntities(query: string): Entity[] {
+        const rows = this.db.prepare(
+            'SELECT * FROM entities WHERE name LIKE ? OR description LIKE ? ORDER BY name LIMIT 20'
+        ).all(`%${query}%`, `%${query}%`) as any[];
+        return rows.map(r => ({ id: r.id, name: r.name, type: r.type, description: r.description, createdAt: r.created_at, updatedAt: r.updated_at }));
     }
 }

@@ -703,6 +703,123 @@ const geminiCodeTool: ToolDefinition = {
     },
 };
 
+// ============================================================
+// Multi-Step Plan Tools
+// ============================================================
+
+interface PlanStep {
+    description: string;
+    status: 'pending' | 'done' | 'skipped';
+}
+
+interface Plan {
+    id: string;
+    goal: string;
+    steps: PlanStep[];
+    created: number;
+}
+
+const activePlans = new Map<string, Plan>();
+
+const createPlanTool: ToolDefinition = {
+    name: 'create_plan',
+    description: 'Decompose a complex goal into a numbered list of concrete steps. Returns a plan ID that can be used with advance_plan to track progress. Use this when a task has 3+ distinct phases.',
+    parameters: {
+        type: 'object',
+        properties: {
+            goal: { type: 'string', description: 'The overall objective' },
+            steps: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Ordered list of concrete steps to achieve the goal'
+            }
+        },
+        required: ['goal', 'steps']
+    },
+    execute: async (args: Record<string, any>): Promise<string> => {
+        const { goal, steps } = args;
+        if (!steps || !Array.isArray(steps) || steps.length === 0) {
+            return 'Error: steps must be a non-empty array of strings';
+        }
+        const id = `plan_${Date.now()}`;
+        const plan: Plan = {
+            id,
+            goal,
+            steps: steps.map((s: string) => ({ description: s, status: 'pending' as const })),
+            created: Date.now()
+        };
+        activePlans.set(id, plan);
+        const stepList = plan.steps.map((s, i) => `  ${i + 1}. [ ] ${s.description}`).join('\n');
+        return `Plan created: ${id}\nGoal: ${goal}\n\nSteps:\n${stepList}`;
+    }
+};
+
+const advancePlanTool: ToolDefinition = {
+    name: 'advance_plan',
+    description: 'Mark a step in an active plan as done or skipped. Returns the updated plan status with progress.',
+    parameters: {
+        type: 'object',
+        properties: {
+            plan_id: { type: 'string', description: 'The plan ID from create_plan' },
+            step_number: { type: 'number', description: 'The 1-based step number to update' },
+            status: { type: 'string', enum: ['done', 'skipped'], description: 'New status for the step' },
+            notes: { type: 'string', description: 'Optional notes about what was accomplished' }
+        },
+        required: ['plan_id', 'step_number', 'status']
+    },
+    execute: async (args: Record<string, any>): Promise<string> => {
+        const { plan_id, step_number, status, notes } = args;
+        const plan = activePlans.get(plan_id);
+        if (!plan) return `Error: No plan found with id ${plan_id}`;
+
+        const idx = step_number - 1;
+        if (idx < 0 || idx >= plan.steps.length) return `Error: Step ${step_number} out of range (1-${plan.steps.length})`;
+
+        plan.steps[idx].status = status;
+
+        const done = plan.steps.filter(s => s.status === 'done').length;
+        const total = plan.steps.length;
+        const pct = Math.round((done / total) * 100);
+
+        const stepList = plan.steps.map((s, i) => {
+            const icon = s.status === 'done' ? '✅' : s.status === 'skipped' ? '⏭️' : '⬜';
+            return `  ${i + 1}. ${icon} ${s.description}`;
+        }).join('\n');
+
+        const allDone = plan.steps.every(s => s.status !== 'pending');
+        let result = `Plan: ${plan.goal}\nProgress: ${done}/${total} (${pct}%)\n\n${stepList}`;
+        if (notes) result += `\n\nNotes: ${notes}`;
+        if (allDone) {
+            result += '\n\n🎉 Plan complete!';
+            activePlans.delete(plan_id);
+        }
+        return result;
+    }
+};
+
+// ============================================================
+// Smart Notification Tool
+// ============================================================
+
+const sendNotificationTool: ToolDefinition = {
+    name: 'send_notification',
+    description: 'Send a proactive notification to the user via their preferred channels (Google Chat, UI toast, etc). Use SPARINGLY — only for important discoveries, completed background tasks, time-sensitive alerts, or security concerns. Do NOT use for routine responses.',
+    parameters: {
+        type: 'object',
+        properties: {
+            message: { type: 'string', description: 'Brief notification message (1-2 sentences)' },
+            priority: { type: 'string', enum: ['info', 'warning', 'urgent'], description: 'Priority level' },
+            category: { type: 'string', enum: ['discovery', 'reminder', 'completion', 'security', 'error'], description: 'Notification category' }
+        },
+        required: ['message', 'priority']
+    },
+    execute: async (args: Record<string, any>): Promise<string> => {
+        const { message, priority, category } = args;
+        toolEvents.emit('notification', { message, priority: priority || 'info', category: category || 'info', timestamp: Date.now() });
+        return `Notification sent: [${priority}] ${message}`;
+    }
+};
+
 const ALL_TOOLS: ToolDefinition[] = [
     readFileTool,
     writeFileTool,
@@ -722,6 +839,9 @@ const ALL_TOOLS: ToolDefinition[] = [
     clipboardWriteTool,
     readPdfTool,
     ...browserTools,
+    createPlanTool,
+    advancePlanTool,
+    sendNotificationTool,
 ];
 
 const toolMap = new Map<string, ToolDefinition>();
@@ -776,12 +896,81 @@ export async function executeTool(name: string, args: Record<string, any>): Prom
 
     const tool = toolMap.get(name)!;
     log.info(`Executing tool: ${name}`, { args: Object.keys(args) });
+
+    // First attempt
     try {
         return await tool.execute(args);
     } catch (err: any) {
-        log.error(`Tool execution failed: ${name}`, { error: err.message });
+        log.warn(`Tool failed (attempt 1): ${name}`, { error: err.message });
+
+        // Self-healing: adjust args and retry once
+        const adjustedArgs = adjustArgsForRetry(name, args, err.message);
+        if (adjustedArgs) {
+            log.info(`Retrying ${name} with adjusted args`);
+            try {
+                return await tool.execute(adjustedArgs);
+            } catch (retryErr: any) {
+                log.warn(`Tool retry also failed: ${name}`, { error: retryErr.message });
+            }
+        }
+
+        // Try alternative tool if available
+        const alt = TOOL_ALTERNATIVES.get(name);
+        if (alt) {
+            const altTool = toolMap.get(alt.tool);
+            if (altTool) {
+                const altArgs = alt.mapArgs(args);
+                log.info(`Falling back to alternative tool: ${alt.tool}`);
+                try {
+                    return await altTool.execute(altArgs);
+                } catch (altErr: any) {
+                    log.warn(`Alternative tool also failed: ${alt.tool}`, { error: altErr.message });
+                }
+            }
+        }
+
+        // All attempts exhausted
         return `Error executing tool ${name}: ${err.message}\n\nSuggestion: Check the arguments and try again. The tool expects: ${JSON.stringify(tool.parameters.properties, null, 2)}`;
     }
+}
+
+// Maps tools to their alternatives (fallbacks when the primary fails)
+const TOOL_ALTERNATIVES = new Map<string, { tool: string; mapArgs: (args: Record<string, any>) => Record<string, any> }>([
+    ['web_fetch', { tool: 'browse_page', mapArgs: (args) => ({ url: args.url }) }],
+    ['browse_page', { tool: 'web_fetch', mapArgs: (args) => ({ url: args.url }) }],
+    ['read_file', { tool: 'bash', mapArgs: (args) => ({ command: `cat "${args.path}"` }) }],
+]);
+
+// Adjusts tool args for a retry based on the error message
+function adjustArgsForRetry(name: string, args: Record<string, any>, error: string): Record<string, any> | null {
+    const lowerErr = error.toLowerCase();
+
+    // Timeouts → increase timeout / reduce scope
+    if (lowerErr.includes('timeout') || lowerErr.includes('timed out')) {
+        if (name === 'bash' && args.command) {
+            return { ...args, timeout: (args.timeout || 30000) * 2 };
+        }
+        if (name === 'browse_page' || name === 'web_fetch') {
+            return { ...args, max_length: Math.min(args.max_length || 5000, 2000) };
+        }
+    }
+
+    // Permission denied → try with sudo hint
+    if (lowerErr.includes('permission denied') && name === 'bash') {
+        return null; // Don't auto-sudo; return null to try alternative
+    }
+
+    // File not found → check with different casing or path
+    if (lowerErr.includes('enoent') || lowerErr.includes('no such file') || lowerErr.includes('not found')) {
+        if (name === 'read_file' && args.path) {
+            // Try with ./ prefix
+            if (!args.path.startsWith('/') && !args.path.startsWith('./')) {
+                return { ...args, path: `./${args.path}` };
+            }
+        }
+    }
+
+    return null;
 }
 
 /**

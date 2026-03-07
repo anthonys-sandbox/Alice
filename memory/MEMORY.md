@@ -12,6 +12,13 @@
 - Usable via native macOS app, a menubar app, a web UI (PWA), Google Chat, and voice.
 - Core features:
 - Accessibility:
+- Project: Alice, Tech stack: JavaScript, frameworks: multiple interfaces (native macOS app, menubar app,)
+- Tech stack: JavaScript, frameworks: Jest, Best for: General-purpose unit and integration testing (especially React apps).
+- Task delegated to check weather in Nashville
+- Current weather in Nashville: 80.4°F with clear sky
+- Weather report for Nashville
+- Current weather conditions as of [timestamp]
+- Task delegated to check current location weather
 
 ## MCP Integrations
 

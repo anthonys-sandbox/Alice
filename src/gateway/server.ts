@@ -134,6 +134,41 @@ export class Gateway {
       }
     });
 
+    // Text-to-speech synthesis via Voicebox (local Qwen3-TTS)
+    this.app.post('/api/tts', express.json(), async (req, res) => {
+      try {
+        const { text, profile_id } = req.body;
+        if (!text) {
+          res.status(400).json({ error: 'No text provided' });
+          return;
+        }
+
+        const voiceboxUrl = process.env.VOICEBOX_URL || 'http://localhost:8000';
+        const payload: any = { text, language: 'en' };
+        if (profile_id) payload.profile_id = profile_id;
+
+        const response = await fetch(`${voiceboxUrl}/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          res.status(response.status).json({ error: `Voicebox error: ${errText}` });
+          return;
+        }
+
+        const audioBuffer = Buffer.from(await response.arrayBuffer());
+        res.set('Content-Type', response.headers.get('content-type') || 'audio/wav');
+        res.send(audioBuffer);
+      } catch (err: any) {
+        log.warn('TTS endpoint error', { error: err.message });
+        // Fall back gracefully — client will use browser speechSynthesis
+        res.status(503).json({ error: 'Voicebox unavailable', fallback: true });
+      }
+    });
+
     // Web UI (simple chat interface)
     this.app.get('/', (_req, res) => {
       res.send(WEB_UI_HTML);
@@ -798,6 +833,19 @@ export class Gateway {
         }
       };
       toolEvents.on('tool_output', onToolOutput);
+
+      // Smart notification forwarding
+      const onNotification = (data: { message: string; priority: string; category: string; timestamp: number }) => {
+        // Send to WebSocket client as a toast
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'notification', ...data }));
+        }
+        // For warning/urgent: also send to Google Chat
+        if ((data.priority === 'warning' || data.priority === 'urgent') && this.chat) {
+          this.chat.sendMessage(`🔔 **[${data.priority.toUpperCase()}]** ${data.message}`).catch(() => { });
+        }
+      };
+      toolEvents.on('notification', onNotification);
       // Per-connection message queue
       let processing = false;
       const queue: Array<{ text: string; attachments: Array<{ name: string; type: string; data: string }> }> = [];
@@ -922,6 +970,7 @@ export class Gateway {
       ws.on('close', () => {
         log.info('WebSocket client disconnected');
         toolEvents.off('tool_output', onToolOutput);
+        toolEvents.off('notification', onNotification);
         queue.length = 0;
       });
     });
@@ -2299,6 +2348,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <svg class="mic-icon-idle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
           <svg class="mic-icon-stop" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
         </button>
+        <button id="ttsBtn" class="attach-btn" title="Enable voice output" style="opacity:0.4;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        </button>
         <button id="send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11zm7.318-19.539l-10.94 10.939"/></svg></button>
         </div>
         <div class="model-picker-row">
@@ -2698,6 +2750,18 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         return;
       }
 
+      // Smart notification toast
+      if (data.type === 'notification') {
+        const colors = { info: '#8ab4f8', warning: '#fdd663', urgent: '#f28b82' };
+        const icons = { info: 'ℹ️', warning: '⚠️', urgent: '🚨' };
+        const toast = document.createElement('div');
+        toast.style.cssText = 'position:fixed;top:16px;right:16px;z-index:9999;padding:12px 20px;border-radius:12px;background:var(--bg-tertiary);border:1px solid ' + (colors[data.priority] || colors.info) + ';color:var(--text-primary);font-size:14px;max-width:380px;box-shadow:0 8px 24px rgba(0,0,0,0.3);animation:slideIn 0.3s ease;';
+        toast.innerHTML = (icons[data.priority] || '🔔') + ' ' + (data.message || 'Notification');
+        document.body.appendChild(toast);
+        setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 6000);
+        return;
+      }
+
       // Canvas: render inline interactive HTML
       if (data.type === 'canvas') {
         renderCanvasBubble(data.html, data.title);
@@ -2844,6 +2908,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
       if (data.type === 'done') {
         if (thinkingRow) { thinkingRow.remove(); thinkingRow = null; }
+        // Capture text for TTS before it's cleared
+        const spokenText = currentStreamText || data.text || '';
 
         const meta = data.toolsUsed?.length
           ? data.toolsUsed.join(', ') + ' · ' + data.iterations + ' iterations'
@@ -2868,6 +2934,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         }
         send.disabled = false;
         messages.scrollTop = messages.scrollHeight;
+        // TTS: speak the response if voice output is enabled
+        if (window.speakResponse) window.speakResponse(spokenText);
         return;
       }
 
@@ -3210,6 +3278,77 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         });
       }
     }
+
+    // ── TTS (Text-to-Speech) via Voicebox ──
+    const ttsBtn = document.getElementById('ttsBtn');
+    let ttsEnabled = localStorage.getItem('alice-tts') === '1';
+    let ttsAudio = null;
+
+    function updateTtsBtn() {
+      if (!ttsBtn) return;
+      ttsBtn.style.opacity = ttsEnabled ? '1' : '0.4';
+      ttsBtn.title = ttsEnabled ? 'Disable voice output' : 'Enable voice output';
+    }
+    updateTtsBtn();
+
+    if (ttsBtn) {
+      ttsBtn.addEventListener('click', () => {
+        ttsEnabled = !ttsEnabled;
+        localStorage.setItem('alice-tts', ttsEnabled ? '1' : '0');
+        updateTtsBtn();
+        // Stop any playing audio
+        if (!ttsEnabled && ttsAudio) {
+          ttsAudio.pause();
+          ttsAudio = null;
+        }
+      });
+    }
+
+    // Speak Alice's response text — cascade: native TTS → Voicebox → browser
+    window.speakResponse = async function(text) {
+      if (!ttsEnabled || !text || text.length < 5) return;
+
+      // Strip markdown for cleaner speech
+      const cleanText = text
+        .replace(/\`\`\`[\s\S]*?\`\`\`/g, ' code block ')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/#+\s/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/[\n\r]+/g, '. ')
+        .slice(0, 500);
+
+      // 1. Native TTS bridge (Alice.app via AVSpeechSynthesizer)
+      if (window._nativeTTS && window._nativeTTS.available) {
+        window._nativeTTS.speak(cleanText);
+        return;
+      }
+
+      // 2. Voicebox API
+      try {
+        const resp = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: cleanText }),
+        });
+
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          ttsAudio = new Audio(url);
+          ttsAudio.play().catch(() => {});
+          ttsAudio.onended = () => { URL.revokeObjectURL(url); ttsAudio = null; };
+          return;
+        }
+      } catch {}
+
+      // 3. Browser speechSynthesis fallback
+      if (window.speechSynthesis) {
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = 1.1;
+        window.speechSynthesis.speak(utterance);
+      }
+    };
 
     // ── Sidebar ──────────────────────────
     const sidebar = document.getElementById('sidebar');

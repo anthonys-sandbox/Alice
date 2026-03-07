@@ -10,12 +10,16 @@
 - Home Directory: /Users/AnthonyTackett
 - User checks their calendar regularly.
 - Prefers Fahrenheit over Celcius when talking about the weather. Imperial units over metric unless asked.
+- Personal project: Alice, AI agent runtime designed to run natively on Mac
+- Delegated task to check Nashville weather
+- Location: New York City
 
 ## Active Projects
 
 - Creative Lab: AI agents, automation, agentic workflows
 - GravityClaw (Alice): Personal AI assistant runtime
 - Mission Control Dashboard
+- Task delegation
 
 ## Preferences
 
@@ -27,3 +31,4 @@
 - Views AI as a productivity tool for professional work
 - Reminded about AI team expansions or creative workflow checks
 - Expects interactive content to be rendered using the canvas tool.
+- Desires automated weather updates at current location

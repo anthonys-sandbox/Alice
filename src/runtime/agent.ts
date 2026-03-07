@@ -235,6 +235,71 @@ export class Agent {
             },
         });
 
+        // Register entity_graph tool (knowledge graph of people, projects, concepts)
+        registerTool({
+            name: 'entity_graph',
+            description: 'Manage a knowledge graph of entities (people, projects, concepts, tools, places) and their relationships. Use to track connections between things the user mentions.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['add_entity', 'add_relation', 'query', 'search', 'list'], description: 'Operation to perform' },
+                    name: { type: 'string', description: 'Entity name (for add_entity, add_relation, query)' },
+                    type: { type: 'string', description: 'Entity type: person, project, concept, tool, place (for add_entity, list)' },
+                    description: { type: 'string', description: 'Entity description (for add_entity)' },
+                    target: { type: 'string', description: 'Target entity name (for add_relation)' },
+                    relation: { type: 'string', description: 'Relationship type, e.g. works_on, knows, uses (for add_relation)' },
+                    query: { type: 'string', description: 'Search query (for search)' },
+                },
+                required: ['action'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const store = getMemoryStore();
+                if (!store) return 'Error: Memory store not available';
+
+                switch (args.action) {
+                    case 'add_entity': {
+                        if (!args.name || !args.type) return 'Error: name and type required';
+                        const id = store.upsertEntity(args.name, args.type, args.description || '');
+                        return `Entity "${args.name}" (${args.type}) saved with id ${id}`;
+                    }
+                    case 'add_relation': {
+                        if (!args.name || !args.target || !args.relation) return 'Error: name, target, and relation required';
+                        // Auto-create entities if they don't exist
+                        if (!store.getEntity(args.name)) store.upsertEntity(args.name, 'concept');
+                        if (!store.getEntity(args.target)) store.upsertEntity(args.target, 'concept');
+                        const ok = store.addRelation(args.name, args.target, args.relation);
+                        return ok ? `Relation added: ${args.name} —[${args.relation}]→ ${args.target}` : 'Error adding relation';
+                    }
+                    case 'query': {
+                        if (!args.name) return 'Error: name required';
+                        const entity = store.getEntity(args.name);
+                        if (!entity) return `No entity found with name "${args.name}"`;
+                        const rels = store.getRelations(args.name);
+                        let result = `**${entity.name}** (${entity.type})\n${entity.description || 'No description'}`;
+                        if (rels.length > 0) {
+                            result += '\n\nRelationships:\n' + rels.map(r =>
+                                r.direction === 'from' ? `  → ${r.relation} → ${r.entity}` : `  ← ${r.relation} ← ${r.entity}`
+                            ).join('\n');
+                        }
+                        return result;
+                    }
+                    case 'search': {
+                        if (!args.query) return 'Error: query required';
+                        const results = store.searchEntities(args.query);
+                        if (results.length === 0) return 'No entities found';
+                        return results.map(e => `• **${e.name}** (${e.type}): ${e.description || 'no description'}`).join('\n');
+                    }
+                    case 'list': {
+                        const entities = store.listEntities(args.type);
+                        if (entities.length === 0) return args.type ? `No ${args.type} entities found` : 'No entities in graph';
+                        return entities.map(e => `• **${e.name}** (${e.type}): ${e.description || 'no description'}`).join('\n');
+                    }
+                    default:
+                        return `Unknown action "${args.action}". Use: add_entity, add_relation, query, search, list`;
+                }
+            },
+        });
+
         // Register search_codebase tool (RAG over project files)
         registerTool({
             name: 'search_codebase',
@@ -722,6 +787,57 @@ export class Agent {
     }
 
     /**
+     * Proactive memory recall: search memory and past sessions for context
+     * relevant to the current user message. Returns a string to append to
+     * the system prompt, or empty string if nothing relevant found.
+     *
+     * Uses FTS5 (instant, no API call) for memory items + session messages.
+     * Skips trivial messages (< 10 chars) and caps output at ~500 tokens.
+     */
+    private async proactiveRecall(userMessage: string): Promise<string> {
+        // Skip trivial messages
+        if (userMessage.length < 10) return '';
+
+        const MAX_CHARS = 2000; // ~500 tokens
+        const snippets: string[] = [];
+
+        try {
+            // 1. Search memory store (FTS on structured memory items)
+            const memStore = getMemoryStore();
+            if (memStore) {
+                const memResults = memStore.searchItems(userMessage);
+                for (const item of memResults.slice(0, 3)) {
+                    snippets.push(`[Memory/${item.file}/${item.section}] ${item.content}`);
+                }
+            }
+
+            // 2. Search session messages (FTS5 across all past sessions)
+            const sessionResults = this.sessionStore.searchMessages(userMessage, 3);
+            for (const r of sessionResults) {
+                // Skip results from current session (already in context)
+                if (r.sessionId === this.currentSessionId) continue;
+                const truncated = r.content.length > 300 ? r.content.slice(0, 300) + '...' : r.content;
+                snippets.push(`[Session: ${r.sessionTitle}] ${truncated}`);
+            }
+
+            if (snippets.length === 0) return '';
+
+            // Build the recall block, capping at MAX_CHARS
+            let recall = '\n\n---\n📌 **Recalled context** (from memory & past sessions — use if relevant):\n';
+            for (const s of snippets) {
+                if (recall.length + s.length > MAX_CHARS) break;
+                recall += '- ' + s + '\n';
+            }
+
+            log.debug('Proactive recall', { snippets: snippets.length, chars: recall.length });
+            return recall;
+        } catch (err: any) {
+            log.warn('Proactive recall failed', { error: err.message });
+            return '';
+        }
+    }
+
+    /**
      * Sanitize conversation history for Gemini API compatibility.
      * Gemini 3.x thinking models strictly require that:
      * - A functionResponse turn must immediately follow a functionCall turn
@@ -936,195 +1052,205 @@ export class Agent {
         let lastToolName = '';
         let sameToolCount = 0;
 
+        // Proactive memory recall — augment system prompt with relevant past context
+        const recalledContext = await this.proactiveRecall(userMessage);
+        const originalPrompt = this.systemPrompt;
+        if (recalledContext) this.systemPrompt += recalledContext;
+
         const startTime = Date.now();
 
-        while (iterations < this.config.agent.maxIterations) {
-            // Check timeout
-            if (Date.now() - startTime > this.config.agent.timeoutMs) {
-                log.warn('Agent loop timed out', { iterations });
-                const timeoutMsg = 'I ran out of time processing your request. Here\'s what I accomplished so far.';
-                this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
-                return { text: timeoutMsg, toolsUsed, iterations };
-            }
-
-            iterations++;
-            log.debug(`Iteration ${iterations}/${this.config.agent.maxIterations}`);
-
-            try {
-                // Trim context if approaching token budget
-                await this.trimContextIfNeeded();
-                // Sanitize before API call — ensures valid function call/response ordering
-                this.conversationHistory = Agent.sanitizeHistory(this.conversationHistory);
-
-                // Call the LLM
-                this.sessionStats.apiCalls++;
-                this.debouncePersistStats();
-                const response = await this.provider.generateContent(
-                    this.systemPrompt,
-                    this.conversationHistory,
-                    functionDeclarations
-                );
-
-                // Case 1: Model wants to call function(s)
-                if (response.functionCalls && response.functionCalls.length > 0) {
-                    // Use raw parts from the model response — these include thought_signature
-                    // which Gemini 3 requires to be passed back in conversation history
-                    this.pushMessage({ role: 'model', parts: response.rawParts });
-
-                    // Execute tool calls in parallel for performance
-                    for (const fc of response.functionCalls) {
-                        log.info(`Tool call: ${fc.name}`, { args: Object.keys(fc.args) });
-                        toolsUsed.push(fc.name);
-                        this.sessionStats.toolCalls++;
-                        this.sessionStats.toolsUsed[fc.name] = (this.sessionStats.toolsUsed[fc.name] || 0) + 1;
-                    }
-                    this.debouncePersistStats();
-
-                    const results = await Promise.all(
-                        response.functionCalls.map(fc => executeTool(fc.name, fc.args))
-                    );
-
-                    // Truncate tool results to save context window space
-                    const truncatedResults = results.map(r =>
-                        typeof r === 'string' && r.length > 2000
-                            ? r.slice(0, 2000) + '\n\n... [truncated]'
-                            : r
-                    );
-
-                    const responseParts: LLMPart[] = response.functionCalls.map((fc, i) => ({
-                        functionResponse: {
-                            name: fc.name,
-                            response: { result: truncatedResults[i] },
-                        },
-                    }));
-
-                    // Add tool results to history
-                    this.pushMessage({ role: 'user', parts: responseParts });
-
-                    // Loop detection: catch same-tool repeats AND multi-tool cycling
-                    const currentToolName = response.functionCalls.map(fc => fc.name).join(',');
-                    if (currentToolName === lastToolName) {
-                        sameToolCount++;
-                    } else {
-                        lastToolName = currentToolName;
-                        sameToolCount = 1;
-                    }
-
-                    // Same-tool loop detection
-                    // IMPORTANT: Append hints to the existing functionResponse turn instead of
-                    // creating a separate user message, to preserve the strict
-                    // functionCall → functionResponse adjacency required by Gemini 3.x thinking models.
-                    if (sameToolCount >= 3) {
-                        log.warn('Same-tool loop detected', { tool: currentToolName, count: sameToolCount });
-                        const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
-                        lastMsg.parts.push({ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` } as LLMPart);
-                    }
-
-                    // Force-break: if same tool called 5+ times, stop the loop entirely
-                    if (sameToolCount >= 5) {
-                        log.warn('Force-breaking tool loop', { tool: currentToolName, count: sameToolCount });
-                        const breakMsg = `I called ${currentToolName} ${sameToolCount} times but couldn't complete the task. Here are the results I gathered so far.`;
-                        this.pushMessage({ role: 'model', parts: [{ text: breakMsg }] });
-                        return { text: breakMsg, toolsUsed, iterations };
-                    }
-
-                    // Multi-tool cycling: force-break if last 10 calls use ≤3 unique tools
-                    if (toolsUsed.length >= 10) {
-                        const recentTools = toolsUsed.slice(-10);
-                        const uniqueRecent = new Set(recentTools).size;
-                        if (uniqueRecent <= 3) {
-                            log.warn('Force-breaking multi-tool cycle', { recentTools, uniqueRecent });
-                            const cycleMsg = `I was cycling between ${[...new Set(recentTools)].join(', ')} without making progress. Here's what I found so far.`;
-                            this.pushMessage({ role: 'model', parts: [{ text: cycleMsg }] });
-                            return { text: cycleMsg, toolsUsed, iterations };
-                        }
-                    }
-
-                    // Continue the loop — model needs to process tool results
-                    continue;
-                }
-
-                // Case 2: Model produces a text response (we're done!)
-                if (response.text) {
-                    this.pushMessage({
-                        role: 'model',
-                        parts: [{ text: response.text }],
-                    });
-
-                    // Log to daily memory
-                    appendDailyLog(this.config.memory.dir, `Processed message (${iterations} iterations, ${toolsUsed.length} tool calls)`);
-
-                    log.info('Message processed', { iterations, toolsUsed: toolsUsed.length });
-
-                    // Auto-learn: extract facts from this exchange in the background
-                    this.extractMemoryAsync(userMessage, response.text, toolsUsed);
-
-                    return { text: response.text, toolsUsed, iterations };
-                }
-
-                // Case 3: Empty response (unusual — treat as error)
-                log.warn('Empty response from model', { iteration: iterations });
-                const emptyMsg = 'I received an empty response. Could you rephrase your request?';
-                this.pushMessage({ role: 'model', parts: [{ text: emptyMsg }] });
-                return { text: emptyMsg, toolsUsed, iterations };
-
-            } catch (err: any) {
-                const errorMessage = err.message || String(err);
-                log.error('Error in agent loop', { error: errorMessage, iteration: iterations });
-
-                // Categorize error for smarter handling
-                const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Rate limited');
-                const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
-                const isModelError = errorMessage.includes('400') || errorMessage.includes('INVALID_ARGUMENT');
-
-                if (isRateLimit) {
-                    rateLimitRetries++;
-                    if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
-                        const errMsg = `Rate limited after ${rateLimitRetries} retries. Please wait a moment and try again.`;
-                        this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
-                        return { text: errMsg, toolsUsed, iterations };
-                    }
-                    const waitMatch = errorMessage.match(/reset after (\d+)s/i);
-                    const waitMs = waitMatch ? (parseInt(waitMatch[1], 10) + 1) * 1000 : 5000;
-                    log.warn(`Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${waitMs}ms`);
-                    await new Promise(r => setTimeout(r, waitMs));
-                    iterations--; // Don't count rate limit retries as iterations
-                    continue;
-                }
-
-                if (isTimeout) {
-                    const timeoutMsg = `The request timed out. The model or service may be under load. Please try again.`;
+        try {
+            while (iterations < this.config.agent.maxIterations) {
+                // Check timeout
+                if (Date.now() - startTime > this.config.agent.timeoutMs) {
+                    log.warn('Agent loop timed out', { iterations });
+                    const timeoutMsg = 'I ran out of time processing your request. Here\'s what I accomplished so far.';
                     this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
                     return { text: timeoutMsg, toolsUsed, iterations };
                 }
 
-                if (isModelError) {
-                    // 400/invalid errors can't self-correct — fail fast
-                    const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
-                    log.error('Non-recoverable model error, failing fast');
-                    this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
-                    return { text: errMsg, toolsUsed, iterations };
-                }
+                iterations++;
+                log.debug(`Iteration ${iterations}/${this.config.agent.maxIterations}`);
 
-                // For other errors, give the model one chance to self-correct
-                if (iterations >= this.config.agent.maxIterations) {
-                    const errorMsg = `I encountered an error after ${iterations} attempts: ${errorMessage}. Please try again.`;
-                    this.pushMessage({ role: 'model', parts: [{ text: errorMsg }] });
-                    return { text: errorMsg, toolsUsed, iterations };
-                }
+                try {
+                    // Trim context if approaching token budget
+                    await this.trimContextIfNeeded();
+                    // Sanitize before API call — ensures valid function call/response ordering
+                    this.conversationHistory = Agent.sanitizeHistory(this.conversationHistory);
 
-                this.pushMessage({
-                    role: 'model',
-                    parts: [{ text: `An error occurred: ${errorMessage}. Adjusting approach and retrying.` }],
-                });
+                    // Call the LLM
+                    this.sessionStats.apiCalls++;
+                    this.debouncePersistStats();
+                    const response = await this.provider.generateContent(
+                        this.systemPrompt,
+                        this.conversationHistory,
+                        functionDeclarations
+                    );
+
+                    // Case 1: Model wants to call function(s)
+                    if (response.functionCalls && response.functionCalls.length > 0) {
+                        // Use raw parts from the model response — these include thought_signature
+                        // which Gemini 3 requires to be passed back in conversation history
+                        this.pushMessage({ role: 'model', parts: response.rawParts });
+
+                        // Execute tool calls in parallel for performance
+                        for (const fc of response.functionCalls) {
+                            log.info(`Tool call: ${fc.name}`, { args: Object.keys(fc.args) });
+                            toolsUsed.push(fc.name);
+                            this.sessionStats.toolCalls++;
+                            this.sessionStats.toolsUsed[fc.name] = (this.sessionStats.toolsUsed[fc.name] || 0) + 1;
+                        }
+                        this.debouncePersistStats();
+
+                        const results = await Promise.all(
+                            response.functionCalls.map(fc => executeTool(fc.name, fc.args))
+                        );
+
+                        // Truncate tool results to save context window space
+                        const truncatedResults = results.map(r =>
+                            typeof r === 'string' && r.length > 2000
+                                ? r.slice(0, 2000) + '\n\n... [truncated]'
+                                : r
+                        );
+
+                        const responseParts: LLMPart[] = response.functionCalls.map((fc, i) => ({
+                            functionResponse: {
+                                name: fc.name,
+                                response: { result: truncatedResults[i] },
+                            },
+                        }));
+
+                        // Add tool results to history
+                        this.pushMessage({ role: 'user', parts: responseParts });
+
+                        // Loop detection: catch same-tool repeats AND multi-tool cycling
+                        const currentToolName = response.functionCalls.map(fc => fc.name).join(',');
+                        if (currentToolName === lastToolName) {
+                            sameToolCount++;
+                        } else {
+                            lastToolName = currentToolName;
+                            sameToolCount = 1;
+                        }
+
+                        // Same-tool loop detection
+                        // IMPORTANT: Append hints to the existing functionResponse turn instead of
+                        // creating a separate user message, to preserve the strict
+                        // functionCall → functionResponse adjacency required by Gemini 3.x thinking models.
+                        if (sameToolCount >= 3) {
+                            log.warn('Same-tool loop detected', { tool: currentToolName, count: sameToolCount });
+                            const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
+                            lastMsg.parts.push({ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` } as LLMPart);
+                        }
+
+                        // Force-break: if same tool called 5+ times, stop the loop entirely
+                        if (sameToolCount >= 5) {
+                            log.warn('Force-breaking tool loop', { tool: currentToolName, count: sameToolCount });
+                            const breakMsg = `I called ${currentToolName} ${sameToolCount} times but couldn't complete the task. Here are the results I gathered so far.`;
+                            this.pushMessage({ role: 'model', parts: [{ text: breakMsg }] });
+                            return { text: breakMsg, toolsUsed, iterations };
+                        }
+
+                        // Multi-tool cycling: force-break if last 10 calls use ≤3 unique tools
+                        if (toolsUsed.length >= 10) {
+                            const recentTools = toolsUsed.slice(-10);
+                            const uniqueRecent = new Set(recentTools).size;
+                            if (uniqueRecent <= 3) {
+                                log.warn('Force-breaking multi-tool cycle', { recentTools, uniqueRecent });
+                                const cycleMsg = `I was cycling between ${[...new Set(recentTools)].join(', ')} without making progress. Here's what I found so far.`;
+                                this.pushMessage({ role: 'model', parts: [{ text: cycleMsg }] });
+                                return { text: cycleMsg, toolsUsed, iterations };
+                            }
+                        }
+
+                        // Continue the loop — model needs to process tool results
+                        continue;
+                    }
+
+                    // Case 2: Model produces a text response (we're done!)
+                    if (response.text) {
+                        this.pushMessage({
+                            role: 'model',
+                            parts: [{ text: response.text }],
+                        });
+
+                        // Log to daily memory
+                        appendDailyLog(this.config.memory.dir, `Processed message (${iterations} iterations, ${toolsUsed.length} tool calls)`);
+
+                        log.info('Message processed', { iterations, toolsUsed: toolsUsed.length });
+
+                        // Auto-learn: extract facts from this exchange in the background
+                        this.extractMemoryAsync(userMessage, response.text, toolsUsed);
+
+                        return { text: response.text, toolsUsed, iterations };
+                    }
+
+                    // Case 3: Empty response (unusual — treat as error)
+                    log.warn('Empty response from model', { iteration: iterations });
+                    const emptyMsg = 'I received an empty response. Could you rephrase your request?';
+                    this.pushMessage({ role: 'model', parts: [{ text: emptyMsg }] });
+                    return { text: emptyMsg, toolsUsed, iterations };
+
+                } catch (err: any) {
+                    const errorMessage = err.message || String(err);
+                    log.error('Error in agent loop', { error: errorMessage, iteration: iterations });
+
+                    // Categorize error for smarter handling
+                    const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Rate limited');
+                    const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
+                    const isModelError = errorMessage.includes('400') || errorMessage.includes('INVALID_ARGUMENT');
+
+                    if (isRateLimit) {
+                        rateLimitRetries++;
+                        if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+                            const errMsg = `Rate limited after ${rateLimitRetries} retries. Please wait a moment and try again.`;
+                            this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
+                            return { text: errMsg, toolsUsed, iterations };
+                        }
+                        const waitMatch = errorMessage.match(/reset after (\d+)s/i);
+                        const waitMs = waitMatch ? (parseInt(waitMatch[1], 10) + 1) * 1000 : 5000;
+                        log.warn(`Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${waitMs}ms`);
+                        await new Promise(r => setTimeout(r, waitMs));
+                        iterations--; // Don't count rate limit retries as iterations
+                        continue;
+                    }
+
+                    if (isTimeout) {
+                        const timeoutMsg = `The request timed out. The model or service may be under load. Please try again.`;
+                        this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
+                        return { text: timeoutMsg, toolsUsed, iterations };
+                    }
+
+                    if (isModelError) {
+                        // 400/invalid errors can't self-correct — fail fast
+                        const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
+                        log.error('Non-recoverable model error, failing fast');
+                        this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
+                        return { text: errMsg, toolsUsed, iterations };
+                    }
+
+                    // For other errors, give the model one chance to self-correct
+                    if (iterations >= this.config.agent.maxIterations) {
+                        const errorMsg = `I encountered an error after ${iterations} attempts: ${errorMessage}. Please try again.`;
+                        this.pushMessage({ role: 'model', parts: [{ text: errorMsg }] });
+                        return { text: errorMsg, toolsUsed, iterations };
+                    }
+
+                    this.pushMessage({
+                        role: 'model',
+                        parts: [{ text: `An error occurred: ${errorMessage}. Adjusting approach and retrying.` }],
+                    });
+                }
             }
-        }
 
-        // Max iterations reached
-        log.warn('Max iterations reached');
-        const maxMsg = `I reached the maximum number of iterations (${this.config.agent.maxIterations}). Here's what I have so far.`;
-        this.pushMessage({ role: 'model', parts: [{ text: maxMsg }] });
-        return { text: maxMsg, toolsUsed, iterations };
+            // Max iterations reached
+            log.warn('Max iterations reached');
+            const maxMsg = `I reached the maximum number of iterations (${this.config.agent.maxIterations}). Here's what I have so far.`;
+            this.pushMessage({ role: 'model', parts: [{ text: maxMsg }] });
+            return { text: maxMsg, toolsUsed, iterations };
+        } finally {
+            // Restore original system prompt (remove proactive recall augmentation)
+            this.systemPrompt = originalPrompt;
+        }
     }
 
     /**
@@ -1172,216 +1298,227 @@ export class Agent {
         const MAX_RATE_LIMIT_RETRIES = 5;
         let lastToolName = '';
         let sameToolCount = 0;
+
+        // Proactive memory recall — augment system prompt with relevant past context
+        const recalledContext = await this.proactiveRecall(userMessage);
+        const originalPrompt = this.systemPrompt;
+        if (recalledContext) this.systemPrompt += recalledContext;
+
         const startTime = Date.now();
 
-        while (iterations < this.config.agent.maxIterations) {
-            if (Date.now() - startTime > this.config.agent.timeoutMs) {
-                log.warn('Agent loop timed out', { iterations });
-                const timeoutMsg = 'I ran out of time processing your request.';
-                this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
-                return { text: timeoutMsg, toolsUsed, iterations };
-            }
-
-            iterations++;
-            emit('iteration', `Iteration ${iterations}/${this.config.agent.maxIterations}`);
-
-            try {
-                // Trim context if approaching token budget
-                await this.trimContextIfNeeded();
-                // Sanitize before API call — ensures valid function call/response ordering
-                this.conversationHistory = Agent.sanitizeHistory(this.conversationHistory);
-
-                // Dynamic model routing: use vision model ONLY when the latest user message has images
-                // Only applies to Ollama — other providers handle vision natively
-                if (this.activeProvider === 'ollama') {
-                    const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
-                    const hasImages = lastUserMsg?.parts.some((p: any) => 'inlineData' in p) ?? false;
-                    const oaiProvider = this.provider as any;
-                    if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
-                        oaiProvider.setModel(this.config.ollama.visionModel);
-                    } else if (!hasImages && oaiProvider.setModel) {
-                        oaiProvider.setModel(this.config.ollama.model);
-                    }
-                }
-
-                emit('llm_call', `Calling ${this.activeProvider} (${this.activeModel})`);
-                const llmStart = Date.now();
-                const response = await this.provider.generateContentStream!(
-                    this.systemPrompt,
-                    this.conversationHistory,
-                    functionDeclarations,
-                    onToken
-                );
-                this.sessionStats.apiCalls++;
-                this.debouncePersistStats();
-                emit('llm_done', `LLM responded in ${((Date.now() - llmStart) / 1000).toFixed(1)}s`);
-
-                // Tool calls
-                if (response.functionCalls && response.functionCalls.length > 0) {
-                    this.pushMessage({ role: 'model', parts: response.rawParts });
-
-                    for (const fc of response.functionCalls) {
-                        log.info(`Tool call: ${fc.name}`, { args: Object.keys(fc.args) });
-                        toolsUsed.push(fc.name);
-                        this.sessionStats.toolCalls++;
-                        this.sessionStats.toolsUsed[fc.name] = (this.sessionStats.toolsUsed[fc.name] || 0) + 1;
-                        emit('tool_call', `${fc.name}(${Object.keys(fc.args).join(', ')})`);
-                    }
-                    this.debouncePersistStats();
-
-                    const toolStart = Date.now();
-                    const results = await Promise.all(
-                        response.functionCalls.map(fc => executeTool(fc.name, fc.args))
-                    );
-                    const toolMs = Date.now() - toolStart;
-                    emit('tool_done', `${response.functionCalls.length} tool(s) completed in ${(toolMs / 1000).toFixed(1)}s`);
-
-                    // Truncate tool results to save context window space
-                    const truncatedResults = results.map(r =>
-                        typeof r === 'string' && r.length > 2000
-                            ? r.slice(0, 2000) + '\n\n... [truncated]'
-                            : r
-                    );
-
-                    const responseParts: LLMPart[] = response.functionCalls.map((fc, i) => ({
-                        functionResponse: {
-                            name: fc.name,
-                            response: { result: truncatedResults[i] },
-                        },
-                    }));
-
-                    this.pushMessage({ role: 'user', parts: responseParts });
-
-                    // Loop detection: catch same-tool repeats AND multi-tool cycling
-                    const currentToolName = response.functionCalls.map(fc => fc.name).join(',');
-                    if (currentToolName === lastToolName) {
-                        sameToolCount++;
-                    } else {
-                        lastToolName = currentToolName;
-                        sameToolCount = 1;
-                    }
-
-                    // Append hints to the existing functionResponse turn (same fix as processMessage)
-                    if (sameToolCount >= 3) {
-                        log.warn('Same-tool loop detected', { tool: currentToolName, count: sameToolCount });
-                        const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
-                        lastMsg.parts.push({ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` } as LLMPart);
-                    }
-
-                    // Force-break: if same tool called 5+ times, stop the loop entirely
-                    if (sameToolCount >= 5) {
-                        log.warn('Force-breaking tool loop', { tool: currentToolName, count: sameToolCount });
-                        const breakMsg = `I called ${currentToolName} ${sameToolCount} times but couldn't complete the task. Here are the results I gathered so far.`;
-                        this.pushMessage({ role: 'model', parts: [{ text: breakMsg }] });
-                        return { text: breakMsg, toolsUsed, iterations };
-                    }
-
-                    // Multi-tool cycling: force-break if last 10 calls use ≤3 unique tools
-                    if (toolsUsed.length >= 10) {
-                        const recentTools = toolsUsed.slice(-10);
-                        const uniqueRecent = new Set(recentTools).size;
-                        if (uniqueRecent <= 3) {
-                            log.warn('Force-breaking multi-tool cycle', { recentTools, uniqueRecent });
-                            const cycleMsg = `I was cycling between ${[...new Set(recentTools)].join(', ')} without making progress. Here's what I found so far.`;
-                            this.pushMessage({ role: 'model', parts: [{ text: cycleMsg }] });
-                            return { text: cycleMsg, toolsUsed, iterations };
-                        }
-                    }
-
-                    continue;
-                }
-
-                // Text response — streaming already sent tokens via onToken
-                if (response.text) {
-                    this.pushMessage({
-                        role: 'model',
-                        parts: [{ text: response.text }],
-                    });
-                    appendDailyLog(this.config.memory.dir, `Processed message (${iterations} iterations, ${toolsUsed.length} tool calls)`);
-                    log.info('Message processed (streaming)', { iterations, toolsUsed: toolsUsed.length });
-
-                    // Auto-title: generate a short title after the first exchange
-                    this.autoTitleIfNeeded(userMessage);
-
-                    // Auto-learn: extract facts from this exchange in the background
-                    this.extractMemoryAsync(userMessage, response.text, toolsUsed);
-
-                    return { text: response.text, toolsUsed, iterations };
-                }
-
-                const emptyMsg = 'I received an empty response. Could you rephrase your request?';
-                this.pushMessage({ role: 'model', parts: [{ text: emptyMsg }] });
-                return { text: emptyMsg, toolsUsed, iterations };
-
-            } catch (err: any) {
-                const errorMessage = err.message || String(err);
-                log.error('Error in agent loop', { error: errorMessage, iteration: iterations });
-
-                const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Rate limited');
-                const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
-                const isModelError = errorMessage.includes('400') || errorMessage.includes('INVALID_ARGUMENT');
-
-                // Model failover: switch to fallback provider on persistent rate limits
-                if (isRateLimit && this.fallbackProvider && !this.usingFallback) {
-                    emit('failover', `Rate limited on ${this.activeProvider} — switching to fallback`);
-                    log.warn('Rate limited — failing over to fallback provider', { from: this.activeProvider });
-                    this.provider = this.fallbackProvider;
-                    this.usingFallback = true;
-                    this.activeProvider = this.activeProvider === 'gemini' ? 'ollama' : 'gemini';
-                    this.activeModel = this.activeProvider === 'ollama' ? this.config.ollama.model : this.config.gemini.model;
-                    emit('failover', `Now using ${this.activeProvider} (${this.activeModel})`);
-                    onToken('\n\n> ⚡ *Switched to ' + this.activeProvider + ' (failover)*\n\n');
-                    continue;
-                }
-
-                if (isRateLimit) {
-                    rateLimitRetries++;
-                    if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
-                        emit('error', `Rate limited after ${rateLimitRetries} retries — giving up`);
-                        const errMsg = `Rate limited after ${rateLimitRetries} retries. Please wait a moment and try again.`;
-                        this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
-                        return { text: errMsg, toolsUsed, iterations };
-                    }
-                    const waitMatch = errorMessage.match(/reset after (\d+)s/i);
-                    const waitMs = waitMatch ? (parseInt(waitMatch[1], 10) + 1) * 1000 : 5000;
-                    emit('rate_limit', `Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${(waitMs / 1000).toFixed(0)}s`);
-                    log.warn(`Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${waitMs}ms`);
-                    await new Promise(r => setTimeout(r, waitMs));
-                    iterations--; // Don't count rate limit retries as iterations
-                    continue;
-                }
-
-                if (isTimeout) {
-                    emit('error', 'Request timed out');
-                    const timeoutMsg = `The request timed out. Please try again.`;
+        try {
+            while (iterations < this.config.agent.maxIterations) {
+                if (Date.now() - startTime > this.config.agent.timeoutMs) {
+                    log.warn('Agent loop timed out', { iterations });
+                    const timeoutMsg = 'I ran out of time processing your request.';
                     this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
                     return { text: timeoutMsg, toolsUsed, iterations };
                 }
 
-                if (isModelError) {
-                    emit('error', `Model error: ${errorMessage.slice(0, 100)}`);
-                    const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
-                    log.error('Non-recoverable model error, failing fast');
-                    this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
-                    return { text: errMsg, toolsUsed, iterations };
-                }
+                iterations++;
+                emit('iteration', `Iteration ${iterations}/${this.config.agent.maxIterations}`);
 
-                if (iterations >= this.config.agent.maxIterations) {
-                    const errorMsg = `I encountered an error after ${iterations} attempts: ${errorMessage}. Please try again.`;
-                    this.pushMessage({ role: 'model', parts: [{ text: errorMsg }] });
-                    return { text: errorMsg, toolsUsed, iterations };
-                }
+                try {
+                    // Trim context if approaching token budget
+                    await this.trimContextIfNeeded();
+                    // Sanitize before API call — ensures valid function call/response ordering
+                    this.conversationHistory = Agent.sanitizeHistory(this.conversationHistory);
 
-                this.pushMessage({
-                    role: 'model',
-                    parts: [{ text: `An error occurred: ${errorMessage}. Adjusting approach and retrying.` }],
-                });
+                    // Dynamic model routing: use vision model ONLY when the latest user message has images
+                    // Only applies to Ollama — other providers handle vision natively
+                    if (this.activeProvider === 'ollama') {
+                        const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
+                        const hasImages = lastUserMsg?.parts.some((p: any) => 'inlineData' in p) ?? false;
+                        const oaiProvider = this.provider as any;
+                        if (hasImages && oaiProvider.setModel && this.config.ollama?.visionModel) {
+                            oaiProvider.setModel(this.config.ollama.visionModel);
+                        } else if (!hasImages && oaiProvider.setModel) {
+                            oaiProvider.setModel(this.config.ollama.model);
+                        }
+                    }
+
+                    emit('llm_call', `Calling ${this.activeProvider} (${this.activeModel})`);
+                    const llmStart = Date.now();
+                    const response = await this.provider.generateContentStream!(
+                        this.systemPrompt,
+                        this.conversationHistory,
+                        functionDeclarations,
+                        onToken
+                    );
+                    this.sessionStats.apiCalls++;
+                    this.debouncePersistStats();
+                    emit('llm_done', `LLM responded in ${((Date.now() - llmStart) / 1000).toFixed(1)}s`);
+
+                    // Tool calls
+                    if (response.functionCalls && response.functionCalls.length > 0) {
+                        this.pushMessage({ role: 'model', parts: response.rawParts });
+
+                        for (const fc of response.functionCalls) {
+                            log.info(`Tool call: ${fc.name}`, { args: Object.keys(fc.args) });
+                            toolsUsed.push(fc.name);
+                            this.sessionStats.toolCalls++;
+                            this.sessionStats.toolsUsed[fc.name] = (this.sessionStats.toolsUsed[fc.name] || 0) + 1;
+                            emit('tool_call', `${fc.name}(${Object.keys(fc.args).join(', ')})`);
+                        }
+                        this.debouncePersistStats();
+
+                        const toolStart = Date.now();
+                        const results = await Promise.all(
+                            response.functionCalls.map(fc => executeTool(fc.name, fc.args))
+                        );
+                        const toolMs = Date.now() - toolStart;
+                        emit('tool_done', `${response.functionCalls.length} tool(s) completed in ${(toolMs / 1000).toFixed(1)}s`);
+
+                        // Truncate tool results to save context window space
+                        const truncatedResults = results.map(r =>
+                            typeof r === 'string' && r.length > 2000
+                                ? r.slice(0, 2000) + '\n\n... [truncated]'
+                                : r
+                        );
+
+                        const responseParts: LLMPart[] = response.functionCalls.map((fc, i) => ({
+                            functionResponse: {
+                                name: fc.name,
+                                response: { result: truncatedResults[i] },
+                            },
+                        }));
+
+                        this.pushMessage({ role: 'user', parts: responseParts });
+
+                        // Loop detection: catch same-tool repeats AND multi-tool cycling
+                        const currentToolName = response.functionCalls.map(fc => fc.name).join(',');
+                        if (currentToolName === lastToolName) {
+                            sameToolCount++;
+                        } else {
+                            lastToolName = currentToolName;
+                            sameToolCount = 1;
+                        }
+
+                        // Append hints to the existing functionResponse turn (same fix as processMessage)
+                        if (sameToolCount >= 3) {
+                            log.warn('Same-tool loop detected', { tool: currentToolName, count: sameToolCount });
+                            const lastMsg = this.conversationHistory[this.conversationHistory.length - 1];
+                            lastMsg.parts.push({ text: `SYSTEM: You have called ${currentToolName} ${sameToolCount} times in a row. You already have the result — use it to answer the user\'s question directly. Do NOT call this tool again.` } as LLMPart);
+                        }
+
+                        // Force-break: if same tool called 5+ times, stop the loop entirely
+                        if (sameToolCount >= 5) {
+                            log.warn('Force-breaking tool loop', { tool: currentToolName, count: sameToolCount });
+                            const breakMsg = `I called ${currentToolName} ${sameToolCount} times but couldn't complete the task. Here are the results I gathered so far.`;
+                            this.pushMessage({ role: 'model', parts: [{ text: breakMsg }] });
+                            return { text: breakMsg, toolsUsed, iterations };
+                        }
+
+                        // Multi-tool cycling: force-break if last 10 calls use ≤3 unique tools
+                        if (toolsUsed.length >= 10) {
+                            const recentTools = toolsUsed.slice(-10);
+                            const uniqueRecent = new Set(recentTools).size;
+                            if (uniqueRecent <= 3) {
+                                log.warn('Force-breaking multi-tool cycle', { recentTools, uniqueRecent });
+                                const cycleMsg = `I was cycling between ${[...new Set(recentTools)].join(', ')} without making progress. Here's what I found so far.`;
+                                this.pushMessage({ role: 'model', parts: [{ text: cycleMsg }] });
+                                return { text: cycleMsg, toolsUsed, iterations };
+                            }
+                        }
+
+                        continue;
+                    }
+
+                    // Text response — streaming already sent tokens via onToken
+                    if (response.text) {
+                        this.pushMessage({
+                            role: 'model',
+                            parts: [{ text: response.text }],
+                        });
+                        appendDailyLog(this.config.memory.dir, `Processed message (${iterations} iterations, ${toolsUsed.length} tool calls)`);
+                        log.info('Message processed (streaming)', { iterations, toolsUsed: toolsUsed.length });
+
+                        // Auto-title: generate a short title after the first exchange
+                        this.autoTitleIfNeeded(userMessage);
+
+                        // Auto-learn: extract facts from this exchange in the background
+                        this.extractMemoryAsync(userMessage, response.text, toolsUsed);
+
+                        return { text: response.text, toolsUsed, iterations };
+                    }
+
+                    const emptyMsg = 'I received an empty response. Could you rephrase your request?';
+                    this.pushMessage({ role: 'model', parts: [{ text: emptyMsg }] });
+                    return { text: emptyMsg, toolsUsed, iterations };
+
+                } catch (err: any) {
+                    const errorMessage = err.message || String(err);
+                    log.error('Error in agent loop', { error: errorMessage, iteration: iterations });
+
+                    const isRateLimit = errorMessage.includes('429') || errorMessage.includes('rate limit') || errorMessage.includes('Rate limited');
+                    const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('ETIMEDOUT');
+                    const isModelError = errorMessage.includes('400') || errorMessage.includes('INVALID_ARGUMENT');
+
+                    // Model failover: switch to fallback provider on persistent rate limits
+                    if (isRateLimit && this.fallbackProvider && !this.usingFallback) {
+                        emit('failover', `Rate limited on ${this.activeProvider} — switching to fallback`);
+                        log.warn('Rate limited — failing over to fallback provider', { from: this.activeProvider });
+                        this.provider = this.fallbackProvider;
+                        this.usingFallback = true;
+                        this.activeProvider = this.activeProvider === 'gemini' ? 'ollama' : 'gemini';
+                        this.activeModel = this.activeProvider === 'ollama' ? this.config.ollama.model : this.config.gemini.model;
+                        emit('failover', `Now using ${this.activeProvider} (${this.activeModel})`);
+                        onToken('\n\n> ⚡ *Switched to ' + this.activeProvider + ' (failover)*\n\n');
+                        continue;
+                    }
+
+                    if (isRateLimit) {
+                        rateLimitRetries++;
+                        if (rateLimitRetries > MAX_RATE_LIMIT_RETRIES) {
+                            emit('error', `Rate limited after ${rateLimitRetries} retries — giving up`);
+                            const errMsg = `Rate limited after ${rateLimitRetries} retries. Please wait a moment and try again.`;
+                            this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
+                            return { text: errMsg, toolsUsed, iterations };
+                        }
+                        const waitMatch = errorMessage.match(/reset after (\d+)s/i);
+                        const waitMs = waitMatch ? (parseInt(waitMatch[1], 10) + 1) * 1000 : 5000;
+                        emit('rate_limit', `Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${(waitMs / 1000).toFixed(0)}s`);
+                        log.warn(`Rate limited (${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES}), waiting ${waitMs}ms`);
+                        await new Promise(r => setTimeout(r, waitMs));
+                        iterations--; // Don't count rate limit retries as iterations
+                        continue;
+                    }
+
+                    if (isTimeout) {
+                        emit('error', 'Request timed out');
+                        const timeoutMsg = `The request timed out. Please try again.`;
+                        this.pushMessage({ role: 'model', parts: [{ text: timeoutMsg }] });
+                        return { text: timeoutMsg, toolsUsed, iterations };
+                    }
+
+                    if (isModelError) {
+                        emit('error', `Model error: ${errorMessage.slice(0, 100)}`);
+                        const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
+                        log.error('Non-recoverable model error, failing fast');
+                        this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
+                        return { text: errMsg, toolsUsed, iterations };
+                    }
+
+                    if (iterations >= this.config.agent.maxIterations) {
+                        const errorMsg = `I encountered an error after ${iterations} attempts: ${errorMessage}. Please try again.`;
+                        this.pushMessage({ role: 'model', parts: [{ text: errorMsg }] });
+                        return { text: errorMsg, toolsUsed, iterations };
+                    }
+
+                    this.pushMessage({
+                        role: 'model',
+                        parts: [{ text: `An error occurred: ${errorMessage}. Adjusting approach and retrying.` }],
+                    });
+                }
             }
-        }
 
-        const maxMsg = `I reached the maximum number of iterations (${this.config.agent.maxIterations}).`;
-        this.pushMessage({ role: 'model', parts: [{ text: maxMsg }] });
-        return { text: maxMsg, toolsUsed, iterations };
+            const maxMsg = `I reached the maximum number of iterations (${this.config.agent.maxIterations}).`;
+            this.pushMessage({ role: 'model', parts: [{ text: maxMsg }] });
+            return { text: maxMsg, toolsUsed, iterations };
+        } finally {
+            // Restore original system prompt (remove proactive recall augmentation)
+            this.systemPrompt = originalPrompt;
+        }
     }
 
     /**
