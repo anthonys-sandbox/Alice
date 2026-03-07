@@ -11,6 +11,8 @@ import { tmpdir } from 'os';
 import { Agent } from '../runtime/agent.js';
 import { GoogleChatAdapter } from '../channels/google-chat.js';
 import { startHeartbeat, stopHeartbeat } from '../scheduler/heartbeat.js';
+import { startMeetingPrep, stopMeetingPrep } from '../scheduler/meeting-prep.js';
+import { startEmailWatcher, stopEmailWatcher } from '../scheduler/email-watcher.js';
 import { scheduler } from '../scheduler/task-scheduler.js';
 import { createLogger } from '../utils/logger.js';
 import type { AliceConfig } from '../utils/config.js';
@@ -1322,6 +1324,13 @@ export class Gateway {
         setTimeout(() => {
           this.cronJobs.startAll();
           log.info('📅 Cron job scheduler started');
+
+          // Start meeting auto-prep and email watcher
+          startMeetingPrep(this.agent, this.chat);
+          log.info('📋 Meeting auto-prep started');
+
+          startEmailWatcher(this.agent, this.chat);
+          log.info('📧 Email watcher started');
         }, 5000);
 
         // Auto-backup: commit and push to GitHub every 6 hours
@@ -1362,6 +1371,8 @@ export class Gateway {
    */
   async stop(): Promise<void> {
     stopHeartbeat();
+    stopMeetingPrep();
+    stopEmailWatcher();
     this.cronJobs.stopAll();
     if (this.fileWatcher) this.fileWatcher.stop();
     this.server.close();

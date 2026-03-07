@@ -61,6 +61,29 @@ Format everything as a clean, scannable briefing with headers (📧 Inbox, 📅 
 };
 
 // ============================================================
+// Smart Daily Triage — runs 30 min before briefing
+// ============================================================
+
+const DAILY_TRIAGE: Omit<CronJob, 'lastRun' | 'lastResult' | 'createdAt'> = {
+    id: 'job_daily_triage',
+    name: 'Smart Daily Triage',
+    cronExpr: '30 6 * * 1-5', // Weekdays at 6:30 AM (30 min before briefing)
+    prompt: `You are Alice, Anthony's AI assistant running a daily triage. Do these steps using gws tools:
+
+1. **Scan urgent emails**: Use gmail_search with query "is:unread is:important newer_than:1d" to find urgent unread emails. For each, use gmail_read to get the full content.
+
+2. **Check today's calendar**: Use calendar_list to get today's events. Note any meetings in the next 2 hours that need prep.
+
+3. **Auto-create tasks**: For any email that contains an action item, deadline, or explicit request — use tasks_create to add a task prefixed with "[TRIAGE]". Include the email subject and sender in the task notes.
+
+4. **Summary**: Report what you found and what tasks you created. Be concise.
+
+Only create tasks for things that genuinely require action — don't create tasks for newsletters, status updates, or FYI emails.`,
+    isolated: true,
+    enabled: true,
+};
+
+// ============================================================
 // CronJobManager
 // ============================================================
 
@@ -736,8 +759,9 @@ export class CronJobManager {
         // Seed defaults if empty
         const count = this.db.prepare('SELECT COUNT(*) as c FROM cron_jobs').get() as { c: number };
         if (count.c === 0) {
-            log.info('No cron jobs found — seeding morning briefing');
+            log.info('No cron jobs found — seeding defaults');
             this.addJob(MORNING_BRIEFING);
+            this.addJob(DAILY_TRIAGE);
         }
 
         // Schedule all enabled jobs
