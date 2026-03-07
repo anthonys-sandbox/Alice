@@ -2525,7 +2525,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       width: 56px; height: 56px; border-radius: 50%;
       background: #ef4444; border: none; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
-      transition: all 0.2s ease; margin-top: 16px;
+      transition: all 0.2s ease;
       box-shadow: 0 4px 20px rgba(239,68,68,0.4);
     }
     .voice-end-btn:hover {
