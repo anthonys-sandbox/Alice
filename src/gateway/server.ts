@@ -2930,10 +2930,6 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m9 10 2 2 4-4"/></svg>
         <span class="sidebar-item-title">Playbooks</span>
       </div>
-      <div class="sidebar-item sidebar-nav-item" data-page="knowledge">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-        <span class="sidebar-item-title">Knowledge Base</span>
-      </div>
       <div class="sidebar-item sidebar-nav-item" data-page="personas">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11h.01M14 6h.01M18 6h.01M6.5 13.1h.01M22 5c0 9-4 12-6 12s-6-3-6-12q0-3 6-3c6 0 6 1 6 3"/><path d="M17.4 9.9c-.8.8-2 .8-2.8 0m-4.5-2.8C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6c4.5 7.8 9.5 8.4 11.2 7.4c.9-.5 1.9-2.1 1.9-4.7"/><path d="M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"/></svg>
         <span class="sidebar-item-title">Personas</span>
@@ -2970,6 +2966,19 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       <div class="header-spacer"></div>
       <div class="header-actions">
         <button class="header-btn" id="consoleToggle" title="Toggle activity console">⚙<span class="btn-label"> Console</span></button>
+        <div style="position:relative;">
+          <button class="header-btn" id="notifBell" title="Notifications" style="position:relative;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0m-10.47-5.674A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
+            <span id="notifBadge" class="notification-badge"></span>
+          </button>
+          <div id="notifDropdown" class="notification-dropdown" style="top:100%;right:0;margin-top:8px;">
+            <div class="notification-dropdown-header">
+              <span>Notifications</span>
+              <button id="notifClear" style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:12px;">Clear all</button>
+            </div>
+            <div id="notifList"><div class="notification-empty">No notifications yet</div></div>
+          </div>
+        </div>
         <button class="header-btn" id="newChatBtn">＋<span class="btn-label"> New Chat</span></button>
       </div>
     </header>
@@ -3015,22 +3024,6 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           <svg class="mic-icon-idle" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
           <svg class="mic-icon-stop" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="display:none;"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>
         </button>
-        <button id="kgBtn" class="kg-btn" title="Knowledge Graph">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="20" cy="18" r="2"/><line x1="6" y1="7" x2="10" y2="10"/><line x1="18" y1="7" x2="14" y2="10"/><line x1="6" y1="17" x2="10" y2="14"/><line x1="18" y1="17" x2="14" y2="14"/></svg>
-        </button>
-        <div style="position:relative;">
-          <button id="notifBell" class="notification-bell" title="Notifications">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0m-10.47-5.674A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
-            <span id="notifBadge" class="notification-badge"></span>
-          </button>
-          <div id="notifDropdown" class="notification-dropdown">
-            <div class="notification-dropdown-header">
-              <span>Notifications</span>
-              <button id="notifClear" style="background:none;border:none;color:var(--text-tertiary);cursor:pointer;font-size:12px;">Clear all</button>
-            </div>
-            <div id="notifList"><div class="notification-empty">No notifications yet</div></div>
-          </div>
-        </div>
         <button id="voiceModeBtn" class="voice-mode-btn" title="Voice conversation">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="9" width="2" height="6" rx="1"/><rect x="8" y="5" width="2" height="14" rx="1"/><rect x="12" y="3" width="2" height="18" rx="1"/><rect x="16" y="7" width="2" height="10" rx="1"/><rect x="20" y="10" width="2" height="4" rx="1"/></svg>
         </button>
