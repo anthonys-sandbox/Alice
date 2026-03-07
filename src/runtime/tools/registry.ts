@@ -1036,6 +1036,7 @@ export function toGeminiFunctionDeclarations() {
         'chat_send', 'chat_list_spaces',
         'keep_list', 'keep_create', 'meet_create', 'forms_responses',
         'standup_report', 'meeting_prep', 'email_to_task', 'weekly_digest', 'file_announce',
+        'drive_download', 'sheets_write', 'docs_append', 'workspace_search', 'workspace_pipeline',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))

@@ -938,6 +938,79 @@ export class Agent {
 
         registerTool({ name: 'forms_responses', description: 'Read responses from a Google Form.', parameters: { type: 'object', properties: { form_id: { type: 'string', description: 'Form ID' } }, required: ['form_id'] }, execute: async (a: any) => runGws(['forms', 'forms', 'responses', 'list', '--params', JSON.stringify({ formId: a.form_id })]) });
 
+        // ── Phase 1 Power Tools ──────────────────────────────────────
+
+        registerTool({
+            name: 'drive_download', description: 'Read/download a Google Drive file. For Google Docs/Sheets/Slides, exports as plain text. For other files, downloads raw content.', parameters: { type: 'object', properties: { file_id: { type: 'string', description: 'Drive file ID' }, mime_type: { type: 'string', description: 'Export MIME type (default: text/plain). Options: text/plain, text/csv, application/pdf' } }, required: ['file_id'] }, execute: async (a: any) => {
+                const mime = a.mime_type || 'text/plain';
+                // Try export first (for Google Workspace files), fall back to download
+                const result = await runGws(['drive', 'files', 'export', '--params', JSON.stringify({ fileId: a.file_id, mimeType: mime }), '--output', '/tmp/gws_export_tmp']);
+                if (result.includes('error') && result.includes('not a Google Workspace file')) {
+                    return runGws(['drive', 'files', 'download', '--params', JSON.stringify({ fileId: a.file_id }), '--output', '/tmp/gws_export_tmp']);
+                }
+                try {
+                    const { readFileSync } = await import('fs');
+                    const content = readFileSync('/tmp/gws_export_tmp', 'utf-8');
+                    return content.length > 50000 ? content.slice(0, 50000) + '\n\n[...truncated at 50K chars]' : content;
+                } catch { return result; }
+            }
+        });
+
+        registerTool({
+            name: 'sheets_write', description: 'Write data to a Google Sheets range. Can update existing cells or append new rows.', parameters: { type: 'object', properties: { spreadsheet_id: { type: 'string', description: 'Spreadsheet ID' }, range: { type: 'string', description: 'A1 notation (e.g. "Sheet1!A1:C3")' }, values: { type: 'array', description: 'Array of row arrays, e.g. [["A1","B1"],["A2","B2"]]', items: { type: 'array', items: { type: 'string' } } }, append: { type: 'boolean', description: 'If true, append rows after existing data instead of overwriting (default: false)' } }, required: ['spreadsheet_id', 'range', 'values'] }, execute: async (a: any) => {
+                const body = { range: a.range, majorDimension: 'ROWS', values: a.values };
+                if (a.append) {
+                    return runGws(['sheets', 'spreadsheets', 'values', 'append', '--params', JSON.stringify({ spreadsheetId: a.spreadsheet_id, range: a.range, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS' }), '--json', JSON.stringify(body)]);
+                }
+                return runGws(['sheets', 'spreadsheets', 'values', 'update', '--params', JSON.stringify({ spreadsheetId: a.spreadsheet_id, range: a.range, valueInputOption: 'USER_ENTERED' }), '--json', JSON.stringify(body)]);
+            }
+        });
+
+        registerTool({
+            name: 'docs_append', description: 'Append text to an existing Google Doc at the end of the document.', parameters: { type: 'object', properties: { document_id: { type: 'string', description: 'Document ID' }, text: { type: 'string', description: 'Text to append' } }, required: ['document_id', 'text'] }, execute: async (a: any) => {
+                // First get the doc to find the end index
+                const docRaw = await runGws(['docs', 'documents', 'get', '--params', JSON.stringify({ documentId: a.document_id })]);
+                let endIndex = 1;
+                try { const doc = JSON.parse(docRaw); endIndex = doc.body?.content?.slice(-1)?.[0]?.endIndex || 1; } catch { }
+                const insertIdx = Math.max(endIndex - 1, 1);
+                const requests = [{ insertText: { location: { index: insertIdx }, text: a.text } }];
+                return runGws(['docs', 'documents', 'batchUpdate', '--params', JSON.stringify({ documentId: a.document_id }), '--json', JSON.stringify({ requests })]);
+            }
+        });
+
+        registerTool({
+            name: 'workspace_search', description: 'Search across Gmail, Drive, and Docs simultaneously. Returns unified results from all services.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query text' }, services: { type: 'string', description: 'Comma-separated list of services to search (default: "gmail,drive"). Options: gmail, drive' } }, required: ['query'] }, execute: async (a: any) => {
+                const svcs = (a.services || 'gmail,drive').split(',').map((s: string) => s.trim());
+                const results: string[] = [];
+                const promises: Promise<void>[] = [];
+                if (svcs.includes('gmail')) {
+                    promises.push(runGws(['gmail', 'users', 'messages', 'list', '--params', JSON.stringify({ userId: 'me', q: a.query, maxResults: 5 })]).then(r => { results.push(`📧 Gmail:\n${r}`); }));
+                }
+                if (svcs.includes('drive')) {
+                    promises.push(runGws(['drive', 'files', 'list', '--params', JSON.stringify({ q: `fullText contains '${a.query.replace(/'/g, "\\'")}'`, pageSize: 10, fields: 'files(id,name,mimeType,modifiedTime,webViewLink)' })]).then(r => { results.push(`📁 Drive:\n${r}`); }));
+                }
+                await Promise.all(promises);
+                return results.join('\n\n');
+            }
+        });
+
+        registerTool({
+            name: 'workspace_pipeline', description: 'Run a multi-step workspace pipeline. Each step runs a gws tool and can reference {{prev}} to use the previous step\'s output. Returns the final step\'s result.', parameters: { type: 'object', properties: { steps: { type: 'array', description: 'Array of step objects: { tool: "tool_name", args: { ... } }. Use {{prev}} in string args to reference previous output.', items: { type: 'object', properties: { tool: { type: 'string' }, args: { type: 'object' } } } } }, required: ['steps'] }, execute: async (a: any) => {
+                let prev = '';
+                for (let i = 0; i < a.steps.length; i++) {
+                    const step = a.steps[i];
+                    // Replace {{prev}} in all string args
+                    const args = JSON.parse(JSON.stringify(step.args || {}).replace(/\{\{prev\}\}/g, prev.replace(/"/g, '\\"')));
+                    try {
+                        prev = await executeTool(step.tool, args);
+                    } catch (e: any) {
+                        prev = `Step ${i + 1} error: ${e.message}`;
+                    }
+                }
+                return prev;
+            }
+        });
+
         // Workflow helpers
         registerTool({ name: 'standup_report', description: 'Generate standup report: today\'s events + open tasks.', parameters: { type: 'object', properties: {}, required: [] }, execute: async () => runGws(['workflow', '+standup-report']) });
 
