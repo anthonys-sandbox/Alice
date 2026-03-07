@@ -14,6 +14,8 @@ import { PlaybookEngine } from './playbook-engine.js';
 import { deepResearch } from './deep-research.js';
 import { generateDocument } from './doc-generator.js';
 import { briefPerson, relationshipHealth } from './people-intel.js';
+import { listRepos, listIssues, createIssue, listPRs, searchCode } from '../integrations/github.js';
+import { KnowledgeBase } from '../memory/knowledge-base.js';
 import { join } from 'path';
 
 const log = createLogger('Agent');
@@ -1371,6 +1373,123 @@ Use emoji and clean formatting.`,
                 );
                 return result.text;
             },
+        });
+
+        // ── GitHub Integration ─────────────────────────────────
+        registerTool({
+            name: 'github_repos',
+            description: 'List GitHub repositories. Lists your repos by default, or specify an owner.',
+            parameters: { type: 'object', properties: { owner: { type: 'string', description: 'GitHub user/org (optional, default: your repos)' } }, required: [] },
+            execute: async (args: any) => listRepos(args.owner),
+        });
+
+        registerTool({
+            name: 'github_issues',
+            description: 'List issues for a GitHub repository.',
+            parameters: { type: 'object', properties: { repo: { type: 'string', description: 'Repo (owner/name)' }, state: { type: 'string', description: 'open, closed, all (default: open)' } }, required: ['repo'] },
+            execute: async (args: any) => listIssues(args.repo, args.state),
+        });
+
+        registerTool({
+            name: 'github_create_issue',
+            description: 'Create a new GitHub issue.',
+            parameters: { type: 'object', properties: { repo: { type: 'string', description: 'Repo (owner/name)' }, title: { type: 'string' }, body: { type: 'string' }, labels: { type: 'string', description: 'Comma-separated labels' } }, required: ['repo', 'title', 'body'] },
+            execute: async (args: any) => createIssue(args.repo, args.title, args.body, args.labels?.split(',').map((l: string) => l.trim())),
+        });
+
+        registerTool({
+            name: 'github_prs',
+            description: 'List pull requests for a GitHub repository.',
+            parameters: { type: 'object', properties: { repo: { type: 'string', description: 'Repo (owner/name)' }, state: { type: 'string', description: 'open, closed, all (default: open)' } }, required: ['repo'] },
+            execute: async (args: any) => listPRs(args.repo, args.state),
+        });
+
+        registerTool({
+            name: 'github_search_code',
+            description: 'Search code across GitHub repositories.',
+            parameters: { type: 'object', properties: { query: { type: 'string', description: 'Code search query' } }, required: ['query'] },
+            execute: async (args: any) => searchCode(args.query),
+        });
+
+        // ── Parallel Delegation ───────────────────────────────
+        registerTool({
+            name: 'delegate_tasks',
+            description: 'Decompose a complex request into parallel sub-tasks and execute them simultaneously. Each sub-task gets its own independent agent with tool access. Use for multi-part research, analysis, or data gathering.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    tasks: {
+                        type: 'array',
+                        description: 'Array of task objects: [{ "task": "description", "tools": ["tool1", "tool2"] }]',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                task: { type: 'string', description: 'Task description' },
+                                tools: { type: 'array', items: { type: 'string' }, description: 'Tool names to allow' },
+                            },
+                        },
+                    },
+                },
+                required: ['tasks'],
+            },
+            execute: async (args: any) => {
+                const { SubAgent } = await import('./sub-agent.js');
+                const tasks = (args.tasks || []).map((t: any, i: number) => ({
+                    task: t.task,
+                    tools: t.tools,
+                    maxIterations: 8,
+                    provider: 'background' as const,
+                }));
+                const results = await SubAgent.runParallel(
+                    tasks, config, this.provider, this.getBackgroundProvider()
+                );
+                return results.map((r, i) => `## Task ${i + 1}\n${r.success ? r.text : 'Error: ' + r.error}\n(${r.iterations} iterations, tools: ${r.toolsUsed.join(', ')})`).join('\n\n---\n\n');
+            },
+        });
+
+        // ── Knowledge Base ────────────────────────────────────
+        const kb = new KnowledgeBase(config.memory.dir);
+
+        registerTool({
+            name: 'kb_search',
+            description: 'Search the personal knowledge base for stored facts, decisions, preferences, and research.',
+            parameters: { type: 'object', properties: { query: { type: 'string', description: 'Search query' }, limit: { type: 'number', description: 'Max results (default 10)' } }, required: ['query'] },
+            execute: async (args: any) => {
+                const results = kb.search(args.query, args.limit || 10);
+                if (results.length === 0) return 'No knowledge base entries found for that query.';
+                return results.map(r => `[${r.entryType}] ${r.topic}\n${r.content.slice(0, 200)}\nTags: ${r.tags.join(', ')}`).join('\n\n---\n\n');
+            },
+        });
+
+        registerTool({
+            name: 'kb_add',
+            description: 'Add a new entry to the personal knowledge base. Types: fact, decision, preference, research, insight.',
+            parameters: { type: 'object', properties: { topic: { type: 'string' }, content: { type: 'string' }, type: { type: 'string', description: 'Entry type (default: fact)' }, tags: { type: 'string', description: 'Comma-separated tags' } }, required: ['topic', 'content'] },
+            execute: async (args: any) => {
+                const id = kb.addEntry(args.topic, args.content, {
+                    entryType: args.type || 'fact',
+                    tags: args.tags?.split(',').map((t: string) => t.trim()) || [],
+                });
+                return `Added KB entry #${id}: "${args.topic}" (${args.type || 'fact'})`;
+            },
+        });
+
+        registerTool({
+            name: 'kb_list',
+            description: 'List entries in the personal knowledge base, optionally filtered by type.',
+            parameters: { type: 'object', properties: { type: { type: 'string', description: 'Filter by type (optional)' }, limit: { type: 'number' } }, required: [] },
+            execute: async (args: any) => {
+                const entries = kb.listEntries({ type: args.type, limit: args.limit });
+                if (entries.length === 0) return 'Knowledge base is empty.';
+                return entries.map(e => `#${e.id} [${e.entryType}] ${e.topic}: ${e.content}`).join('\n');
+            },
+        });
+
+        registerTool({
+            name: 'kb_stats',
+            description: 'Get knowledge base statistics.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => JSON.stringify(kb.getStats(), null, 2),
         });
 
         this.refreshContext();

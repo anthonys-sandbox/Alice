@@ -1041,6 +1041,8 @@ export function toGeminiFunctionDeclarations() {
         'find_free_time', 'schedule_meeting', 'time_block', 'meeting_cost',
         'generate_document', 'brief_person', 'relationship_health',
         'analyze_image', 'analyze_screenshot', 'time_analysis',
+        'github_repos', 'github_issues', 'github_create_issue', 'github_prs', 'github_search_code',
+        'delegate_tasks', 'kb_search', 'kb_add', 'kb_list', 'kb_stats',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))
