@@ -700,6 +700,89 @@ export class Agent {
             },
         });
 
+        // Register knowledge graph tools — entity + relationship management
+        registerTool({
+            name: 'knowledge_graph',
+            description: 'Query the knowledge graph to find entities (people, projects, concepts) and their relationships. Use to recall who/what is connected to whom/what.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['search', 'get', 'list', 'relations'], description: 'Action: search (fuzzy match), get (exact name), list (all entities), relations (get connections for an entity)' },
+                    query: { type: 'string', description: 'Entity name or search query' },
+                    type: { type: 'string', description: 'Filter by entity type (person, project, concept, place, company, etc.)' },
+                },
+                required: ['action'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const store = getMemoryStore();
+                if (!store) return 'Error: Memory store not initialized.';
+
+                switch (args.action) {
+                    case 'search': {
+                        const results = store.searchEntities(args.query || '');
+                        if (results.length === 0) return 'No entities found matching query.';
+                        return results.map(e => `**${e.name}** (${e.type}): ${e.description || 'No description'}`).join('\n');
+                    }
+                    case 'get': {
+                        const entity = store.getEntity(args.query || '');
+                        if (!entity) return `Entity "${args.query}" not found.`;
+                        const rels = store.getRelations(entity.name);
+                        const relStr = rels.length > 0
+                            ? rels.map(r => `  ${r.direction === 'from' ? '→' : '←'} ${r.relation} → ${r.entity}`).join('\n')
+                            : '  No relationships';
+                        return `**${entity.name}** (${entity.type})\n${entity.description || 'No description'}\nCreated: ${entity.createdAt}\n\nRelationships:\n${relStr}`;
+                    }
+                    case 'list': {
+                        const entities = store.listEntities(args.type);
+                        if (entities.length === 0) return args.type ? `No entities of type "${args.type}" found.` : 'Knowledge graph is empty.';
+                        return entities.map(e => `- **${e.name}** (${e.type}): ${e.description || ''}`).join('\n');
+                    }
+                    case 'relations': {
+                        if (!args.query) return 'Error: query (entity name) is required for relations action.';
+                        const rels = store.getRelations(args.query);
+                        if (rels.length === 0) return `No relationships found for "${args.query}".`;
+                        return rels.map(r => `${r.direction === 'from' ? '→' : '←'} **${r.relation}** → ${r.entity}`).join('\n');
+                    }
+                    default:
+                        return 'Error: action must be one of: search, get, list, relations';
+                }
+            },
+        });
+
+        registerTool({
+            name: 'add_knowledge',
+            description: 'Add entities and relationships to the knowledge graph. Use to record people, projects, concepts, and how they connect. Entities are automatically merged by name.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    entity_name: { type: 'string', description: 'Name of the entity to create/update' },
+                    entity_type: { type: 'string', description: 'Type: person, project, concept, place, company, tool, event, etc.' },
+                    description: { type: 'string', description: 'Brief description of the entity' },
+                    relates_to: { type: 'string', description: 'Name of another entity this one relates to' },
+                    relation: { type: 'string', description: 'The relationship type (e.g., "works_on", "knows", "uses", "part_of", "created_by")' },
+                },
+                required: ['entity_name', 'entity_type'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const store = getMemoryStore();
+                if (!store) return 'Error: Memory store not initialized.';
+
+                const entityId = store.upsertEntity(args.entity_name, args.entity_type, args.description || '');
+                let msg = `Entity "${args.entity_name}" (${args.entity_type}) saved with ID ${entityId}.`;
+
+                if (args.relates_to && args.relation) {
+                    const added = store.addRelation(args.entity_name, args.relates_to, args.relation);
+                    if (added) {
+                        msg += ` Relationship added: ${args.entity_name} —${args.relation}→ ${args.relates_to}`;
+                    } else {
+                        msg += ` Note: Could not create relationship (target entity "${args.relates_to}" may not exist yet).`;
+                    }
+                }
+
+                return msg;
+            },
+        });
+
         // Register notify_user tool — proactive push notifications
         registerTool({
             name: 'notify_user',

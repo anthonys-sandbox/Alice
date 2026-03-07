@@ -1027,6 +1027,7 @@ export function toGeminiFunctionDeclarations() {
         'set_reminder', 'generate_image', 'delegate_task', 'code', 'workspace_status',
         'browse_page', 'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
         'deep_research', 'parallel_tasks',
+        'knowledge_graph', 'add_knowledge',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))
