@@ -2,7 +2,7 @@ import { GeminiProvider, type LLMMessage, type LLMPart, type LLMResponse, type F
 import { OAIProvider } from './providers/oai-provider.js';
 import { hasCliCredentials } from './providers/gemini-cli-auth.js';
 import { getOpenAIAccessToken, getOpenAIAccessTokenSync, hasCodexCredentials } from './providers/openai-oauth.js';
-import { executeTool, toGeminiFunctionDeclarations, registerTool } from './tools/registry.js';
+import { executeTool, toGeminiFunctionDeclarations, registerTool, toolEvents } from './tools/registry.js';
 import { loadMemory, buildSystemPrompt, appendDailyLog, appendFacts, updateMemory, searchMemoryFiles, setMemoryStore, getMemoryStore, type MemoryUpdate } from '../memory/index.js';
 import { loadSkills, buildSkillPrompt, installSkill } from '../skills/loader.js';
 import { SessionStore } from '../memory/sessions.js';
@@ -372,6 +372,70 @@ export class Agent {
             },
         });
 
+        // Register parallel_tasks tool — run multiple sub-agents concurrently
+        registerTool({
+            name: 'parallel_tasks',
+            description: 'Run multiple tasks in parallel using independent sub-agents. Each task gets its own agent with its own conversation and tool access. All tasks execute concurrently. Use when you have multiple independent research, analysis, or coding tasks that can run simultaneously.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    tasks: {
+                        type: 'string',
+                        description: 'JSON array of task objects. Each object has: "task" (string, required), "tools" (comma-separated tool names, optional), "max_iterations" (number, optional, default 10). Example: [{"task":"Research X","tools":"web_search,web_fetch"},{"task":"Analyze Y"}]',
+                    },
+                },
+                required: ['tasks'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const { SubAgent } = await import('./sub-agent.js');
+
+                let taskList: Array<{ task: string; tools?: string; max_iterations?: number }>;
+                try {
+                    taskList = JSON.parse(args.tasks);
+                } catch {
+                    return 'Error: tasks must be a valid JSON array of task objects.';
+                }
+
+                if (!Array.isArray(taskList) || taskList.length === 0) {
+                    return 'Error: tasks must be a non-empty array.';
+                }
+
+                if (taskList.length > 5) {
+                    return 'Error: maximum 5 parallel tasks allowed.';
+                }
+
+                const activePersona = this.sessionStore.getActivePersona();
+                const persona = activePersona ? {
+                    name: activePersona.name,
+                    soul: activePersona.soulContent,
+                    identity: activePersona.identityContent,
+                } : undefined;
+
+                const subTasks = taskList.map(t => ({
+                    task: t.task,
+                    tools: t.tools ? t.tools.split(',').map(s => s.trim()) : undefined,
+                    maxIterations: t.max_iterations ?? 10,
+                    persona,
+                }));
+
+                log.info('Running parallel tasks', { count: subTasks.length });
+                const results = await SubAgent.runParallel(
+                    subTasks,
+                    this.config,
+                    this.provider,
+                    this.backgroundProvider,
+                );
+
+                // Format results
+                const parts = results.map((r, i) => {
+                    const status = r.success ? '✅' : '❌';
+                    return `### Task ${i + 1}: ${taskList[i].task}\n${status} ${r.iterations} iterations, tools: ${r.toolsUsed.join(', ') || 'none'}\n\n${r.text}`;
+                });
+
+                return `**Parallel Results** (${results.length} tasks):\n\n${parts.join('\n\n---\n\n')}`;
+            },
+        });
+
         // Register code tool (agentic coding mode)
         registerTool({
             name: 'code',
@@ -633,6 +697,35 @@ export class Agent {
             parameters: { type: 'object', properties: {}, required: [] },
             execute: async () => {
                 return this.requestLocation();
+            },
+        });
+
+        // Register notify_user tool — proactive push notifications
+        registerTool({
+            name: 'notify_user',
+            description: 'Send a proactive push notification to the user via Google Chat and/or the web UI. Use this to alert the user about completed tasks, important events, or time-sensitive information when they may not be actively watching the chat.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    message: { type: 'string', description: 'The notification message to send' },
+                    priority: { type: 'string', enum: ['info', 'warning', 'urgent'], description: 'Priority level (default: info)' },
+                },
+                required: ['message'],
+            },
+            execute: async (args: Record<string, any>) => {
+                const priority = args.priority || 'info';
+                const emoji = priority === 'urgent' ? '🚨' : priority === 'warning' ? '⚠️' : '💡';
+                const fullMessage = `${emoji} **Alice Notification**\n\n${args.message}`;
+
+                // Emit notification event — Gateway listens and routes to Google Chat + WebSocket
+                toolEvents.emit('notification', {
+                    type: 'proactive',
+                    message: fullMessage,
+                    priority,
+                });
+
+                log.info('Proactive notification sent', { priority, messageLength: args.message.length });
+                return `Notification sent to user: ${args.message}`;
             },
         });
         // Register deep research tool — autonomous multi-step research via Interactions API
