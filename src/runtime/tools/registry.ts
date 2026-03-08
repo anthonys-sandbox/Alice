@@ -1045,6 +1045,8 @@ export function toGeminiFunctionDeclarations() {
         'delegate_tasks', 'kb_search', 'kb_add', 'kb_list', 'kb_stats',
         'compose_email', 'list_approvals', 'approve_action', 'reject_action',
         'browse_templates', 'install_template',
+        'create_automation', 'list_automations', 'toggle_automation', 'delete_automation',
+        'start_background_task', 'check_task_status', 'list_background_tasks',
     ]);
     return ALL_TOOLS
         .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))

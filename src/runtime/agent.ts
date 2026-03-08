@@ -18,6 +18,8 @@ import { listRepos, listIssues, createIssue, listPRs, searchCode } from '../inte
 import { KnowledgeBase } from '../memory/knowledge-base.js';
 import { composeEmail } from './email-composer.js';
 import { ApprovalWorkflow } from './approval-workflow.js';
+import { AutomationManager } from '../scheduler/automations.js';
+import { taskQueue } from '../scheduler/task-queue.js';
 import { join } from 'path';
 
 const log = createLogger('Agent');
@@ -76,6 +78,9 @@ export class Agent {
 
     // Knowledge Base instance (for correction detection)
     private kb: import('../memory/knowledge-base.js').KnowledgeBase | null = null;
+
+    // Automation manager
+    private automations: AutomationManager | null = null;
 
     // Location: resolver for async geolocation requests via WebSocket
     private locationResolver: {
@@ -1496,6 +1501,124 @@ Use emoji and clean formatting.`,
             description: 'Get knowledge base statistics.',
             parameters: { type: 'object', properties: {}, required: [] },
             execute: async () => JSON.stringify(kb.getStats(), null, 2),
+        });
+
+        // ── Automation Chains ─────────────────────────────────
+        const automations = new AutomationManager(config.memory.dir);
+        this.automations = automations;
+
+        registerTool({
+            name: 'create_automation',
+            description: 'Create an if-this-then-that automation rule. Triggers: on_cron (cron expression), on_keyword (word/phrase in messages). Actions: run_prompt (execute a prompt), send_notification (send a message), execute_tool (run a tool).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    name: { type: 'string', description: 'Human-readable name for the automation' },
+                    description: { type: 'string', description: 'What this automation does' },
+                    trigger_type: { type: 'string', description: 'Trigger type: on_cron or on_keyword' },
+                    trigger_value: { type: 'string', description: 'Cron expression (e.g. "0 9 * * 1-5") or keyword' },
+                    action_type: { type: 'string', description: 'Action type: run_prompt, send_notification, or execute_tool' },
+                    action_value: { type: 'string', description: 'The prompt, notification message, or tool name' },
+                },
+                required: ['name', 'description', 'trigger_type', 'trigger_value', 'action_type', 'action_value'],
+            },
+            execute: async (args: any) => {
+                const rule = automations.addRule({
+                    name: args.name,
+                    description: args.description,
+                    trigger: { type: args.trigger_type, value: args.trigger_value },
+                    action: { type: args.action_type, value: args.action_value },
+                    enabled: true,
+                });
+                return `✅ Automation created: "${rule.name}" (${rule.id})\nTrigger: ${rule.trigger.type} = ${rule.trigger.value}\nAction: ${rule.action.type}`;
+            },
+        });
+
+        registerTool({
+            name: 'list_automations',
+            description: 'List all automation rules with their status, triggers, and actions.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                const rules = automations.listRules();
+                if (rules.length === 0) return 'No automations configured.';
+                return rules.map(r => {
+                    const status = r.enabled ? '🟢' : '⏸️';
+                    return `${status} **${r.name}** (${r.id})\n  Trigger: ${r.trigger.type} = ${r.trigger.value}\n  Action: ${r.action.type}\n  Runs: ${r.runCount} | Last: ${r.lastRun || 'never'}`;
+                }).join('\n\n');
+            },
+        });
+
+        registerTool({
+            name: 'toggle_automation',
+            description: 'Enable or disable an automation rule.',
+            parameters: { type: 'object', properties: { id: { type: 'string', description: 'Automation rule ID' } }, required: ['id'] },
+            execute: async (args: any) => {
+                const enabled = automations.toggleRule(args.id);
+                if (enabled === null) return `❌ No automation found with ID "${args.id}"`;
+                return `Automation ${args.id} is now ${enabled ? '🟢 enabled' : '⏸️ disabled'}.`;
+            },
+        });
+
+        registerTool({
+            name: 'delete_automation',
+            description: 'Delete an automation rule by its ID.',
+            parameters: { type: 'object', properties: { id: { type: 'string', description: 'Automation rule ID' } }, required: ['id'] },
+            execute: async (args: any) => {
+                const removed = automations.removeRule(args.id);
+                return removed ? `✅ Automation "${args.id}" deleted.` : `❌ No automation found with ID "${args.id}".`;
+            },
+        });
+
+        // ── Background Tasks ─────────────────────────────────
+        registerTool({
+            name: 'start_background_task',
+            description: 'Start a long-running task that runs in the background. Use for research, analysis, report generation, or any multi-step work. Returns immediately with a task ID — the user will be notified via Google Chat when it completes.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    description: { type: 'string', description: 'Detailed description of the task to complete' },
+                },
+                required: ['description'],
+            },
+            execute: async (args: any) => {
+                const task = taskQueue.submit(args.description);
+                return `🚀 Background task started: ${task.id}\nDescription: ${args.description.slice(0, 100)}\nStatus: ${task.status}\n\nYou'll be notified when it completes.`;
+            },
+        });
+
+        registerTool({
+            name: 'check_task_status',
+            description: 'Check the status of a background task by its ID.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    task_id: { type: 'string', description: 'The task ID to check' },
+                },
+                required: ['task_id'],
+            },
+            execute: async (args: any) => {
+                const task = taskQueue.getTask(args.task_id);
+                if (!task) return `❌ No task found with ID "${args.task_id}"`;
+                let result = `Task: ${task.id}\nStatus: ${task.status}\nProgress: ${task.progress}\nCreated: ${task.createdAt}`;
+                if (task.completedAt) result += `\nCompleted: ${task.completedAt}`;
+                if (task.result) result += `\n\nResult:\n${task.result.slice(0, 1000)}`;
+                if (task.toolsUsed.length) result += `\nTools used: ${task.toolsUsed.join(', ')}`;
+                return result;
+            },
+        });
+
+        registerTool({
+            name: 'list_background_tasks',
+            description: 'List all background tasks and their current status.',
+            parameters: { type: 'object', properties: {}, required: [] },
+            execute: async () => {
+                const tasks = taskQueue.listTasks();
+                if (tasks.length === 0) return 'No background tasks.';
+                return tasks.slice(0, 10).map(t => {
+                    const icon = t.status === 'completed' ? '✅' : t.status === 'running' ? '🔄' : t.status === 'failed' ? '❌' : '⏳';
+                    return `${icon} **${t.id}** (${t.status})\n  ${t.description.slice(0, 60)}`;
+                }).join('\n\n');
+            },
         });
 
         // ── Smart Email Composer ─────────────────────────────

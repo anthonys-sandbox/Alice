@@ -1575,6 +1575,12 @@ export class Gateway {
 
           startProactiveEngine(this.agent, this.chat);
           log.info('🔮 Proactive intelligence engine started');
+
+          // Initialize background task queue
+          import('../scheduler/task-queue.js').then(({ taskQueue }) => {
+            taskQueue.initialize(this.agent, this.chat);
+            log.info('📋 Background task queue initialized');
+          });
         }, 5000);
 
         // Auto-backup: commit and push to GitHub every 6 hours
