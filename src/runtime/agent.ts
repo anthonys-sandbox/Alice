@@ -74,6 +74,9 @@ export class Agent {
     // Canvas: holds the last canvas payload pushed by the canvas tool
     private lastCanvasPayload: { html: string; title: string } | null = null;
 
+    // Knowledge Base instance (for correction detection)
+    private kb: import('../memory/knowledge-base.js').KnowledgeBase | null = null;
+
     // Location: resolver for async geolocation requests via WebSocket
     private locationResolver: {
         resolve: (value: string) => void;
@@ -1451,6 +1454,7 @@ Use emoji and clean formatting.`,
 
         // ── Knowledge Base ────────────────────────────────────
         const kb = new KnowledgeBase(config.memory.dir);
+        this.kb = kb;
 
         registerTool({
             name: 'kb_search',
@@ -1960,13 +1964,18 @@ Use emoji and clean formatting.`,
     /**
      * Trim conversation context if approaching token budget.
      * Keeps the most recent messages and compresses the rest into a summary.
+     * Triggers on EITHER token count or message count.
      */
     private async trimContextIfNeeded(): Promise<void> {
         const MAX_CONTEXT_TOKENS = 32000;
+        const MAX_MESSAGE_COUNT = 30;
         const MIN_KEEP = 4;
 
         let tokenEstimate = this.estimateTokens(this.conversationHistory);
-        if (tokenEstimate <= MAX_CONTEXT_TOKENS) return;
+        const messageCount = this.conversationHistory.length;
+
+        // Trigger on either token count OR message count
+        if (tokenEstimate <= MAX_CONTEXT_TOKENS && messageCount <= MAX_MESSAGE_COUNT) return;
 
         log.warn('Context approaching token limit, trimming', {
             estimated: tokenEstimate,
@@ -2313,6 +2322,66 @@ Use emoji and clean formatting.`,
         } finally {
             // Restore original system prompt (remove proactive recall augmentation)
             this.systemPrompt = originalPrompt;
+
+            // Fire-and-forget: detect corrections and save to KB
+            this.detectAndSaveCorrections(userMessage).catch(() => { });
+        }
+    }
+
+    /**
+     * Detect correction patterns in user messages and auto-save to KB.
+     * Runs as fire-and-forget after each message.
+     */
+    private async detectAndSaveCorrections(userMessage: string): Promise<void> {
+        if (!this.kb) return;
+        const msg = userMessage.toLowerCase().trim();
+
+        // Quick pattern check — skip expensive LLM call if no correction signals
+        const correctionPatterns = [
+            /\bno[,.]?\s+(actually|i\s+prefer|i\s+want|use|it'?s|that'?s\s+not)/i,
+            /\bdon'?t\s+(do|use|send|call|make)\b/i,
+            /\binstead\s+of\b/i,
+            /\bi\s+prefer\b/i,
+            /\bthat'?s\s+(wrong|incorrect|not\s+right)/i,
+            /\bplease\s+(don'?t|stop|always|never)\b/i,
+            /\balways\s+(use|do|include|make)\b/i,
+            /\bnever\s+(use|do|send|include|make)\b/i,
+            /\bremember\s+that\b/i,
+            /\bfor\s+future\s+reference\b/i,
+            /\bfrom\s+now\s+on\b/i,
+        ];
+
+        const hasCorrection = correctionPatterns.some(p => p.test(userMessage));
+        if (!hasCorrection) return;
+
+        log.info('Correction pattern detected, extracting preference…');
+
+        try {
+            // Use background provider to classify and extract
+            const provider = this.backgroundProvider || this.provider;
+            const extractionResult = await provider.generateContent(
+                'You are a preference extractor. Given a user message that contains a correction or preference, extract ONE concise preference or fact. Respond with ONLY a JSON object: {"topic": "short topic", "content": "the preference/fact", "type": "preference"} — nothing else. If it\'s not actually a correction, respond with {"skip": true}.',
+                [{ role: 'user', parts: [{ text: userMessage }] }],
+                [],
+            );
+
+            const text = extractionResult.text?.trim() || '';
+            // Try to parse JSON from the response
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) return;
+
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.skip) return;
+            if (!parsed.topic || !parsed.content) return;
+
+            this.kb.addEntry(parsed.topic, parsed.content, {
+                entryType: parsed.type || 'preference',
+                tags: ['auto-extracted', 'correction'],
+            });
+
+            log.info('Correction saved to KB', { topic: parsed.topic });
+        } catch (err: any) {
+            log.debug('Correction extraction failed', { error: err.message });
         }
     }
 
