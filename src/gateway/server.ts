@@ -1085,6 +1085,31 @@ export class Gateway {
         res.status(500).json({ error: err.message });
       }
     });
+
+    // ── Report API ────────────────────────────────
+    this.app.get('/api/reports', async (_req, res) => {
+      try {
+        const { listReportConfigs } = await import('../scheduler/reports.js');
+        res.json({ reports: listReportConfigs() });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/reports/toggle', async (req, res) => {
+      try {
+        const { toggleReport } = await import('../scheduler/reports.js');
+        const enabled = toggleReport(req.body.id);
+        if (enabled === null) return res.status(404).json({ error: 'Report not found' });
+        res.json({ id: req.body.id, enabled });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/reports/run', async (req, res) => {
+      try {
+        const { runReportNow } = await import('../scheduler/reports.js');
+        await runReportNow(req.body.id);
+        res.json({ status: 'sent' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
   }
 
   private setupWebSocket(): void {
@@ -1580,6 +1605,12 @@ export class Gateway {
           import('../scheduler/task-queue.js').then(({ taskQueue }) => {
             taskQueue.initialize(this.agent, this.chat);
             log.info('📋 Background task queue initialized');
+          });
+
+          // Start report scheduler
+          import('../scheduler/reports.js').then(({ startReportScheduler }) => {
+            startReportScheduler(this.agent, this.chat);
+            log.info('📊 Report scheduler started');
           });
         }, 5000);
 
@@ -5077,6 +5108,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         }
         html += '</div>';
 
+        // Scheduled Reports
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">📊</span> Scheduled Reports</div>';
+        html += '<div id="reports-loading" style="color:var(--text-tertiary);font-size:13px">Loading…</div>';
+        html += '</div>';
+
         showDashboardView(html);
 
         // Load notification prefs async
@@ -5109,6 +5146,41 @@ const WEB_UI_HTML = `<!DOCTYPE html>
             setTimeout(() => { btn.textContent = 'Save Preferences'; }, 2000);
           });
         });
+
+        // Load reports async
+        fetch('/api/reports').then(r => r.json()).then(data => {
+          const container = document.getElementById('reports-loading');
+          if (!container || !data.reports) return;
+          let rhtml = '';
+          data.reports.forEach(r => {
+            const status = r.enabled ? '🟢' : '⏸️';
+            rhtml += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">';
+            rhtml += '<div><span style="font-size:13px;color:var(--text-primary);font-weight:500">' + status + ' ' + r.name + '</span><div style="font-size:12px;color:var(--text-tertiary)">' + r.cronExpr + ' — ' + r.type + '</div></div>';
+            rhtml += '<div style="display:flex;gap:6px">';
+            rhtml += '<button data-report-toggle="' + r.id + '" style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;padding:4px 10px;color:var(--text-secondary);font-size:12px;cursor:pointer">' + (r.enabled ? 'Disable' : 'Enable') + '</button>';
+            rhtml += '<button data-report-run="' + r.id + '" style="background:var(--accent);color:#131314;border:none;border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:500">Run Now</button>';
+            rhtml += '</div></div>';
+          });
+          container.innerHTML = rhtml || '<div style="font-size:13px;color:var(--text-tertiary)">No reports configured</div>';
+
+          // Wire toggle/run buttons
+          container.querySelectorAll('[data-report-toggle]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const id = btn.getAttribute('data-report-toggle');
+              await fetch('/api/reports/toggle', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+              loadDashboard('settings');
+            });
+          });
+          container.querySelectorAll('[data-report-run]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const id = btn.getAttribute('data-report-run');
+              btn.textContent = '⏳';
+              await fetch('/api/reports/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+              btn.textContent = '✅ Sent!';
+              setTimeout(() => { btn.textContent = 'Run Now'; }, 2000);
+            });
+          });
+        }).catch(() => {});
 
         // Wire model switch button
         document.getElementById('switch-model-btn')?.addEventListener('click', async () => {
