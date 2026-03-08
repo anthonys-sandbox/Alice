@@ -19,19 +19,72 @@ interface ProactiveAlert {
 }
 
 /**
+ * Post-process raw tool output into a clean, user-friendly summary.
+ * Uses the main provider (Gemini) for quality formatting.
+ */
+async function summarizeForUser(
+    agent: Agent,
+    rawOutput: string,
+    context: string,
+): Promise<string> {
+    try {
+        const result = await agent.processBackgroundMessage(
+            `You are formatting a proactive alert for a busy professional. Given the raw analysis below, write a SHORT, actionable summary.
+
+RULES:
+- NEVER show JSON, code, thread IDs, message IDs, or API parameters
+- NEVER say "I will use" or describe what tools/functions you'll call
+- Use people's NAMES and email SUBJECTS, not IDs
+- Maximum 3-4 bullet points
+- Each bullet should be a clear, actionable insight
+- If no actionable items exist, respond with exactly: "NOTHING_ACTIONABLE"
+
+Context: ${context}
+
+Raw analysis:
+${rawOutput}
+
+Write the clean summary now:`,
+            { useMainProvider: true },
+        );
+        return result.text;
+    } catch {
+        // If summarization fails, try to clean up the raw output
+        return rawOutput
+            .replace(/\{[^}]*\}/g, '')          // Remove JSON objects
+            .replace(/Thread ID: \S+/g, '')      // Remove thread IDs
+            .replace(/Message ID: \S+/g, '')     // Remove message IDs
+            .replace(/\bfrom:me\b.*?\n?/gi, '')  // Remove query syntax
+            .slice(0, 300);
+    }
+}
+
+/**
  * Detect email threads with many replies that might need a call.
  */
 async function staleThreadDetector(agent: Agent): Promise<ProactiveAlert> {
     try {
         const result = await agent.processBackgroundMessage(
-            'Search Gmail for email threads with 5+ replies in the last 3 days. Use gmail_search with query "newer_than:3d". Check if any threads have many replies that might benefit from a call instead. Return a brief summary of problematic threads, or say "none found" if all looks fine.',
-            { useMainProvider: false }
+            'Search Gmail for long email threads from the last 3 days using gmail_search with query "newer_than:3d". Find threads with 5 or more replies. For each, note the SUBJECT LINE, the PEOPLE involved, and the reply count. If none found, say "NONE_FOUND".',
+            { useMainProvider: false },
         );
-        const hasIssues = !result.text.toLowerCase().includes('none found') &&
-            !result.text.toLowerCase().includes('no problematic');
+
+        if (result.text.toLowerCase().includes('none_found') ||
+            result.text.toLowerCase().includes('none found') ||
+            result.text.toLowerCase().includes('no problematic')) {
+            return { shouldAlert: false, message: '', priority: 'low', category: 'email' };
+        }
+
+        const summary = await summarizeForUser(agent, result.text,
+            'Long email threads that might benefit from a quick call instead');
+
+        if (summary.includes('NOTHING_ACTIONABLE')) {
+            return { shouldAlert: false, message: '', priority: 'low', category: 'email' };
+        }
+
         return {
-            shouldAlert: hasIssues,
-            message: hasIssues ? `📧 **Long Thread Alert**\n${result.text.slice(0, 400)}` : '',
+            shouldAlert: true,
+            message: `📧 **Long Thread Alert**\n${summary.slice(0, 400)}`,
             priority: 'medium',
             category: 'email',
         };
@@ -46,14 +99,26 @@ async function staleThreadDetector(agent: Agent): Promise<ProactiveAlert> {
 async function missingContextDetector(agent: Agent): Promise<ProactiveAlert> {
     try {
         const result = await agent.processBackgroundMessage(
-            'Check my calendar for 1:1 meetings in the next 24 hours using calendar_list. For each meeting, search Gmail for recent emails with that person (last 2 weeks). If there are meetings where I haven\'t communicated with the attendee recently, list them. Otherwise say "all context is fresh".',
-            { useMainProvider: false }
+            'Check my calendar for 1:1 meetings in the next 24 hours using calendar_list. For each meeting, tell me: the MEETING TITLE, the OTHER PERSON\'S NAME, and the TIME. Then search Gmail to see if I\'ve emailed them in the last 2 weeks. Report which meetings have NO recent email context. If all meetings have recent context, say "ALL_CONTEXT_FRESH".',
+            { useMainProvider: false },
         );
-        const hasIssues = !result.text.toLowerCase().includes('all context is fresh') &&
-            !result.text.toLowerCase().includes('no meetings');
+
+        if (result.text.toLowerCase().includes('all_context_fresh') ||
+            result.text.toLowerCase().includes('all context is fresh') ||
+            result.text.toLowerCase().includes('no meetings')) {
+            return { shouldAlert: false, message: '', priority: 'low', category: 'meetings' };
+        }
+
+        const summary = await summarizeForUser(agent, result.text,
+            'Upcoming meetings where you may lack recent context with the other person');
+
+        if (summary.includes('NOTHING_ACTIONABLE')) {
+            return { shouldAlert: false, message: '', priority: 'low', category: 'meetings' };
+        }
+
         return {
-            shouldAlert: hasIssues,
-            message: hasIssues ? `📋 **Meeting Context Gap**\n${result.text.slice(0, 400)}` : '',
+            shouldAlert: true,
+            message: `📋 **Meeting Prep Needed**\n${summary.slice(0, 400)}`,
             priority: 'high',
             category: 'meetings',
         };
@@ -68,14 +133,26 @@ async function missingContextDetector(agent: Agent): Promise<ProactiveAlert> {
 async function followUpDetector(agent: Agent): Promise<ProactiveAlert> {
     try {
         const result = await agent.processBackgroundMessage(
-            'Search Gmail for emails I SENT 2-4 days ago that haven\'t received a reply. Use gmail_search with query "from:me older_than:2d newer_than:4d". Check the most important ones. If any seem like they need a follow-up, list them briefly. Otherwise say "no follow-ups needed".',
-            { useMainProvider: false }
+            'Search Gmail for emails I sent 2-4 days ago that have NOT received a reply. Use gmail_search with query "from:me older_than:2d newer_than:4d". For each unreplied email, note the RECIPIENT NAME, the SUBJECT LINE, and WHEN it was sent. If all emails got replies, say "NO_FOLLOWUPS_NEEDED".',
+            { useMainProvider: false },
         );
-        const hasIssues = !result.text.toLowerCase().includes('no follow-ups needed') &&
-            !result.text.toLowerCase().includes('no emails');
+
+        if (result.text.toLowerCase().includes('no_followups_needed') ||
+            result.text.toLowerCase().includes('no follow-ups needed') ||
+            result.text.toLowerCase().includes('no emails')) {
+            return { shouldAlert: false, message: '', priority: 'low', category: 'email' };
+        }
+
+        const summary = await summarizeForUser(agent, result.text,
+            'Emails you sent that haven\'t gotten a reply — consider following up');
+
+        if (summary.includes('NOTHING_ACTIONABLE')) {
+            return { shouldAlert: false, message: '', priority: 'low', category: 'email' };
+        }
+
         return {
-            shouldAlert: hasIssues,
-            message: hasIssues ? `⏰ **Follow-up Reminder**\n${result.text.slice(0, 400)}` : '',
+            shouldAlert: true,
+            message: `⏰ **Follow-up Reminder**\n${summary.slice(0, 400)}`,
             priority: 'medium',
             category: 'email',
         };
@@ -96,12 +173,16 @@ async function weekendCatchup(agent: Agent): Promise<ProactiveAlert> {
 
     try {
         const result = await agent.processBackgroundMessage(
-            'Give me a weekend catch-up: search Gmail for emails received Saturday and Sunday (use gmail_search with "newer_than:2d older_than:0d"). Also check if there are any calendar events for today. Summarize what I need to know to start the week.',
-            { useMainProvider: true }
+            'Give me a weekend catch-up: search Gmail for important emails received Saturday and Sunday. Also check my calendar for today\'s meetings. Summarize: how many emails came in, any urgent ones, and today\'s schedule.',
+            { useMainProvider: true },
         );
+
+        const summary = await summarizeForUser(agent, result.text,
+            'Monday morning briefing — what happened over the weekend and what\'s on today');
+
         return {
             shouldAlert: true,
-            message: `☀️ **Monday Catch-up**\n${result.text.slice(0, 600)}`,
+            message: `☀️ **Monday Catch-up**\n${summary.slice(0, 600)}`,
             priority: 'low',
             category: 'weekend',
         };
@@ -140,7 +221,7 @@ export function startProactiveEngine(agent: Agent, chat: GoogleChatAdapter): voi
                     await chat.sendCard(
                         '🔮 Proactive Alert',
                         `${alert.category} • ${alert.priority} priority`,
-                        alert.message
+                        alert.message,
                     );
                 }
             } catch (err: any) {
