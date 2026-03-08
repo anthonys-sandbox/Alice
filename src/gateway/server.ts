@@ -714,6 +714,14 @@ export class Gateway {
             gatewayPort: this.config.gateway.port,
             heartbeatEnabled: this.config.heartbeat.enabled,
             heartbeatInterval: this.config.heartbeat.intervalMinutes,
+            maxIterations: this.config.agent.maxIterations,
+            timeoutMs: this.config.agent.timeoutMs,
+            logLevel: this.config.logging.level,
+            backgroundModel: this.config.background.model,
+            githubToken: process.env.GITHUB_TOKEN ? '***' : '',
+            ollamaHost: this.config.ollama.host,
+            ollamaPort: this.config.ollama.port,
+            geminiAuth: this.config.gemini.auth,
           },
         });
       } catch (err: any) { res.status(500).json({ error: err.message }); }
@@ -734,6 +742,61 @@ export class Gateway {
         writeFileSync(filePath, req.body.content || '', 'utf-8');
         this.agent.refreshContext();
         res.json({ status: 'saved' });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── Config Update API ─────────────────────────
+    this.app.post('/api/settings/config', (req, res) => {
+      try {
+        const updates = req.body;
+        const configPath = join(process.cwd(), 'alice.config.json');
+        let fileConfig: Record<string, any> = {};
+        if (existsSync(configPath)) {
+          fileConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
+        }
+
+        // Apply validated updates
+        if (updates.heartbeatEnabled !== undefined) {
+          if (!fileConfig.heartbeat) fileConfig.heartbeat = {};
+          fileConfig.heartbeat.enabled = !!updates.heartbeatEnabled;
+          this.config.heartbeat.enabled = !!updates.heartbeatEnabled;
+        }
+        if (updates.heartbeatInterval !== undefined) {
+          const val = Math.max(5, Math.min(1440, parseInt(updates.heartbeatInterval, 10) || 30));
+          if (!fileConfig.heartbeat) fileConfig.heartbeat = {};
+          fileConfig.heartbeat.intervalMinutes = val;
+          this.config.heartbeat.intervalMinutes = val;
+        }
+        if (updates.maxIterations !== undefined) {
+          const val = Math.max(1, Math.min(50, parseInt(updates.maxIterations, 10) || 25));
+          if (!fileConfig.agent) fileConfig.agent = {};
+          fileConfig.agent.maxIterations = val;
+          this.config.agent.maxIterations = val;
+        }
+        if (updates.timeoutSeconds !== undefined) {
+          const val = Math.max(30, Math.min(600, parseInt(updates.timeoutSeconds, 10) || 300));
+          if (!fileConfig.agent) fileConfig.agent = {};
+          fileConfig.agent.timeoutMs = val * 1000;
+          this.config.agent.timeoutMs = val * 1000;
+        }
+        if (updates.logLevel !== undefined) {
+          const allowed = ['debug', 'info', 'warn', 'error'];
+          if (allowed.includes(updates.logLevel)) {
+            if (!fileConfig.logging) fileConfig.logging = {};
+            fileConfig.logging.level = updates.logLevel;
+            this.config.logging.level = updates.logLevel as any;
+          }
+        }
+        if (updates.backgroundModel !== undefined && updates.backgroundModel.trim()) {
+          if (!fileConfig.background) fileConfig.background = {};
+          fileConfig.background.model = updates.backgroundModel.trim();
+          this.config.background.model = updates.backgroundModel.trim();
+        }
+
+        // Write config
+        writeFileSync(configPath, JSON.stringify(fileConfig, null, 4) + '\n', 'utf-8');
+
+        res.json({ status: 'saved', config: fileConfig });
       } catch (err: any) { res.status(500).json({ error: err.message }); }
     });
 
@@ -4935,20 +4998,42 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '<button id="switch-model-btn" style="background:var(--accent);color:#000;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;white-space:nowrap">Switch</button>';
         html += '</div></div>';
 
-        // Config Summary
+        // Configuration Panel — interactive controls
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
         html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">⚙️</span> Configuration</div>';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">';
-        const configItems = [
-          { label: 'Memory Dir', value: data.config?.memoryDir || '' },
-          { label: 'Gateway Port', value: data.config?.gatewayPort || '' },
-          { label: 'Heartbeat', value: data.config?.heartbeatEnabled ? '✅ Every ' + (data.config?.heartbeatInterval || 30) + 'm' : '❌ Disabled' },
-          { label: 'Fallback', value: activeProvider === 'gemini' ? 'Ollama' : 'Gemini' },
-        ];
-        configItems.forEach(c => {
-          html += '<div style="color:var(--text-secondary)">' + c.label + ': <span style="color:var(--text-primary);font-weight:500">' + c.value + '</span></div>';
-        });
+
+        // Heartbeat
+        html += '<div style="margin-bottom:16px">';
+        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">💓 Heartbeat</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+        html += '<div style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="cfg-hb-enabled" ' + (data.config?.heartbeatEnabled ? 'checked' : '') + ' style="accent-color:var(--accent)"><label for="cfg-hb-enabled" style="font-size:13px;color:var(--text-secondary)">Enabled</label></div>';
+        html += '<div><label style="font-size:12px;color:var(--text-tertiary);display:block;margin-bottom:3px">Interval (minutes)</label><input type="number" id="cfg-hb-interval" value="' + (data.config?.heartbeatInterval || 30) + '" min="5" max="1440" step="5" style="width:100%;padding:8px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none"></div>';
         html += '</div></div>';
+
+        // Agent Behavior
+        html += '<div style="margin-bottom:16px">';
+        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">🤖 Agent Behavior</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+        html += '<div><label style="font-size:12px;color:var(--text-tertiary);display:block;margin-bottom:3px">Max Iterations</label><input type="number" id="cfg-max-iter" value="' + (data.config?.maxIterations || 25) + '" min="1" max="50" style="width:100%;padding:8px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none"></div>';
+        const timeoutSec = Math.round((data.config?.timeoutMs || 300000) / 1000);
+        html += '<div><label style="font-size:12px;color:var(--text-tertiary);display:block;margin-bottom:3px">Timeout (seconds)</label><input type="number" id="cfg-timeout" value="' + timeoutSec + '" min="30" max="600" step="30" style="width:100%;padding:8px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none"></div>';
+        html += '</div></div>';
+
+        // Logging & Background
+        html += '<div style="margin-bottom:16px">';
+        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">📋 Logging & Background</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+        html += '<div><label style="font-size:12px;color:var(--text-tertiary);display:block;margin-bottom:3px">Log Level</label><select id="cfg-log-level" style="width:100%;padding:8px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none">';
+        ['debug','info','warn','error'].forEach(l => {
+          html += '<option value="' + l + '"' + (data.config?.logLevel === l ? ' selected' : '') + '>' + l + '</option>';
+        });
+        html += '</select></div>';
+        html += '<div><label style="font-size:12px;color:var(--text-tertiary);display:block;margin-bottom:3px">Background Model</label><input type="text" id="cfg-bg-model" value="' + (data.config?.backgroundModel || 'llama3.1:8b') + '" style="width:100%;padding:8px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none"></div>';
+        html += '</div></div>';
+
+        // Save button
+        html += '<button id="cfg-save-btn" style="background:var(--accent);color:#131314;border:none;padding:8px 20px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;margin-top:4px">Save Configuration</button>';
+        html += '</div>';
         html += '</div>';
 
         // Soul editor
@@ -5028,6 +5113,26 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           await fetch('/api/models/switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ provider, model }) });
           btn.textContent = '✅ Switched!';
           setTimeout(() => { btn.textContent = 'Switch'; loadDashboard('settings'); }, 1500);
+        });
+
+        // Wire config save button
+        document.getElementById('cfg-save-btn')?.addEventListener('click', async () => {
+          const btn = document.getElementById('cfg-save-btn');
+          btn.textContent = '⏳ Saving…';
+          await fetch('/api/settings/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              heartbeatEnabled: document.getElementById('cfg-hb-enabled').checked,
+              heartbeatInterval: document.getElementById('cfg-hb-interval').value,
+              maxIterations: document.getElementById('cfg-max-iter').value,
+              timeoutSeconds: document.getElementById('cfg-timeout').value,
+              logLevel: document.getElementById('cfg-log-level').value,
+              backgroundModel: document.getElementById('cfg-bg-model').value,
+            }),
+          });
+          btn.textContent = '✅ Saved!';
+          setTimeout(() => { btn.textContent = 'Save Configuration'; }, 2000);
         });
 
         // Save handlers
