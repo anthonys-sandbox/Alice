@@ -1110,6 +1110,43 @@ export class Gateway {
         res.json({ status: 'sent' });
       } catch (err: any) { res.status(500).json({ error: err.message }); }
     });
+
+    // ── Automations API ──────────────────────────
+    this.app.get('/api/automations', async (_req, res) => {
+      try {
+        // Access automations from the agent's automation manager
+        const { AutomationManager } = await import('../scheduler/automations.js');
+        const am = new AutomationManager(this.config.memory.dir);
+        res.json({ automations: am.listRules() });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/automations/toggle', async (req, res) => {
+      try {
+        const { AutomationManager } = await import('../scheduler/automations.js');
+        const am = new AutomationManager(this.config.memory.dir);
+        const enabled = am.toggleRule(req.body.id);
+        if (enabled === null) return res.status(404).json({ error: 'Automation not found' });
+        res.json({ id: req.body.id, enabled });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.delete('/api/automations/:id', async (req, res) => {
+      try {
+        const { AutomationManager } = await import('../scheduler/automations.js');
+        const am = new AutomationManager(this.config.memory.dir);
+        const removed = am.removeRule(req.params.id);
+        res.json({ removed });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── Background Tasks API ─────────────────────
+    this.app.get('/api/tasks', async (_req, res) => {
+      try {
+        const { taskQueue } = await import('../scheduler/task-queue.js');
+        res.json({ tasks: taskQueue.listTasks() });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
   }
 
   private setupWebSocket(): void {
@@ -4753,6 +4790,18 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '<div id="cc-kb-results" style="margin-top:8px"></div>';
         html += '</details></div>';
 
+        // ── Automations section ──
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span style="font-size:16px">⚡</span> Automations <span id="cc-auto-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<div id="cc-automations" style="margin-top:10px"><div style="color:var(--text-tertiary);font-size:13px">Loading…</div></div>';
+        html += '</details></div>';
+
+        // ── Background Tasks section ──
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span style="font-size:16px">📋</span> Background Tasks <span id="cc-tasks-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<div id="cc-tasks" style="margin-top:10px"><div style="color:var(--text-tertiary);font-size:13px">Loading…</div></div>';
+        html += '</details></div>';
+
         // ── Two column: Cron Jobs + Top Tools ──
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
 
@@ -4922,6 +4971,76 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           ccKbSearchBtn.addEventListener('click', doSearch);
           ccKbInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') doSearch(); });
         }
+
+        // Load automations async
+        fetch('/api/automations').then(r => r.json()).then(data => {
+          const rules = data.automations || [];
+          const countEl = document.getElementById('cc-auto-count');
+          if (countEl) countEl.textContent = rules.length + ' rules';
+          const container = document.getElementById('cc-automations');
+          if (!container) return;
+          if (rules.length === 0) {
+            container.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px">No automations yet. Ask Alice to create one, e.g. "Every weekday at 9am, send me a summary of unread emails."</div>';
+            return;
+          }
+          container.innerHTML = rules.map(r => {
+            const dot = r.enabled ? '#4ade80' : '#666';
+            const triggerLabel = r.trigger.type === 'on_cron' ? '🕐 ' + r.trigger.value : '💬 "' + r.trigger.value + '"';
+            const actionLabel = r.action.type === 'run_prompt' ? '🤖 Run prompt' : r.action.type === 'send_notification' ? '📬 Notify' : '🔧 ' + r.action.value;
+            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-tertiary);border-radius:10px;margin-bottom:6px">' +
+              '<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">' +
+              '<div style="width:8px;height:8px;border-radius:50%;background:' + dot + ';flex-shrink:0"></div>' +
+              '<div style="min-width:0"><div style="font-size:13px;color:var(--text-primary);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + r.name + '</div>' +
+              '<div style="font-size:11px;color:var(--text-tertiary)">' + triggerLabel + ' → ' + actionLabel + ' · Runs: ' + r.runCount + '</div></div></div>' +
+              '<div style="display:flex;gap:4px;flex-shrink:0">' +
+              '<button data-auto-toggle="' + r.id + '" style="background:none;border:1px solid var(--border);color:var(--text-tertiary);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:11px">' + (r.enabled ? 'Pause' : 'Start') + '</button>' +
+              '<button data-auto-delete="' + r.id + '" style="background:none;border:1px solid #f8717133;color:#f87171;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:11px">✕</button>' +
+              '</div></div>';
+          }).join('');
+
+          container.querySelectorAll('[data-auto-toggle]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              await fetch('/api/automations/toggle', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id: btn.getAttribute('data-auto-toggle') }) });
+              loadDashboard('command_center');
+            });
+          });
+          container.querySelectorAll('[data-auto-delete]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              if (!confirm('Delete this automation?')) return;
+              await fetch('/api/automations/' + btn.getAttribute('data-auto-delete'), { method: 'DELETE' });
+              loadDashboard('command_center');
+            });
+          });
+        }).catch(() => {});
+
+        // Load background tasks async
+        fetch('/api/tasks').then(r => r.json()).then(data => {
+          const tasks = data.tasks || [];
+          const countEl = document.getElementById('cc-tasks-count');
+          if (countEl) countEl.textContent = tasks.length + ' tasks';
+          const container = document.getElementById('cc-tasks');
+          if (!container) return;
+          if (tasks.length === 0) {
+            container.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px">No background tasks. Ask Alice to start one, e.g. "Research the latest AI frameworks in the background."</div>';
+            return;
+          }
+          const statusColors = { queued: '#facc15', running: '#60a5fa', completed: '#4ade80', failed: '#f87171' };
+          const statusIcons = { queued: '⏳', running: '🔄', completed: '✅', failed: '❌' };
+          container.innerHTML = tasks.slice(0, 10).map(t => {
+            const clr = statusColors[t.status] || '#888';
+            const icon = statusIcons[t.status] || '⬜';
+            let card = '<div style="padding:10px 12px;background:var(--bg-tertiary);border-radius:10px;margin-bottom:6px;border-left:3px solid ' + clr + '">' +
+              '<div style="display:flex;justify-content:space-between;align-items:center">' +
+              '<div style="font-size:13px;color:var(--text-primary);font-weight:500">' + icon + ' ' + t.description.slice(0, 60) + '</div>' +
+              '<span style="font-size:11px;padding:1px 6px;border-radius:4px;background:' + clr + '20;color:' + clr + ';font-weight:500">' + t.status + '</span></div>';
+            if (t.result && t.status === 'completed') {
+              card += '<div style="font-size:12px;color:var(--text-secondary);margin-top:6px;white-space:pre-wrap;max-height:60px;overflow:hidden">' + t.result.slice(0, 200) + '</div>';
+            }
+            card += '<div style="font-size:10px;color:var(--text-tertiary);margin-top:4px">' + new Date(t.createdAt).toLocaleString() + '</div>';
+            card += '</div>';
+            return card;
+          }).join('');
+        }).catch(() => {});
 
       } else if (page === 'connections') {
         // Redirect to integrations (merged)
