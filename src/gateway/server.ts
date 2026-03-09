@@ -2338,6 +2338,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       transition: opacity 0.2s;
     }
     .btn-primary:hover { opacity: 0.85; }
+    details summary::-webkit-details-marker { display: none; }
+    details[open] > summary > .icon:first-child { transform: rotate(90deg); }
     .btn-secondary {
       background: var(--surface);
       color: var(--text-secondary);
@@ -5050,7 +5052,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const emailWatcherRunning = autoData.emailWatcher?.running || false;
         const proactiveRunning = autoData.proactiveEngine?.running || false;
 
-        let html = '<h2 style="color:var(--accent);margin-bottom:20px">Command Center</h2>';
+        let html = '<h2 style="color:var(--accent);margin-bottom:6px;display:flex;align-items:center;gap:10px"><span class="icon icon-section" style="font-size:24px">terminal</span> Command Center</h2>';
 
         // ── Stat cards row ──
         html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px">';
@@ -5068,7 +5070,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;position:relative;overflow:hidden">';
           html += '<div style="position:absolute;top:-10px;right:-10px;width:50px;height:50px;border-radius:50%;background:' + c.color + '12"></div>';
           html += '<div style="font-size:11px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:4px">' + c.label + '</div>';
-          html += '<div style="font-size:20px;font-weight:700;color:' + c.color + '">' + c.value + '</div>';
+          html += '<div style="font-size:20px;font-weight:700;color:' + c.color + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + c.value + '">' + c.value + '</div>';
           html += '</div>';
         });
         html += '</div>';
@@ -5113,12 +5115,15 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           { label: 'Run Briefing', id: 'qa-briefing' },
           { label: 'Run Triage', id: 'qa-triage' },
           { label: 'Weekly Report', id: 'qa-weekly' },
+          { label: 'Heartbeat', id: 'qa-heartbeat' },
+          { label: 'Git Backup', id: 'qa-backup' },
           ...(stats.patternMiner?.running ? [{ label: 'Deep Research', id: 'qa-research' }] : []),
+          ...(stats.patternMiner?.running ? [{ label: 'Person Brief', id: 'qa-person-brief' }] : []),
           ...(stats.meetingBriefing ? [{ label: 'Meeting Brief', id: 'qa-meeting-brief' }] : []),
           { label: 'Refresh', id: 'qa-refresh' },
           ...(stats.patternMiner?.running ? [{ label: 'Daily Insight', id: 'qa-insight' }] : []),
           ...(stats.patternMiner?.running ? [{ label: 'Time Analysis', id: 'qa-time' }] : []),
-          ...(stats.patternMiner?.running ? [{ label: 'Generate Doc', id: 'qa-gendoc' }] : []),
+          ...(stats.patternMiner?.running ? [{ label: 'Generate Doc', id: 'qa-gen-doc' }] : []),
         ];
         actions.forEach(a => {
           html += '<button id="' + a.id + '" class="qa-btn" style="background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s;text-align:left">' + a.label + '</button>';
@@ -5130,13 +5135,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const remData = await fetch('/api/reminders').then(r => r.json()).catch(() => ({ reminders: [] }));
         const reminders = remData.reminders || [];
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details' + (reminders.length > 0 ? ' open' : '') + '><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">alarm</span> Reminders <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + reminders.length + ' active</span></summary>';
+        html += '<details' + (reminders.length > 0 ? ' open' : '') + '><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon" style="font-size:18px;transition:transform 0.2s">chevron_right</span><span class="icon icon-section">alarm</span> Reminders <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + reminders.length + ' active</span></summary>';
         if (reminders.length === 0) {
           html += '<div style="color:var(--text-tertiary);font-size:13px;padding:12px 0">No active reminders. Use <code>/remind</code> or ask Alice to set one.</div>';
         } else {
           html += '<div style="margin-top:10px;display:grid;gap:6px">';
           reminders.forEach(r => {
-            const timeStr = r.time ? new Date(r.time).toLocaleString() : '';
+            const timeStr = r.schedule || r.time ? (r.schedule || new Date(r.time).toLocaleString()) : '';
             html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:var(--bg-tertiary);border-radius:8px;font-size:13px">';
             html += '<div style="color:var(--text-primary)">' + (r.message || r.text || 'Reminder') + '</div>';
             html += '<div style="color:var(--text-tertiary);font-size:11px;white-space:nowrap">' + timeStr + '</div>';
@@ -5150,7 +5155,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const kbCC = await fetch('/api/kb').then(r => r.json()).catch(() => ({ entries: [], stats: { total: 0 } }));
         const kbTotal = kbCC.stats?.total || 0;
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">school</span> Knowledge Base <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + kbTotal + ' entries</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon" style="font-size:18px;transition:transform 0.2s">chevron_right</span><span class="icon icon-section">school</span> Knowledge Base <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + kbTotal + ' entries</span></summary>';
         html += '<div style="margin-top:10px;display:flex;gap:8px">';
         html += '<input id="cc-kb-search" type="text" placeholder="Search knowledge…" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;outline:none">';
         html += '<button id="cc-kb-search-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;font-weight:500">Search</button>';
@@ -5171,13 +5176,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // ── Automations section ──
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">electric_bolt</span> Automations <span id="cc-auto-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon" style="font-size:18px;transition:transform 0.2s">chevron_right</span><span class="icon icon-section">electric_bolt</span> Automations <span id="cc-auto-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
         html += '<div id="cc-automations" style="margin-top:10px"><div style="color:var(--text-tertiary);font-size:13px">Loading…</div></div>';
         html += '</details></div>';
 
         // ── Webhooks section ──
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">webhook</span> Webhooks <span id="cc-wh-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon" style="font-size:18px;transition:transform 0.2s">chevron_right</span><span class="icon icon-section">webhook</span> Webhooks <span id="cc-wh-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
         html += '<div style="margin-top:14px">';
         // Create webhook form
         html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
@@ -5195,7 +5200,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // ── Behavior Insights section ──
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">insights</span> Behavior Insights <span id="cc-bi-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon" style="font-size:18px;transition:transform 0.2s">chevron_right</span><span class="icon icon-section">insights</span> Behavior Insights <span id="cc-bi-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
         html += '<div style="margin-top:14px">';
         // Heatmap container
         html += '<div id="cc-bi-heatmap" style="margin-bottom:12px"></div>';
@@ -5205,7 +5210,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // ── Agent Crews section ──
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">groups</span> Agent Crews <span id="cc-crews-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon" style="font-size:18px;transition:transform 0.2s">chevron_right</span><span class="icon icon-section">groups</span> Agent Crews <span id="cc-crews-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
         html += '<div style="margin-top:14px">';
         html += '<div style="color:var(--text-tertiary);font-size:12px;margin-bottom:10px">Multi-step pipelines that chain specialized agents together. Each step passes output to the next.</div>';
         // Pipeline templates grid
@@ -5216,7 +5221,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // ── Background Tasks section ──
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">task</span> Background Tasks <span id="cc-tasks-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon" style="font-size:18px;transition:transform 0.2s">chevron_right</span><span class="icon icon-section">task</span> Background Tasks <span id="cc-tasks-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
         html += '<div id="cc-tasks" style="margin-top:10px"><div style="color:var(--text-tertiary);font-size:13px">Loading…</div></div>';
         html += '</details></div>';
 
