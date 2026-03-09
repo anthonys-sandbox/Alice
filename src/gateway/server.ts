@@ -643,7 +643,23 @@ export class Gateway {
     // Connection status for Connections page
     this.app.get('/api/connections', async (_req, res) => {
       try {
-        const connections: Array<{ name: string; status: 'online' | 'offline' | 'unknown'; detail: string }> = [];
+        const connections: Array<{ name: string; status: 'online' | 'offline' | 'unknown'; detail: string; tools: number }> = [];
+
+        // Count tools per source from registered tools
+        const { getAllTools: getRegisteredTools } = await import('../runtime/tools/registry.js');
+        const allTools = getRegisteredTools();
+        const mcpToolCounts: Record<string, number> = {};
+        let builtinToolCount = 0;
+        for (const t of allTools) {
+          const tName = t.name || '';
+          if (tName.startsWith('mcp_')) {
+            const parts = tName.split('_');
+            const serverName = parts[1] || 'unknown';
+            mcpToolCounts[serverName] = (mcpToolCounts[serverName] || 0) + 1;
+          } else {
+            builtinToolCount++;
+          }
+        }
 
         // Ollama
         try {
@@ -652,9 +668,9 @@ export class Gateway {
           });
           const ollamaData: any = await ollamaResp.json();
           const modelCount = ollamaData.models?.length || 0;
-          connections.push({ name: 'Ollama (Local LLM)', status: 'online', detail: `${modelCount} model(s) available` });
+          connections.push({ name: 'Ollama (Local LLM)', status: 'online', detail: `${modelCount} model(s) available`, tools: 0 });
         } catch {
-          connections.push({ name: 'Ollama (Local LLM)', status: 'offline', detail: 'Not reachable' });
+          connections.push({ name: 'Ollama (Local LLM)', status: 'offline', detail: 'Not reachable', tools: 0 });
         }
 
         // Gemini
@@ -663,6 +679,7 @@ export class Gateway {
           name: 'Gemini API',
           status: hasGeminiKey ? 'online' : 'offline',
           detail: hasGeminiKey ? `Model: ${this.config.gemini.model}` : 'No API key configured',
+          tools: builtinToolCount,
         });
 
         // Google Chat
@@ -671,6 +688,7 @@ export class Gateway {
           name: 'Google Chat',
           status: hasGchat ? 'online' : 'offline',
           detail: hasGchat ? 'Relay active' : 'Not configured',
+          tools: 0,
         });
 
         // OpenRouter
@@ -679,15 +697,18 @@ export class Gateway {
           name: 'OpenRouter',
           status: hasOpenRouter ? 'online' : 'offline',
           detail: hasOpenRouter ? 'API key configured' : 'Not configured',
+          tools: 0,
         });
 
         // MCP Servers
         if (this.config.mcp.servers.length > 0) {
           for (const srv of this.config.mcp.servers) {
+            const srvToolCount = mcpToolCounts[srv.name] || 0;
             connections.push({
               name: `MCP: ${srv.name}`,
               status: srv.enabled !== false ? 'online' : 'offline',
               detail: srv.enabled !== false ? `Running: ${srv.command}` : 'Disabled',
+              tools: srvToolCount,
             });
           }
         }
@@ -4649,7 +4670,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">electrical_services</span> Connected Services <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + connections.length + ' active</span></div>';
           html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:16px">';
           connections.forEach(c => {
-            const dot = c.status === 'connected' ? '#4ade80' : '#ef4444';
+            const dot = c.status === 'online' ? '#4ade80' : '#ef4444';
             html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px">';
             html += '<span style="width:8px;height:8px;border-radius:50%;background:' + dot + ';flex-shrink:0"></span>';
             html += '<div><div style="font-size:13px;color:var(--text-primary);font-weight:500">' + c.name + '</div>';
