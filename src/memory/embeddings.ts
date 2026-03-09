@@ -2,12 +2,14 @@ import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('Embeddings');
 
-const EMBEDDING_MODEL = 'text-embedding-004';
+const EMBEDDING_MODEL = 'gemini-embedding-001';
 const EMBEDDING_DIMENSIONS = 768;
 
 /**
  * Generate a text embedding using the Gemini embedding API.
  * Returns a Float32Array of dimension 768.
+ * Uses gemini-embedding-001 with outputDimensionality=768 for compatibility
+ * with existing stored embeddings (text-embedding-004 was sunset Jan 2026).
  */
 export async function generateEmbedding(
     text: string,
@@ -27,6 +29,7 @@ export async function generateEmbedding(
                 body: JSON.stringify({
                     model: `models/${EMBEDDING_MODEL}`,
                     content: { parts: [{ text: truncated }] },
+                    outputDimensionality: EMBEDDING_DIMENSIONS,
                 }),
             }
         );
