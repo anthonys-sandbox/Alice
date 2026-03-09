@@ -1140,6 +1140,254 @@ export class Gateway {
       } catch (err: any) { res.status(500).json({ error: err.message }); }
     });
 
+    // ── Webhooks API ────────────────────────────────
+    // Public incoming endpoint (no auth — uses HMAC secret per webhook)
+    this.app.post('/api/webhooks/incoming/:id', express.raw({ type: '*/*', limit: '1mb' }), async (req, res) => {
+      try {
+        const { WebhookManager } = await import('../scheduler/webhook-receiver.js');
+        const wm = new WebhookManager(this.config.memory.dir);
+        wm.init(this.agent, this.chat, (this as any)._automationManager || null);
+        const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
+        let body: any;
+        try { body = JSON.parse(rawBody.toString()); } catch { body = {}; }
+        const headers: Record<string, string> = {};
+        for (const [k, v] of Object.entries(req.headers)) {
+          if (typeof v === 'string') headers[k.toLowerCase()] = v;
+        }
+        const result = await wm.handleIncoming(req.params.id, headers, body, rawBody);
+        wm.close();
+        res.json(result);
+      } catch (err: any) {
+        res.status(500).json({ status: 'failed', message: err.message });
+      }
+    });
+
+    // Management endpoints
+    this.app.get('/api/webhooks', async (_req, res) => {
+      try {
+        const { WebhookManager } = await import('../scheduler/webhook-receiver.js');
+        const wm = new WebhookManager(this.config.memory.dir);
+        const webhooks = wm.list();
+        wm.close();
+        res.json({ webhooks });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/webhooks', express.json(), async (req, res) => {
+      try {
+        const { WebhookManager } = await import('../scheduler/webhook-receiver.js');
+        const wm = new WebhookManager(this.config.memory.dir);
+        const webhook = wm.create(
+          req.body.name || 'Unnamed webhook',
+          req.body.provider || 'generic',
+          req.body.automationId,
+          req.body.transform,
+        );
+        wm.close();
+        res.json({ webhook });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.delete('/api/webhooks/:id', async (req, res) => {
+      try {
+        const { WebhookManager } = await import('../scheduler/webhook-receiver.js');
+        const wm = new WebhookManager(this.config.memory.dir);
+        const deleted = wm.delete(req.params.id);
+        wm.close();
+        res.json({ deleted });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/webhooks/:id/toggle', async (req, res) => {
+      try {
+        const { WebhookManager } = await import('../scheduler/webhook-receiver.js');
+        const wm = new WebhookManager(this.config.memory.dir);
+        const active = wm.toggle(req.params.id);
+        wm.close();
+        if (active === null) return res.status(404).json({ error: 'Webhook not found' });
+        res.json({ id: req.params.id, active });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/webhooks/:id/events', async (req, res) => {
+      try {
+        const { WebhookManager } = await import('../scheduler/webhook-receiver.js');
+        const wm = new WebhookManager(this.config.memory.dir);
+        const events = wm.getEvents(req.params.id, 30);
+        wm.close();
+        res.json({ events });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/webhooks/providers/list', async (_req, res) => {
+      try {
+        const { WebhookManager } = await import('../scheduler/webhook-receiver.js');
+        res.json({ providers: WebhookManager.getProviders() });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/webhooks/:id/test', async (req, res) => {
+      try {
+        const { WebhookManager } = await import('../scheduler/webhook-receiver.js');
+        const wm = new WebhookManager(this.config.memory.dir);
+        wm.init(this.agent, this.chat, null);
+        const testPayload = { event: 'test', message: 'Test webhook from Alice', timestamp: new Date().toISOString() };
+        const rawBody = Buffer.from(JSON.stringify(testPayload));
+        const result = await wm.handleIncoming(req.params.id, { 'content-type': 'application/json' }, testPayload, rawBody);
+        wm.close();
+        res.json(result);
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── Pattern Mining API ────────────────────────
+    this.app.get('/api/patterns/insights', async (_req, res) => {
+      try {
+        const { PatternMiner } = await import('../scheduler/pattern-miner.js');
+        const pm = new PatternMiner(this.config.memory.dir);
+        const insights = pm.generateInsights();
+        pm.close();
+        res.json({ insights });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/patterns/heatmap', async (_req, res) => {
+      try {
+        const { PatternMiner } = await import('../scheduler/pattern-miner.js');
+        const pm = new PatternMiner(this.config.memory.dir);
+        const heatmap = pm.getHeatmap();
+        const peakHours = pm.getPeakHours();
+        pm.close();
+        res.json({ heatmap, peakHours });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/patterns/stats', async (_req, res) => {
+      try {
+        const { PatternMiner } = await import('../scheduler/pattern-miner.js');
+        const pm = new PatternMiner(this.config.memory.dir);
+        const stats = pm.getStats();
+        const sessionPatterns = pm.getSessionPatterns();
+        const toolPatterns = pm.getToolPatterns();
+        pm.close();
+        res.json({ stats, sessionPatterns, toolPatterns });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/patterns/digest', async (_req, res) => {
+      try {
+        const { PatternMiner } = await import('../scheduler/pattern-miner.js');
+        const pm = new PatternMiner(this.config.memory.dir);
+        const digest = pm.getWeeklyDigest();
+        pm.close();
+        res.json({ digest });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── Agent Crews API ─────────────────────────────
+    this.app.get('/api/crews/pipelines', async (_req, res) => {
+      try {
+        const { AgentCrew } = await import('../runtime/agent-crew.js');
+        const crew = new AgentCrew(this.config, null, null, this.config.memory.dir);
+        const pipelines = crew.listPipelines();
+        crew.close();
+        res.json({ pipelines });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/crews/run', express.json(), async (req, res) => {
+      try {
+        const { pipelineId, input } = req.body;
+        if (!pipelineId || !input) return res.status(400).json({ error: 'pipelineId and input are required' });
+        const { AgentCrew } = await import('../runtime/agent-crew.js');
+        const crew = new AgentCrew(this.config, (this.agent as any)?.primaryProvider || null, (this.agent as any)?.backgroundProvider || null, this.config.memory.dir);
+        const pipeline = crew.getPipeline(pipelineId);
+        if (!pipeline) { crew.close(); return res.status(404).json({ error: 'Pipeline not found' }); }
+        // Run async — return immediately
+        res.json({ status: 'started', pipeline: pipeline.name, steps: pipeline.steps.length });
+        crew.execute(pipeline, input).then(result => {
+          log.info('Crew pipeline finished', { name: pipeline.name, status: result.status });
+          // Notify via Google Chat if available
+          if (this.chat) {
+            const emoji = result.status === 'completed' ? '✅' : '❌';
+            this.chat.sendMessage(`${emoji} **Crew Pipeline "${pipeline.name}"** ${result.status}.\n\n${result.finalOutput?.slice(0, 500) || result.error || ''}`).catch(() => { });
+          }
+          crew.close();
+        }).catch(() => { crew.close(); });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/crews/history', async (_req, res) => {
+      try {
+        const { AgentCrew } = await import('../runtime/agent-crew.js');
+        const crew = new AgentCrew(this.config, null, null, this.config.memory.dir);
+        const history = crew.getRunHistory();
+        crew.close();
+        res.json({ history });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.delete('/api/crews/pipelines/:id', async (req, res) => {
+      try {
+        const { AgentCrew } = await import('../runtime/agent-crew.js');
+        const crew = new AgentCrew(this.config, null, null, this.config.memory.dir);
+        const deleted = crew.deletePipeline(req.params.id);
+        crew.close();
+        res.json({ deleted });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    // ── ClawHub Marketplace API ──────────────────
+    this.app.get('/api/clawhub/search', async (req, res) => {
+      try {
+        const q = (req.query.q as string) || '';
+        if (!q) return res.status(400).json({ error: 'Query parameter q is required' });
+        const { ClawHubClient } = await import('../scheduler/clawhub-client.js');
+        const client = new ClawHubClient(process.cwd());
+        const results = await client.search(q);
+        res.json({ results });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/clawhub/skills', async (_req, res) => {
+      try {
+        const { ClawHubClient } = await import('../scheduler/clawhub-client.js');
+        const client = new ClawHubClient(process.cwd());
+        const data = await client.listSkills();
+        // Annotate with installed status
+        const items = data.items.map(s => ({ ...s, installed: client.isInstalled(s.slug) }));
+        res.json({ items, nextCursor: data.nextCursor });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/clawhub/souls', async (_req, res) => {
+      try {
+        const { ClawHubClient } = await import('../scheduler/clawhub-client.js');
+        const client = new ClawHubClient(process.cwd());
+        const souls = await client.listSouls();
+        res.json({ souls });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.post('/api/clawhub/install', express.json(), async (req, res) => {
+      try {
+        const { slug } = req.body;
+        if (!slug) return res.status(400).json({ error: 'slug is required' });
+        const { ClawHubClient } = await import('../scheduler/clawhub-client.js');
+        const client = new ClawHubClient(process.cwd());
+        const result = await client.installSkill(slug);
+        res.json(result);
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
+    this.app.get('/api/clawhub/installed', async (_req, res) => {
+      try {
+        const { ClawHubClient } = await import('../scheduler/clawhub-client.js');
+        const client = new ClawHubClient(process.cwd());
+        const installed = client.getInstalledSlugs();
+        res.json({ installed });
+      } catch (err: any) { res.status(500).json({ error: err.message }); }
+    });
+
     // ── Background Tasks API ─────────────────────
     this.app.get('/api/tasks', async (_req, res) => {
       try {
@@ -1178,6 +1426,14 @@ export class Gateway {
       const queue: Array<{ text: string; attachments: Array<{ name: string; type: string; data: string }> }> = [];
 
       const processMessage = async (text: string, attachments: Array<{ name: string; type: string; data: string }>) => {
+        // Record user message event for pattern mining
+        try {
+          const { PatternMiner } = await import('../scheduler/pattern-miner.js');
+          const pm = new PatternMiner(this.config.memory.dir);
+          pm.recordEvent('user_message', { length: text.length });
+          pm.close();
+        } catch { }
+
         // --- Chat command handling ---
         const trimmed = text.trim().toLowerCase();
         if (trimmed.startsWith('/')) {
@@ -1227,6 +1483,18 @@ export class Gateway {
           if (canvas && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'canvas', html: canvas.html, title: canvas.title }));
             this.agent.clearCanvas?.();
+          }
+
+          // Record tool calls for pattern mining
+          if (response.toolsUsed?.length > 0) {
+            try {
+              const { PatternMiner } = await import('../scheduler/pattern-miner.js');
+              const pm = new PatternMiner(this.config.memory.dir);
+              for (const tool of response.toolsUsed) {
+                pm.recordEvent('tool_call', { tool });
+              }
+              pm.close();
+            } catch { }
           }
 
           // Send final done message with metadata
@@ -1727,6 +1995,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Google+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"><\/script>
   <script src="https://cdn.jsdelivr.net/npm/marked-highlight@2.1.1/lib/index.umd.min.js"><\/script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
@@ -1791,6 +2060,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     }
 
     /* ── Sidebar ─────────────────────── */
+    .icon { font-family: 'Material Symbols Outlined'; font-weight: normal; font-style: normal; font-size: 20px; line-height: 1; letter-spacing: normal; text-transform: none; display: inline-block; white-space: nowrap; direction: ltr; -webkit-font-smoothing: antialiased; font-feature-settings: 'liga'; }
+    .icon--sm { font-size: 18px; }
+    .icon--filled { font-variation-settings: 'FILL' 1; }
+    .icon-section { font-size: 18px; vertical-align: -3px; margin-right: 6px; color: var(--accent); font-variation-settings: 'FILL' 1, 'wght' 500; }
     .sidebar {
       width: 280px;
       background: var(--bg-secondary);
@@ -2019,6 +2292,55 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       background: var(--surface-hover);
       color: var(--text-primary);
     }
+
+    /* ── Number input spinner removal ── */
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    input[type="number"] {
+      -moz-appearance: textfield;
+    }
+
+    /* ── Standardized button classes ── */
+    .btn-primary {
+      background: var(--accent);
+      color: #131314;
+      border: none;
+      padding: 8px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: var(--font);
+      transition: opacity 0.2s;
+    }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-secondary {
+      background: var(--surface);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      padding: 8px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: var(--font);
+      transition: all 0.2s;
+    }
+    .btn-secondary:hover { background: var(--surface-hover); color: var(--text-primary); }
+    .btn-ghost {
+      background: none;
+      color: var(--text-secondary);
+      border: none;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: var(--font);
+      transition: all 0.2s;
+    }
+    .btn-ghost:hover { background: var(--surface-hover); color: var(--text-primary); }
 
     /* ── Messages Area ──────────────── */
     #messages {
@@ -2263,7 +2585,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       display: flex; align-items: center; gap: 6px;
     }
     .meta::before {
-      content: '⚡';
+      content: '';
       font-size: 10px;
     }
 
@@ -3067,6 +3389,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 11h.01M14 6h.01M18 6h.01M6.5 13.1h.01M22 5c0 9-4 12-6 12s-6-3-6-12q0-3 6-3c6 0 6 1 6 3"/><path d="M17.4 9.9c-.8.8-2 .8-2.8 0m-4.5-2.8C9 7.2 7.7 7.7 6 8.6c-3.5 2-4.7 3.9-3.7 5.6c4.5 7.8 9.5 8.4 11.2 7.4c.9-.5 1.9-2.1 1.9-4.7"/><path d="M9.1 16.5c.3-1.1 1.4-1.7 2.4-1.4"/></svg>
         <span class="sidebar-item-title">Personas</span>
       </div>
+      <div class="sidebar-item sidebar-nav-item" data-page="marketplace">
+        <span class="icon icon--sm icon--filled" style="font-size:18px">storefront</span>
+        <span class="sidebar-item-title">Marketplace</span>
+      </div>
       <div class="sidebar-item sidebar-nav-item" data-page="settings">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
         <span class="sidebar-item-title">Settings</span>
@@ -3094,7 +3420,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       </div>
       <div class="header-spacer"></div>
       <div class="header-actions">
-        <button class="header-btn" id="consoleToggle" title="Toggle activity console">⚙<span class="btn-label"> Console</span></button>
+        <button class="header-btn" id="consoleToggle" title="Toggle activity console"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span class="btn-label"> Console</span></button>
         <div style="position:relative;">
           <button class="header-btn" id="notifBell" title="Notifications" style="position:relative;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.268 21a2 2 0 0 0 3.464 0m-10.47-5.674A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/></svg>
@@ -3176,7 +3502,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
     <div id="voiceOrb" class="voice-orb"></div>
     <div id="voiceStatus" class="voice-status">Connecting…</div>
     <div id="voiceTranscript" class="voice-transcript"></div>
-    <div id="voiceToolPill" class="voice-tool-pill">🔧 <span id="voiceToolName">Searching…</span></div>
+    <div id="voiceToolPill" class="voice-tool-pill"><span class="icon" style="font-size:16px">build</span> <span id="voiceToolName">Searching…</span></div>
     <div class="voice-controls">
       <button id="voiceShareBtn" class="voice-share-btn" title="Share your screen">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -3196,7 +3522,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
   <div id="kgModal" class="kg-modal">
     <div class="kg-panel">
       <div class="kg-header">
-        <span>🧠 Knowledge Graph</span>
+        <span>Knowledge Graph</span>
         <button id="kgClose" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:18px;">✕</button>
       </div>
       <div class="kg-body">
@@ -3291,9 +3617,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       entry.className = 'console-entry';
       const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
       const icon = {
-        llm_call: '🧠', llm_done: '✅', tool_call: '🔧', tool_done: '✅',
-        rate_limit: '⏳', failover: '⚡', error: '❌', iteration: '🔄', fallback: '🔀'
-      }[action] || '📋';
+        llm_call: '', llm_done: '', tool_call: '', tool_done: '',
+        rate_limit: '', failover: '', error: '', iteration: '', fallback: ''
+      }[action] || '';
       entry.innerHTML = '<span class=\"console-time\">' + time + '</span>' +
         '<span class=\"console-action action-' + action + '\">' + icon + ' ' + action + '</span>' +
         '<span class=\"console-detail\">' + (detail || '') + '</span>';
@@ -3324,18 +3650,18 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
       const expandBtn = document.createElement('button');
       expandBtn.className = 'canvas-expand-btn';
-      expandBtn.innerHTML = '⛶ Expand';
+      expandBtn.innerHTML = 'Expand';
       let isFullscreen = false;
       expandBtn.addEventListener('click', function() {
         isFullscreen = !isFullscreen;
         bubble.classList.toggle('canvas-fullscreen', isFullscreen);
-        expandBtn.innerHTML = isFullscreen ? '✕ Close' : '⛶ Expand';
+        expandBtn.innerHTML = isFullscreen ? 'Close' : 'Expand';
         if (isFullscreen) {
           const onEsc = function(e) {
             if (e.key === 'Escape') {
               isFullscreen = false;
               bubble.classList.remove('canvas-fullscreen');
-              expandBtn.innerHTML = '⛶ Expand';
+              expandBtn.innerHTML = 'Expand';
               document.removeEventListener('keydown', onEsc);
             }
           };
@@ -3363,6 +3689,12 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
     function hideWelcome() {
       if (welcome) welcome.style.display = 'none';
+    }
+
+    // Helper: detect if text looks like a raw error
+    function isErrorText(text) {
+      if (!text) return false;
+      return /^(Request error|Error:|\{"error")/i.test(text.trim()) || /"code":\s*[45]\d\d/.test(text);
     }
 
     function addMsg(text, type, meta, attachments) {
@@ -3393,7 +3725,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           } else {
             const badge = document.createElement('span');
             badge.style.cssText = 'background:var(--bg-tertiary);padding:4px 10px;border-radius:8px;font-size:12px;color:var(--text-secondary);';
-            badge.textContent = '📄 ' + att.name;
+            badge.textContent = att.name;
             strip.appendChild(badge);
           }
         });
@@ -3401,11 +3733,30 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       }
 
       if (type === 'agent') {
-        try {
-          content.innerHTML += marked.parse(text);
-          addCopyButtons(content);
-        } catch (err) {
-          content.textContent = text;
+        // Wrap raw errors in a friendly error card
+        if (isErrorText(text)) {
+          const friendly = text.replace(/^Request error:\s*/i, '').trim();
+          let userMsg = 'Something went wrong while processing your request.';
+          try {
+            const parsed = JSON.parse(friendly);
+            const errMsg = parsed?.error?.message || parsed?.message || '';
+            if (errMsg.toLowerCase().includes('duplicate function')) {
+              userMsg = 'A configuration issue was detected (duplicate tool declaration). This has been logged for review.';
+            } else if (errMsg) {
+              userMsg = errMsg;
+            }
+          } catch(e) { userMsg = friendly.length < 200 ? friendly : userMsg; }
+          content.innerHTML += '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.25);border-radius:12px;padding:14px 16px">'
+            + '<span style="font-size:18px;flex-shrink:0;margin-top:1px"><span class="icon" style="font-size:18px;color:#facc15">warning</span></span>'
+            + '<div><div style="font-weight:600;color:#f87171;font-size:13px;margin-bottom:4px">Error</div>'
+            + '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5">' + userMsg + '</div></div></div>';
+        } else {
+          try {
+            content.innerHTML += marked.parse(text);
+            addCopyButtons(content);
+          } catch (err) {
+            content.textContent = text;
+          }
         }
       } else {
         const textEl = document.createElement('span');
@@ -3456,7 +3807,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       content.className = 'typing-indicator';
       content.innerHTML = '<div class="dot"></div><div class="dot"></div><div class="dot"></div>' +
         '<div class="activity-status" id="activity-status">' +
-        '<span class="status-icon">🧠</span>' +
+        '<span class="status-icon"><span class="icon" style="font-size:16px">psychology</span></span>' +
         '<span class="status-text">Thinking...</span>' +
         '</div>';
       row.appendChild(content);
@@ -3481,13 +3832,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         const copyBtn = document.createElement('button');
         copyBtn.className = 'copy-btn';
-        copyBtn.innerHTML = '📋 Copy';
+        copyBtn.innerHTML = 'Copy';
         copyBtn.addEventListener('click', function() {
           navigator.clipboard.writeText(codeEl.textContent || '').then(function() {
             copyBtn.innerHTML = '✓ Copied';
             copyBtn.classList.add('copied');
             setTimeout(function() {
-              copyBtn.innerHTML = '📋 Copy';
+              copyBtn.innerHTML = 'Copy';
               copyBtn.classList.remove('copied');
             }, 2000);
           });
@@ -3673,10 +4024,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       // Smart notification toast
       if (data.type === 'notification') {
         const colors = { info: '#8ab4f8', warning: '#fdd663', urgent: '#f28b82' };
-        const icons = { info: 'ℹ️', warning: '⚠️', urgent: '🚨' };
+        const icons = { info: '', warning: '', urgent: '' };
         const toast = document.createElement('div');
         toast.style.cssText = 'position:fixed;top:16px;right:16px;z-index:9999;padding:12px 20px;border-radius:12px;background:var(--bg-tertiary);border:1px solid ' + (colors[data.priority] || colors.info) + ';color:var(--text-primary);font-size:14px;max-width:380px;box-shadow:0 8px 24px rgba(0,0,0,0.3);animation:slideIn 0.3s ease;';
-        toast.innerHTML = (icons[data.priority] || '🔔') + ' ' + (data.message || 'Notification');
+        const icon = icons[data.priority] || '';
+        toast.innerHTML = icon + (icon ? ' ' : '') + (data.message || 'Notification');
         document.body.appendChild(toast);
         setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 6000);
         return;
@@ -3695,7 +4047,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const statusEl = document.getElementById('activity-status');
         if (statusEl) {
           const statusMap = {
-            tool_call: { icon: '🔧', label: function(d) {
+            tool_call: { icon: '', label: function(d) {
               const name = (d || '').split('(')[0];
               const friendly = {
                 bash: 'Running command',
@@ -3716,13 +4068,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
               };
               return friendly[name] || ('Using ' + name);
             }},
-            tool_done: { icon: '✅', label: function(d) { return d || 'Done'; } },
-            llm_call: { icon: '🧠', label: function() { return 'Thinking...'; } },
-            llm_done: { icon: '✨', label: function(d) { return d || 'Response ready'; } },
-            rate_limit: { icon: '⏳', label: function(d) { return d || 'Rate limited, waiting...'; } },
-            failover: { icon: '⚡', label: function(d) { return d || 'Switching provider'; } },
-            iteration: { icon: '🔄', label: function(d) { return d || 'Processing...'; } },
-            error: { icon: '❌', label: function(d) { return d || 'Error'; } },
+            tool_done: { icon: '', label: function(d) { return d || 'Done'; } },
+            llm_call: { icon: '', label: function() { return 'Thinking...'; } },
+            llm_done: { icon: '', label: function(d) { return d || 'Response ready'; } },
+            rate_limit: { icon: '', label: function(d) { return d || 'Rate limited, waiting...'; } },
+            failover: { icon: '', label: function(d) { return d || 'Switching provider'; } },
+            iteration: { icon: '', label: function(d) { return d || 'Processing...'; } },
+            error: { icon: '', label: function(d) { return d || 'Error'; } },
           };
           const info = statusMap[data.action];
           if (info) {
@@ -3745,7 +4097,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         entry.className = 'console-entry tool-output';
         const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
         const streamClass = data.stream === 'stderr' ? 'tool-stderr' : (data.stream === 'info' ? 'tool-info' : 'tool-stdout');
-        const icon = data.stream === 'stderr' ? '⚠️' : (data.stream === 'info' ? '📡' : '💻');
+        const icon = '';
         entry.innerHTML = '<span class="console-time">' + time + '</span>' +
           '<span class="console-action ' + streamClass + '">' + icon + ' ' + (data.tool || 'tool') + '</span>' +
           '<pre class="console-detail tool-pre">' + (data.chunk || '').replace(/</g, '&lt;') + '</pre>';
@@ -3761,7 +4113,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         if (lastUserRow && !lastUserRow.querySelector('.queued-badge')) {
           const badge = document.createElement('div');
           badge.className = 'queued-badge';
-          badge.textContent = '⏳ Queued' + (data.position > 1 ? ' (#' + data.position + ')' : '');
+          badge.textContent = 'Queued' + (data.position > 1 ? ' (#' + data.position + ')' : '');
           lastUserRow.appendChild(badge);
         }
         return;
@@ -4148,7 +4500,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
             for (const chunk of pcmChunks) { merged.set(chunk, offset); offset += chunk.length; }
 
             const wavBlob = encodeWAV(merged, 16000);
-            input.value = preExisting + (preExisting ? ' ' : '') + '⏳ Transcribing…';
+            input.value = preExisting + (preExisting ? ' ' : '') + 'Transcribing…';
 
             try {
               const resp = await fetch('/api/transcribe', {
@@ -4294,7 +4646,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const connections = connData.connections || [];
         if (connections.length > 0) {
           html += '<div style="margin-bottom:20px">';
-          html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🔌</span> Connected Services <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + connections.length + ' active</span></div>';
+          html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">electrical_services</span> Connected Services <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + connections.length + ' active</span></div>';
           html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:16px">';
           connections.forEach(c => {
             const dot = c.status === 'connected' ? '#4ade80' : '#ef4444';
@@ -4308,7 +4660,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         }
 
         // ── Tools search ──
-        html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🧰</span> All Tools</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);font-size:14px;margin-bottom:10px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">handyman</span> All Tools</div>';
         html += '<div style="margin-bottom:16px"><input id="tool-search" type="text" placeholder="Search tools..." style="width:100%;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text-primary);font-size:14px;outline:none" /></div>';
 
         // Categorize tools
@@ -4316,23 +4668,23 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const catOrder = [];
         const catMap = {
           // Built-in file/system tools
-          'read_file': '📁 File System', 'write_file': '📁 File System', 'edit_file': '📁 File System', 'list_directory': '📁 File System',
-          'bash': '⚙️ System', 'web_search': '🌐 Web', 'web_fetch': '🌐 Web', 'read_pdf': '📄 Documents',
-          'generate_image': '🎨 Creative', 'gemini_code': '🎨 Creative',
-          // Browser
-          'browse_page': '🌐 Browser', 'screenshot': '🌐 Browser', 'click_element': '🌐 Browser', 'type_text': '🌐 Browser', 'browser_clear_data': '🌐 Browser',
+          'read_file': 'File System', 'write_file': 'File System', 'edit_file': 'File System', 'list_directory': 'File System',
+          'bash': 'System', 'web_search': 'Web', 'web_fetch': 'Web', 'read_pdf': 'Documents',
+          'generate_image': 'Creative', 'gemini_code': 'Creative',
+          'gmail_search': 'Google Workspace', 'gmail_send': 'Google Workspace', 'gmail_read': 'Google Workspace',
+          'browse_page': 'Browser', 'screenshot': 'Browser', 'click_element': 'Browser', 'type_text': 'Browser', 'browser_clear_data': 'Browser',
           // Memory
-          'search_memory': '🧠 Memory & Search', 'semantic_search': '🧠 Memory & Search',
+          'search_memory': 'Memory & Search', 'semantic_search': 'Memory & Search',
           // Scheduling
-          'set_reminder': '⏰ Scheduling', 'cancel_reminder': '⏰ Scheduling', 'list_reminders': '⏰ Scheduling',
-          'create_cron_job': '⏰ Scheduling', 'list_cron_jobs': '⏰ Scheduling', 'delete_cron_job': '⏰ Scheduling',
+          'set_reminder': 'Scheduling', 'cancel_reminder': 'Scheduling', 'list_reminders': 'Scheduling',
+          'create_cron_job': 'Scheduling', 'list_cron_jobs': 'Scheduling', 'delete_cron_job': 'Scheduling',
           // Git
-          'git_status': '📦 Git', 'git_diff': '📦 Git', 'git_commit': '📦 Git', 'git_log': '📦 Git', 'git_backup': '📦 Git',
+          'git_status': 'Git', 'git_diff': 'Git', 'git_commit': 'Git', 'git_log': 'Git', 'git_backup': 'Git',
           // Clipboard
-          'clipboard_read': '📋 Clipboard', 'clipboard_write': '📋 Clipboard',
+          'clipboard_read': 'Clipboard', 'clipboard_write': 'Clipboard',
           // Canvas / UI
-          'canvas': '🎨 Creative', 'get_location': '📍 Location', 'switch_persona': '👤 Persona',
-          'install_skill': '🦀 Skills', 'watch_file': '⏰ Scheduling',
+          'canvas': 'Creative', 'get_location': 'Location', 'switch_persona': 'Persona',
+          'install_skill': 'Skills', 'watch_file': 'Scheduling',
         };
 
         (res.tools || []).forEach(t => {
@@ -4635,10 +4987,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           const schedule = document.getElementById('rem-schedule').value.trim();
           if (!msg || !schedule) return;
           const btn = document.getElementById('rem-create-btn');
-          btn.textContent = '⏳';
+          btn.textContent = '...';
           // Use Alice's chat endpoint to set the reminder naturally
           await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Set a reminder ' + schedule + ': ' + msg }) });
-          btn.textContent = '✅ Created!';
+          btn.textContent = 'Created!';
           setTimeout(() => loadDashboard('reminders'), 1000);
         });
 
@@ -4698,7 +5050,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // System Health
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🟢</span> System Health</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section" style="color:#4ade80">check_circle</span> System Health</div>';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px">';
         html += '<div style="color:var(--text-secondary)">Provider: <span style="color:var(--text-primary);font-weight:500">' + stats.activeProvider + '</span></div>';
         html += '<div style="color:var(--text-secondary)">Fallback: <span style="color:' + (stats.usingFallback ? '#f87171' : '#4ade80') + ';font-weight:500">' + (stats.usingFallback ? 'Active' : 'Standby') + '</span></div>';
@@ -4708,9 +5060,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         // Automation services row
         html += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;gap:12px;flex-wrap:wrap">';
         const autoServices = [
-          { label: '📋 Meeting Prep', running: meetingPrepRunning, id: 'toggle-meeting-prep' },
-          { label: '📧 Email Watcher', running: emailWatcherRunning, id: 'toggle-email-watcher' },
-          { label: '🔮 Proactive AI', running: proactiveRunning, id: 'toggle-proactive' },
+          { label: 'Meeting Prep', running: meetingPrepRunning, id: 'toggle-meeting-prep' },
+          { label: 'Email Watcher', running: emailWatcherRunning, id: 'toggle-email-watcher' },
+          { label: 'Proactive AI', running: proactiveRunning, id: 'toggle-proactive' },
         ];
         autoServices.forEach(s => {
           const dotColor = s.running ? '#4ade80' : '#666';
@@ -4719,7 +5071,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           html += '<div style="width:6px;height:6px;border-radius:50%;background:' + dotColor + ';box-shadow:0 0 4px ' + dotColor + '44"></div>';
           html += '<span style="color:var(--text-secondary)">' + s.label + ':</span>';
           html += '<span style="color:' + dotColor + ';font-weight:500">' + statusText + '</span>';
-          html += '<button id="' + s.id + '" style="background:none;border:1px solid var(--border);color:var(--text-tertiary);border-radius:6px;padding:1px 6px;cursor:pointer;font-size:10px">' + (s.running ? 'Pause' : 'Start') + '</button>';
+          html += '<label for="' + s.id + '" style="position:relative;display:inline-block;width:32px;height:18px;cursor:pointer;flex-shrink:0"><input type="checkbox" id="' + s.id + '" ' + (s.running ? 'checked' : '') + ' style="opacity:0;width:0;height:0;position:absolute"><span style="position:absolute;top:0;left:0;right:0;bottom:0;background:' + (s.running ? 'var(--accent)' : '#555') + ';border-radius:18px;transition:background 0.3s"></span><span style="position:absolute;left:' + (s.running ? '16px' : '2px') + ';top:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left 0.3s;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span></label>';
           html += '</div>';
         });
         html += '</div>';
@@ -4727,19 +5079,18 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // Quick Actions
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">⚡</span> Quick Actions</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">bolt</span> Quick Actions</div>';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         const actions = [
-          { label: '☀️ Run Briefing', id: 'qa-briefing' },
-          { label: '🔍 Run Triage', id: 'qa-triage' },
-          { label: '📊 Weekly Report', id: 'qa-weekly' },
-          { label: '💓 Heartbeat', id: 'qa-heartbeat' },
-          { label: '📦 Git Backup', id: 'qa-backup' },
-          { label: '🔄 Refresh', id: 'qa-refresh' },
-          { label: '🔬 Deep Research', id: 'qa-research' },
-          { label: '👤 Person Brief', id: 'qa-person-brief' },
-          { label: '⏱️ Time Analysis', id: 'qa-time' },
-          { label: '📄 Generate Doc', id: 'qa-gen-doc' },
+          { label: 'Run Briefing', id: 'qa-briefing' },
+          { label: 'Run Triage', id: 'qa-triage' },
+          { label: 'Weekly Report', id: 'qa-weekly' },
+          ...(stats.patternMiner?.running ? [{ label: 'Deep Research', id: 'qa-research' }] : []),
+          ...(stats.meetingBriefing ? [{ label: 'Meeting Brief', id: 'qa-meeting-brief' }] : []),
+          { label: 'Refresh', id: 'qa-refresh' },
+          ...(stats.patternMiner?.running ? [{ label: 'Daily Insight', id: 'qa-insight' }] : []),
+          ...(stats.patternMiner?.running ? [{ label: 'Time Analysis', id: 'qa-time' }] : []),
+          ...(stats.patternMiner?.running ? [{ label: 'Generate Doc', id: 'qa-gendoc' }] : []),
         ];
         actions.forEach(a => {
           html += '<button id="' + a.id + '" class="qa-btn" style="background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:10px;padding:10px 14px;cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s;text-align:left">' + a.label + '</button>';
@@ -4751,7 +5102,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const remData = await fetch('/api/reminders').then(r => r.json()).catch(() => ({ reminders: [] }));
         const reminders = remData.reminders || [];
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details' + (reminders.length > 0 ? ' open' : '') + '><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span style="font-size:16px">⏰</span> Reminders <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + reminders.length + ' active</span></summary>';
+        html += '<details' + (reminders.length > 0 ? ' open' : '') + '><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">alarm</span> Reminders <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + reminders.length + ' active</span></summary>';
         if (reminders.length === 0) {
           html += '<div style="color:var(--text-tertiary);font-size:13px;padding:12px 0">No active reminders. Use <code>/remind</code> or ask Alice to set one.</div>';
         } else {
@@ -4771,7 +5122,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const kbCC = await fetch('/api/kb').then(r => r.json()).catch(() => ({ entries: [], stats: { total: 0 } }));
         const kbTotal = kbCC.stats?.total || 0;
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span style="font-size:16px">🧠</span> Knowledge Base <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + kbTotal + ' entries</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">school</span> Knowledge Base <span style="font-size:12px;color:var(--text-tertiary);font-weight:400">' + kbTotal + ' entries</span></summary>';
         html += '<div style="margin-top:10px;display:flex;gap:8px">';
         html += '<input id="cc-kb-search" type="text" placeholder="Search knowledge…" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;outline:none">';
         html += '<button id="cc-kb-search-btn" style="background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px;font-weight:500">Search</button>';
@@ -4792,13 +5143,52 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // ── Automations section ──
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span style="font-size:16px">⚡</span> Automations <span id="cc-auto-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">electric_bolt</span> Automations <span id="cc-auto-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
         html += '<div id="cc-automations" style="margin-top:10px"><div style="color:var(--text-tertiary);font-size:13px">Loading…</div></div>';
         html += '</details></div>';
 
+        // ── Webhooks section ──
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">webhook</span> Webhooks <span id="cc-wh-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<div style="margin-top:14px">';
+        // Create webhook form
+        html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+        html += '<input id="wh-name" type="text" placeholder="Webhook name…" style="flex:1;min-width:140px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;font-family:var(--font);outline:none">';
+        html += '<select id="wh-provider" style="background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text-primary);font-size:13px;font-family:var(--font);outline:none;cursor:pointer">';
+        html += '<option value="generic">Generic</option><option value="github">GitHub</option><option value="stripe">Stripe</option><option value="linear">Linear</option><option value="sentry">Sentry</option><option value="vercel">Vercel</option>';
+        html += '</select>';
+        html += '<button id="wh-create-btn" class="btn-primary" style="white-space:nowrap">+ Create</button>';
+        html += '</div>';
+        // Webhook list container
+        html += '<div id="cc-webhooks"><div style="color:var(--text-tertiary);font-size:13px">Loading…</div></div>';
+        // Event log container
+        html += '<div id="cc-wh-events" style="margin-top:10px;display:none"></div>';
+        html += '</div></details></div>';
+
+        // ── Behavior Insights section ──
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">insights</span> Behavior Insights <span id="cc-bi-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<div style="margin-top:14px">';
+        // Heatmap container
+        html += '<div id="cc-bi-heatmap" style="margin-bottom:12px"></div>';
+        // Insights list
+        html += '<div id="cc-bi-insights"><div style="color:var(--text-tertiary);font-size:13px">Loading insights…</div></div>';
+        html += '</div></details></div>';
+
+        // ── Agent Crews section ──
+        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">groups</span> Agent Crews <span id="cc-crews-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<div style="margin-top:14px">';
+        html += '<div style="color:var(--text-tertiary);font-size:12px;margin-bottom:10px">Multi-step pipelines that chain specialized agents together. Each step passes output to the next.</div>';
+        // Pipeline templates grid
+        html += '<div id="cc-crews-pipelines"><div style="color:var(--text-tertiary);font-size:13px">Loading pipelines…</div></div>';
+        // Run history
+        html += '<div id="cc-crews-history" style="margin-top:12px"></div>';
+        html += '</div></details></div>';
+
         // ── Background Tasks section ──
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:14px">';
-        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span style="font-size:16px">📋</span> Background Tasks <span id="cc-tasks-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
+        html += '<details><summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:14px;display:flex;align-items:center;gap:8px;list-style:none"><span class="icon icon-section">task</span> Background Tasks <span id="cc-tasks-count" style="font-size:12px;color:var(--text-tertiary);font-weight:400">…</span></summary>';
         html += '<div id="cc-tasks" style="margin-top:10px"><div style="color:var(--text-tertiary);font-size:13px">Loading…</div></div>';
         html += '</details></div>';
 
@@ -4807,7 +5197,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // Scheduled Jobs
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">📅</span> Scheduled Jobs</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">event_note</span> Scheduled Jobs</div>';
         if (cronJobs.length === 0) {
           html += '<div style="color:var(--text-tertiary);font-size:13px">No scheduled jobs.</div>';
         } else {
@@ -4818,7 +5208,8 @@ const WEB_UI_HTML = `<!DOCTYPE html>
             html += '<div style="display:flex;align-items:center;gap:8px">';
             html += '<div style="width:8px;height:8px;border-radius:50%;background:' + statusDot + '"></div>';
             html += '<div><div style="font-size:13px;color:var(--text-primary);font-weight:500">' + (j.name || j.id) + '</div>';
-            html += '<div style="font-size:11px;color:var(--text-tertiary)">' + (j.cron || '') + (j.lastRun ? ' · Last: ' + new Date(j.lastRun).toLocaleTimeString() : '') + '</div></div>';
+            const lastRunStr = j.lastRun ? (() => { const d = Date.now() - new Date(j.lastRun).getTime(); if (d < 60000) return 'just now'; if (d < 3600000) return Math.floor(d/60000) + 'm ago'; if (d < 86400000) return Math.floor(d/3600000) + 'h ago'; return Math.floor(d/86400000) + 'd ago'; })() : '';
+            html += '<div style="font-size:11px;color:var(--text-tertiary)">' + (j.cron || '') + (lastRunStr ? ' · Last: ' + lastRunStr : '') + '</div></div>';
             html += '</div>';
             html += '<button class="cron-run-btn" data-id="' + j.id + '" style="background:var(--accent);color:#000;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:11px;font-weight:600">Run</button>';
             html += '</div>';
@@ -4828,15 +5219,17 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // Top Tools
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🔧</span> Top Tools This Session</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">build</span> Top Tools This Session</div>';
         if (topTools.length === 0) {
           html += '<div style="color:var(--text-tertiary);font-size:13px">No tools used yet this session.</div>';
         } else {
           topTools.forEach(([name, count]) => {
             const maxC = topTools[0][1];
             const pct = Math.round((count / maxC) * 100);
+            // Humanize tool name: mcp_google-calendar_list-events → List Events
+            const friendlyName = name.replace(/^mcp_[^_]+_/, '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
             html += '<div style="margin-bottom:10px">';
-            html += '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span style="color:var(--text-secondary)">' + name + '</span><span style="color:var(--text-primary);font-weight:500">' + count + '</span></div>';
+            html += '<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:3px"><span style="color:var(--text-secondary)" title="' + name + '">' + friendlyName + '</span><span style="color:var(--text-primary);font-weight:500">' + count + '</span></div>';
             html += '<div style="height:4px;background:var(--bg-tertiary);border-radius:2px"><div style="height:100%;width:' + pct + '%;background:var(--accent);border-radius:2px;transition:width 0.3s"></div></div>';
             html += '</div>';
           });
@@ -4852,37 +5245,37 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           btn.addEventListener('mouseleave', () => { btn.style.background = 'var(--bg-tertiary)'; btn.style.color = 'var(--text-primary)'; });
         });
         document.getElementById('qa-briefing')?.addEventListener('click', async (e) => {
-          e.target.textContent = '⏳ Running...';
+          e.target.textContent = 'Running...';
           await fetch('/api/cron-jobs/job_morning_brief/run', { method: 'POST' });
-          e.target.textContent = '✅ Sent!';
-          setTimeout(() => { e.target.textContent = '☀️ Run Briefing'; }, 2000);
+          e.target.textContent = 'Sent!';
+          setTimeout(() => { e.target.textContent = 'Run Briefing'; }, 2000);
         });
         document.getElementById('qa-heartbeat')?.addEventListener('click', async (e) => {
-          e.target.textContent = '⏳ Running...';
+          e.target.textContent = 'Running...';
           await fetch('/api/heartbeat/trigger', { method: 'POST' }).catch(() => {});
-          e.target.textContent = '✅ Triggered!';
-          setTimeout(() => { e.target.textContent = '💓 Heartbeat'; }, 2000);
+          e.target.textContent = 'Triggered!';
+          setTimeout(() => { e.target.textContent = 'Heartbeat'; }, 2000);
         });
         document.getElementById('qa-backup')?.addEventListener('click', async (e) => {
-          e.target.textContent = '⏳ Backing up...';
+          e.target.textContent = 'Backing up...';
           await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Backup everything to git: commit all changes and push to origin' }) });
-          e.target.textContent = '✅ Started!';
-          setTimeout(() => { e.target.textContent = '📦 Git Backup'; }, 2000);
+          e.target.textContent = 'Started!';
+          setTimeout(() => { e.target.textContent = 'Git Backup'; }, 2000);
         });
         document.getElementById('qa-refresh')?.addEventListener('click', () => loadDashboard('command_center'));
 
         // New quick actions: Run Triage, Weekly Report
         document.getElementById('qa-triage')?.addEventListener('click', async (e) => {
-          e.target.textContent = '⏳ Running...';
+          e.target.textContent = 'Running...';
           await fetch('/api/cron-jobs/job_daily_triage/run', { method: 'POST' });
-          e.target.textContent = '✅ Done!';
-          setTimeout(() => { e.target.textContent = '🔍 Run Triage'; }, 2000);
+          e.target.textContent = 'Done!';
+          setTimeout(() => { e.target.textContent = 'Run Triage'; }, 2000);
         });
         document.getElementById('qa-weekly')?.addEventListener('click', async (e) => {
-          e.target.textContent = '⏳ Generating...';
+          e.target.textContent = 'Generating...';
           await fetch('/api/cron-jobs/job_weekly_status/run', { method: 'POST' });
-          e.target.textContent = '✅ Done!';
-          setTimeout(() => { e.target.textContent = '📊 Weekly Report'; }, 2000);
+          e.target.textContent = 'Done!';
+          setTimeout(() => { e.target.textContent = 'Weekly Report'; }, 2000);
         });
 
         // Automation toggles
@@ -4906,42 +5299,42 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         document.getElementById('qa-research')?.addEventListener('click', async (e) => {
           const q = prompt('What would you like to research?');
           if (!q) return;
-          e.target.textContent = '⏳ Researching…';
+          e.target.textContent = 'Researching…';
           await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Use deep_research to research: ' + q }) });
-          e.target.textContent = '✅ Started!';
-          setTimeout(() => { e.target.textContent = '🔬 Deep Research'; }, 3000);
+          e.target.textContent = 'Started!';
+          setTimeout(() => { e.target.textContent = 'Deep Research'; }, 3000);
         });
         document.getElementById('qa-person-brief')?.addEventListener('click', async (e) => {
           const who = prompt('Who to brief on? (name or email)');
           if (!who) return;
-          e.target.textContent = '⏳ Briefing…';
+          e.target.textContent = 'Briefing…';
           await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Use brief_person to create a brief on: ' + who }) });
-          e.target.textContent = '✅ Started!';
-          setTimeout(() => { e.target.textContent = '👤 Person Brief'; }, 3000);
+          e.target.textContent = 'Started!';
+          setTimeout(() => { e.target.textContent = 'Person Brief'; }, 3000);
         });
         document.getElementById('qa-time')?.addEventListener('click', async (e) => {
-          e.target.textContent = '⏳ Analyzing…';
+          e.target.textContent = 'Analyzing…';
           await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Use time_analysis to analyze my time usage this week' }) });
-          e.target.textContent = '✅ Started!';
-          setTimeout(() => { e.target.textContent = '⏱️ Time Analysis'; }, 3000);
+          e.target.textContent = 'Started!';
+          setTimeout(() => { e.target.textContent = 'Time Analysis'; }, 3000);
         });
         document.getElementById('qa-gen-doc')?.addEventListener('click', async (e) => {
           const type = prompt('Document type? (proposal, meeting-notes, status-report, memo)');
           if (!type) return;
           const topic = prompt('Topic / subject?');
           if (!topic) return;
-          e.target.textContent = '⏳ Generating…';
+          e.target.textContent = 'Generating…';
           await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: 'Use generate_document to create a ' + type + ' about: ' + topic }) });
-          e.target.textContent = '✅ Started!';
-          setTimeout(() => { e.target.textContent = '📄 Generate Doc'; }, 3000);
+          e.target.textContent = 'Started!';
+          setTimeout(() => { e.target.textContent = 'Generate Doc'; }, 3000);
         });
 
         // Wire cron run buttons
         document.querySelectorAll('.cron-run-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
-            btn.textContent = '⏳';
+            btn.textContent = '...';
             await fetch('/api/cron-jobs/' + btn.dataset.id + '/run', { method: 'POST' });
-            btn.textContent = '✅';
+            btn.textContent = 'Done';
             setTimeout(() => { btn.textContent = 'Run'; }, 2000);
           });
         });
@@ -4985,15 +5378,15 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           }
           container.innerHTML = rules.map(r => {
             const dot = r.enabled ? '#4ade80' : '#666';
-            const triggerLabel = r.trigger.type === 'on_cron' ? '🕐 ' + r.trigger.value : '💬 "' + r.trigger.value + '"';
-            const actionLabel = r.action.type === 'run_prompt' ? '🤖 Run prompt' : r.action.type === 'send_notification' ? '📬 Notify' : '🔧 ' + r.action.value;
+            const triggerLabel = r.trigger.type === 'on_cron' ? r.trigger.value : '"' + r.trigger.value + '"';
+            const actionLabel = r.action.type === 'run_prompt' ? 'Run prompt' : r.action.type === 'send_notification' ? 'Notify' : r.action.value;
             return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--bg-tertiary);border-radius:10px;margin-bottom:6px">' +
               '<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">' +
               '<div style="width:8px;height:8px;border-radius:50%;background:' + dot + ';flex-shrink:0"></div>' +
               '<div style="min-width:0"><div style="font-size:13px;color:var(--text-primary);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + r.name + '</div>' +
               '<div style="font-size:11px;color:var(--text-tertiary)">' + triggerLabel + ' → ' + actionLabel + ' · Runs: ' + r.runCount + '</div></div></div>' +
               '<div style="display:flex;gap:4px;flex-shrink:0">' +
-              '<button data-auto-toggle="' + r.id + '" style="background:none;border:1px solid var(--border);color:var(--text-tertiary);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:11px">' + (r.enabled ? 'Pause' : 'Start') + '</button>' +
+              '<label style="position:relative;display:inline-block;width:32px;height:18px;cursor:pointer;flex-shrink:0"><input type="checkbox" data-auto-toggle="' + r.id + '" ' + (r.enabled ? 'checked' : '') + ' style="opacity:0;width:0;height:0;position:absolute"><span style="position:absolute;top:0;left:0;right:0;bottom:0;background:' + (r.enabled ? 'var(--accent)' : '#555') + ';border-radius:18px;transition:background 0.3s"></span><span style="position:absolute;left:' + (r.enabled ? '16px' : '2px') + ';top:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left 0.3s;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span></label>' +
               '<button data-auto-delete="' + r.id + '" style="background:none;border:1px solid #f8717133;color:#f87171;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:11px">✕</button>' +
               '</div></div>';
           }).join('');
@@ -5013,6 +5406,281 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           });
         }).catch(() => {});
 
+        // Load webhooks async
+        const loadWebhooks = () => {
+          fetch('/api/webhooks').then(r => r.json()).then(data => {
+            const webhooks = data.webhooks || [];
+            const countEl = document.getElementById('cc-wh-count');
+            if (countEl) countEl.textContent = webhooks.length + ' endpoints';
+            const container = document.getElementById('cc-webhooks');
+            if (!container) return;
+            if (webhooks.length === 0) {
+              container.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:16px 0">' +
+                '<div style="font-size:28px;margin-bottom:6px;opacity:0.5"><span class="icon" style="font-size:28px">webhook</span></div>' +
+                '<div>No webhooks yet. Create one to receive real-time events from external services like GitHub, Stripe, or Sentry.</div></div>';
+              return;
+            }
+            const providerColors = { github: '#6e5494', stripe: '#635bff', linear: '#5e6ad2', sentry: '#362d59', vercel: '#000', generic: '#555' };
+            container.innerHTML = webhooks.map(w => {
+              const dotColor = w.active ? '#4ade80' : '#666';
+              const provColor = providerColors[w.provider] || '#555';
+              const url = location.origin + '/api/webhooks/incoming/' + w.id;
+              const lastEvt = w.lastReceivedAt ? (() => { const d = Date.now() - new Date(w.lastReceivedAt).getTime(); if (d < 60000) return 'just now'; if (d < 3600000) return Math.floor(d/60000) + 'm ago'; if (d < 86400000) return Math.floor(d/3600000) + 'h ago'; return Math.floor(d/86400000) + 'd ago'; })() : 'never';
+              return '<div style="padding:12px;background:var(--bg-tertiary);border-radius:10px;margin-bottom:8px">' +
+                '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+                '<div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">' +
+                '<div style="width:8px;height:8px;border-radius:50%;background:' + dotColor + ';flex-shrink:0"></div>' +
+                '<div style="min-width:0">' +
+                '<div style="font-size:13px;color:var(--text-primary);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + w.name + '</div>' +
+                '<div style="display:flex;align-items:center;gap:6px;margin-top:3px">' +
+                '<span style="background:' + provColor + ';color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;text-transform:uppercase">' + w.provider + '</span>' +
+                '<span style="color:var(--text-tertiary);font-size:11px">' + w.eventCount + ' events · Last: ' + lastEvt + '</span>' +
+                '</div></div></div>' +
+                '<div style="display:flex;gap:4px;flex-shrink:0;align-items:center">' +
+                '<button data-wh-copy="' + url + '" title="Copy URL" style="background:none;border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">URL</button>' +
+                '<button data-wh-test="' + w.id + '" title="Send test event" style="background:none;border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">Test</button>' +
+                '<button data-wh-events="' + w.id + '" title="View events" style="background:none;border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px">Events</button>' +
+                '<label style="position:relative;display:inline-block;width:32px;height:18px;cursor:pointer;flex-shrink:0"><input type="checkbox" data-wh-toggle="' + w.id + '" ' + (w.active ? 'checked' : '') + ' style="opacity:0;width:0;height:0;position:absolute"><span style="position:absolute;top:0;left:0;right:0;bottom:0;background:' + (w.active ? 'var(--accent)' : '#555') + ';border-radius:18px;transition:background 0.3s"></span><span style="position:absolute;left:' + (w.active ? '16px' : '2px') + ';top:2px;width:14px;height:14px;background:#fff;border-radius:50%;transition:left 0.3s;box-shadow:0 1px 3px rgba(0,0,0,0.3)"></span></label>' +
+                '<button data-wh-delete="' + w.id + '" style="background:none;border:1px solid #f8717133;color:#f87171;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:11px">✕</button>' +
+                '</div></div>' +
+                '</div>';
+            }).join('');
+
+            // Wire webhook actions
+            container.querySelectorAll('[data-wh-copy]').forEach(btn => {
+              btn.addEventListener('click', () => {
+                navigator.clipboard.writeText(btn.getAttribute('data-wh-copy'));
+                const orig = btn.innerHTML;
+                btn.innerHTML = 'Copied';
+                setTimeout(() => { btn.innerHTML = orig; }, 1500);
+              });
+            });
+            container.querySelectorAll('[data-wh-test]').forEach(btn => {
+              btn.addEventListener('click', async () => {
+                btn.textContent = '...';
+                await fetch('/api/webhooks/' + btn.getAttribute('data-wh-test') + '/test', { method: 'POST' });
+                btn.textContent = 'Done';
+                setTimeout(() => { btn.textContent = 'Test'; }, 1500);
+              });
+            });
+            container.querySelectorAll('[data-wh-events]').forEach(btn => {
+              btn.addEventListener('click', async () => {
+                const evtContainer = document.getElementById('cc-wh-events');
+                if (!evtContainer) return;
+                const whId = btn.getAttribute('data-wh-events');
+                const res = await fetch('/api/webhooks/' + whId + '/events').then(r => r.json()).catch(() => ({ events: [] }));
+                const events = res.events || [];
+                if (events.length === 0) {
+                  evtContainer.innerHTML = '<div style="color:var(--text-tertiary);font-size:12px;padding:8px 0">No events received yet for this webhook.</div>';
+                } else {
+                  evtContainer.innerHTML = '<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Recent Events</div>' +
+                    events.slice(0, 10).map(e => {
+                      const statusClr = e.status === 'processed' ? '#4ade80' : e.status === 'failed' ? '#f87171' : '#666';
+                      return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:3px;font-size:12px">' +
+                        '<div style="width:6px;height:6px;border-radius:50%;background:' + statusClr + ';flex-shrink:0"></div>' +
+                        '<span style="color:var(--accent);font-weight:500;flex-shrink:0">' + (e.event_type || e.eventType || 'event') + '</span>' +
+                        '<span style="color:var(--text-secondary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (e.summary || '') + '</span>' +
+                        '<span style="color:var(--text-tertiary);flex-shrink:0">' + new Date(e.received_at || e.receivedAt).toLocaleTimeString() + '</span>' +
+                        '</div>';
+                    }).join('');
+                }
+                evtContainer.style.display = 'block';
+              });
+            });
+            container.querySelectorAll('[data-wh-toggle]').forEach(btn => {
+              btn.addEventListener('change', async () => {
+                await fetch('/api/webhooks/' + btn.getAttribute('data-wh-toggle') + '/toggle', { method: 'POST' });
+                loadWebhooks();
+              });
+            });
+            container.querySelectorAll('[data-wh-delete]').forEach(btn => {
+              btn.addEventListener('click', async () => {
+                if (!confirm('Delete this webhook? External services will no longer be able to send events.')) return;
+                await fetch('/api/webhooks/' + btn.getAttribute('data-wh-delete'), { method: 'DELETE' });
+                loadWebhooks();
+              });
+            });
+          }).catch(() => {});
+        };
+
+        // Wire create webhook button
+        document.getElementById('wh-create-btn')?.addEventListener('click', async () => {
+          const name = document.getElementById('wh-name')?.value?.trim();
+          const provider = document.getElementById('wh-provider')?.value || 'generic';
+          if (!name) { document.getElementById('wh-name')?.focus(); return; }
+          const btn = document.getElementById('wh-create-btn');
+          btn.textContent = 'Creating…';
+          const res = await fetch('/api/webhooks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, provider }) }).then(r => r.json()).catch(() => null);
+          if (res?.webhook) {
+            const url = location.origin + '/api/webhooks/incoming/' + res.webhook.id;
+            navigator.clipboard.writeText(url);
+            btn.textContent = 'Created & URL Copied!';
+            document.getElementById('wh-name').value = '';
+          } else {
+            btn.textContent = 'Failed';
+          }
+          setTimeout(() => { btn.textContent = '+ Create'; }, 2500);
+          loadWebhooks();
+        });
+
+        loadWebhooks();
+
+        // Load behavior insights async
+        (async () => {
+          try {
+            const [insightData, heatmapData] = await Promise.all([
+              fetch('/api/patterns/insights').then(r => r.json()).catch(() => ({ insights: [] })),
+              fetch('/api/patterns/heatmap').then(r => r.json()).catch(() => ({ heatmap: [], peakHours: [] })),
+            ]);
+            const insights = insightData.insights || [];
+            const heatmap = heatmapData.heatmap || [];
+            const peakHours = heatmapData.peakHours || [];
+            const countEl = document.getElementById('cc-bi-count');
+            if (countEl) countEl.textContent = insights.length + ' insights';
+
+            // Render heatmap
+            const hmContainer = document.getElementById('cc-bi-heatmap');
+            if (hmContainer && heatmap.length > 0) {
+              const maxVal = Math.max(1, ...heatmap.flat());
+              const dayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+              let hmHtml = '<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:8px">Activity Heatmap (14 days)</div>';
+              hmHtml += '<div style="display:grid;grid-template-columns:32px repeat(24,1fr);gap:2px;font-size:9px">';
+              // Hour header row
+              hmHtml += '<div></div>';
+              for (let h = 0; h < 24; h++) {
+                hmHtml += '<div style="text-align:center;color:var(--text-tertiary)">' + (h % 6 === 0 ? (h === 0 ? '12a' : h < 12 ? h + 'a' : h === 12 ? '12p' : (h-12) + 'p') : '') + '</div>';
+              }
+              // Data rows
+              for (let d = 0; d < 7; d++) {
+                hmHtml += '<div style="color:var(--text-tertiary);font-size:10px;display:flex;align-items:center">' + dayLabels[d] + '</div>';
+                for (let h = 0; h < 24; h++) {
+                  const val = (heatmap[d] || [])[h] || 0;
+                  const intensity = val / maxVal;
+                  const bg = intensity === 0 ? 'var(--bg-tertiary)' : 'rgba(207,188,255,' + (0.15 + intensity * 0.75) + ')';
+                  hmHtml += '<div style="aspect-ratio:1;border-radius:2px;background:' + bg + '" title="' + dayLabels[d] + ' ' + h + ':00 — ' + val + ' events"></div>';
+                }
+              }
+              hmHtml += '</div>';
+
+              // Peak hours
+              if (peakHours.length > 0) {
+                hmHtml += '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">';
+                peakHours.slice(0, 5).forEach((p, i) => {
+                  const opacity = 1 - i * 0.15;
+                  hmHtml += '<span style="font-size:11px;padding:2px 8px;border-radius:6px;background:rgba(207,188,255,' + (0.15 * opacity) + ');color:var(--accent);opacity:' + opacity + '">🔥 ' + p.label + ' (' + p.avgEvents + '/day)</span>';
+                });
+                hmHtml += '</div>';
+              }
+              hmContainer.innerHTML = hmHtml;
+            }
+
+            // Render insights
+            const biContainer = document.getElementById('cc-bi-insights');
+            if (biContainer) {
+              if (insights.length === 0) {
+                biContainer.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:12px 0">' +
+                  '<div style="font-size:24px;margin-bottom:4px;opacity:0.5"><span class="icon" style="font-size:24px">insights</span></div>' +
+                  '<div>Still learning your patterns. Insights appear after a few days of usage.</div></div>';
+              } else {
+                const catColors = { productivity: '#4ade80', communication: '#60a5fa', habit: '#c084fc', anomaly: '#facc15' };
+                const catIcons = { productivity: '', communication: '', habit: '', anomaly: '' };
+                biContainer.innerHTML = '<div style="display:grid;gap:6px">' +
+                  insights.map(i => {
+                    const clr = catColors[i.category] || '#888';
+                    const icon = catIcons[i.category] || '';
+                    const conf = Math.round(i.confidence * 100);
+                    return '<div style="padding:10px 14px;background:var(--bg-tertiary);border-radius:10px;border-left:3px solid ' + clr + '">' +
+                      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+                      '<div style="display:flex;align-items:center;gap:6px">' +
+                      '<span style="font-size:14px">' + icon + '</span>' +
+                      '<span style="font-size:13px;font-weight:600;color:var(--text-primary)">' + i.title + '</span>' +
+                      '<span style="font-size:10px;padding:1px 6px;border-radius:6px;background:' + clr + '15;color:' + clr + ';text-transform:uppercase;font-weight:700">' + i.category + '</span>' +
+                      '</div>' +
+                      '<span style="font-size:10px;color:var(--text-tertiary)">' + conf + '% conf</span>' +
+                      '</div>' +
+                      '<div style="font-size:12px;color:var(--text-secondary);margin-top:4px">' + i.description + '</div>' +
+                      '</div>';
+                  }).join('') + '</div>';
+              }
+            }
+          } catch {}
+        })();
+
+        // Load agent crews async
+        (async () => {
+          try {
+            const [pipeData, histData] = await Promise.all([
+              fetch('/api/crews/pipelines').then(r => r.json()).catch(() => ({ pipelines: [] })),
+              fetch('/api/crews/history').then(r => r.json()).catch(() => ({ history: [] })),
+            ]);
+            const pipelines = pipeData.pipelines || [];
+            const history = histData.history || [];
+            const countEl = document.getElementById('cc-crews-count');
+            if (countEl) countEl.textContent = pipelines.length + ' pipelines';
+
+            const container = document.getElementById('cc-crews-pipelines');
+            if (container) {
+              const icons = { 'Research & Report': '🔬', 'Email Triage': '📧', 'Code Review': '👨‍💻', 'Content Pipeline': '✍️' };
+              const colors = { 'Research & Report': '#60a5fa', 'Email Triage': '#4ade80', 'Code Review': '#c084fc', 'Content Pipeline': '#f97316' };
+              container.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:8px">' +
+                pipelines.map(p => {
+                  const icon = icons[p.name] || '';
+                  const clr = colors[p.name] || 'var(--accent)';
+                  return '<div style="padding:14px;background:var(--bg-tertiary);border-radius:10px;border-top:3px solid ' + clr + '">' +
+                    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+                    '<span style="font-size:18px">' + icon + '</span>' +
+                    '<div><div style="font-size:13px;font-weight:600;color:var(--text-primary)">' + p.name + '</div>' +
+                    '<div style="font-size:10px;color:var(--text-tertiary)">' + p.steps.length + ' steps · ' + p.errorStrategy + '</div></div>' +
+                    '</div>' +
+                    '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.4">' + p.description + '</div>' +
+                    '<div style="display:flex;gap:4px;margin-bottom:8px">' +
+                    p.steps.map((s, i) => '<span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(207,188,255,0.1);color:var(--text-tertiary)">' + (i+1) + '. ' + s.name + '</span>').join('') +
+                    '</div>' +
+                    '<button data-crew-run="' + p.id + '" data-crew-name="' + p.name + '" class="btn-primary" style="width:100%;font-size:12px;padding:6px">▶ Run Pipeline</button>' +
+                    '</div>';
+                }).join('') + '</div>';
+
+              // Wire run buttons
+              container.querySelectorAll('[data-crew-run]').forEach(btn => {
+                btn.addEventListener('click', async () => {
+                  const name = btn.getAttribute('data-crew-name');
+                  const input = prompt('Describe the task for the "' + name + '" pipeline:');
+                  if (!input) return;
+                  btn.textContent = 'Starting…';
+                  btn.disabled = true;
+                  const res = await fetch('/api/crews/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ pipelineId: btn.getAttribute('data-crew-run'), input }) }).then(r => r.json()).catch(() => null);
+                  if (res?.status === 'started') {
+                    btn.textContent = 'Running! (' + res.steps + ' steps)';
+                  } else {
+                    btn.textContent = 'Failed';
+                  }
+                  setTimeout(() => { btn.textContent = '▶ Run Pipeline'; btn.disabled = false; }, 3000);
+                });
+              });
+            }
+
+            // Render run history
+            const histContainer = document.getElementById('cc-crews-history');
+            if (histContainer && history.length > 0) {
+              const statusClrs = { completed: '#4ade80', failed: '#f87171', running: '#60a5fa' };
+              const statusIcons = { completed: '', failed: '', running: '' };
+              histContainer.innerHTML = '<div style="font-size:12px;font-weight:600;color:var(--text-secondary);margin-bottom:6px">Recent Runs</div>' +
+                history.slice(0, 5).map(r => {
+                  const clr = statusClrs[r.status] || '#888';
+                  const icon = statusIcons[r.status] || '';
+                  const time = new Date(r.startedAt).toLocaleString();
+                  const stepsCompleted = (r.steps || []).filter(s => s.status === 'completed').length;
+                  return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--bg-tertiary);border-radius:6px;margin-bottom:4px;font-size:12px">' +
+                    '<span>' + icon + '</span>' +
+                    '<span style="font-weight:500;color:var(--text-primary);flex-shrink:0">' + r.pipelineName + '</span>' +
+                    '<span style="color:' + clr + ';font-size:10px;flex-shrink:0">' + r.status + '</span>' +
+                    '<span style="color:var(--text-tertiary);font-size:10px">' + stepsCompleted + '/' + r.totalSteps + ' steps · ' + time + '</span>' +
+                    '</div>';
+                }).join('');
+            }
+          } catch {}
+        })();
+
         // Load background tasks async
         fetch('/api/tasks').then(r => r.json()).then(data => {
           const tasks = data.tasks || [];
@@ -5025,10 +5693,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
             return;
           }
           const statusColors = { queued: '#facc15', running: '#60a5fa', completed: '#4ade80', failed: '#f87171' };
-          const statusIcons = { queued: '⏳', running: '🔄', completed: '✅', failed: '❌' };
+          const statusIcons = { queued: '', running: '', completed: '', failed: '' };
           container.innerHTML = tasks.slice(0, 10).map(t => {
             const clr = statusColors[t.status] || '#888';
-            const icon = statusIcons[t.status] || '⬜';
+            const icon = statusIcons[t.status] || '';
             let card = '<div style="padding:10px 12px;background:var(--bg-tertiary);border-radius:10px;margin-bottom:6px;border-left:3px solid ' + clr + '">' +
               '<div style="display:flex;justify-content:space-between;align-items:center">' +
               '<div style="font-size:13px;color:var(--text-primary);font-weight:500">' + icon + ' ' + t.description.slice(0, 60) + '</div>' +
@@ -5126,7 +5794,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // Model Selector
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🤖</span> Active Model</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">smart_toy</span> Active Model</div>';
         const activeModel = (modelsData.active || {}).model || data.config?.model || '';
         const activeProvider = (modelsData.active || {}).provider || data.config?.provider || '';
         html += '<div style="margin-bottom:10px"><div style="font-size:12px;color:var(--text-tertiary);margin-bottom:4px">Provider</div><div style="font-size:14px;color:var(--text-primary);font-weight:500">' + activeProvider + '</div></div>';
@@ -5156,11 +5824,11 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // Configuration Panel — interactive controls
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">⚙️</span> Configuration</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">settings</span> Configuration</div>';
 
         // Heartbeat
         html += '<div style="margin-bottom:16px">';
-        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">💓 Heartbeat</div>';
+        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">Heartbeat</div>';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
         html += '<div style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="cfg-hb-enabled" ' + (data.config?.heartbeatEnabled ? 'checked' : '') + ' style="accent-color:var(--accent)"><label for="cfg-hb-enabled" style="font-size:13px;color:var(--text-secondary)">Enabled</label></div>';
         html += '<div><label style="font-size:12px;color:var(--text-tertiary);display:block;margin-bottom:3px">Interval (minutes)</label><input type="number" id="cfg-hb-interval" value="' + (data.config?.heartbeatInterval || 30) + '" min="5" max="1440" step="5" style="width:100%;padding:8px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none"></div>';
@@ -5168,7 +5836,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // Agent Behavior
         html += '<div style="margin-bottom:16px">';
-        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">🤖 Agent Behavior</div>';
+        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">Agent Behavior</div>';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
         html += '<div><label style="font-size:12px;color:var(--text-tertiary);display:block;margin-bottom:3px">Max Iterations</label><input type="number" id="cfg-max-iter" value="' + (data.config?.maxIterations || 25) + '" min="1" max="50" style="width:100%;padding:8px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none"></div>';
         const timeoutSec = Math.round((data.config?.timeoutMs || 300000) / 1000);
@@ -5177,7 +5845,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // Logging & Background
         html += '<div style="margin-bottom:16px">';
-        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">📋 Logging & Background</div>';
+        html += '<div style="font-weight:500;color:var(--text-primary);font-size:13px;margin-bottom:8px">Logging & Background</div>';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
         html += '<div><label style="font-size:12px;color:var(--text-tertiary);display:block;margin-bottom:3px">Log Level</label><select id="cfg-log-level" style="width:100%;padding:8px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:13px;outline:none">';
         ['debug','info','warn','error'].forEach(l => {
@@ -5212,24 +5880,24 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
         // Notification preferences
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-top:16px;margin-bottom:16px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🔔</span> Notification Preferences</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">notifications</span> Notification Preferences</div>';
         html += '<div id="notif-prefs-loading" style="color:var(--text-tertiary);font-size:13px">Loading…</div>';
         html += '</div>';
 
         // GitHub integration status
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">🐙</span> GitHub Integration</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">code</span> GitHub Integration</div>';
         const ghToken = data.config?.githubToken || '';
         if (ghToken) {
-          html += '<div style="font-size:13px;color:#4ade80">✅ GITHUB_TOKEN is set — GitHub tools are active</div>';
+          html += '<div style="font-size:13px;color:#4ade80"><span class="icon" style="font-size:16px;vertical-align:-3px;margin-right:4px">check_circle</span>GITHUB_TOKEN is set — GitHub tools are active</div>';
         } else {
-          html += '<div style="font-size:13px;color:var(--text-tertiary)">❌ GITHUB_TOKEN not set. Add <code>GITHUB_TOKEN=ghp_xxx</code> to your <code>.env</code> file to enable GitHub integration.</div>';
+          html += '<div style="font-size:13px;color:var(--text-tertiary)"><span class="icon" style="font-size:16px;vertical-align:-3px;margin-right:4px">cancel</span>GITHUB_TOKEN not set. Add <code>GITHUB_TOKEN=ghp_xxx</code> to your <code>.env</code> file to enable GitHub integration.</div>';
         }
         html += '</div>';
 
         // Scheduled Reports
         html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px">';
-        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span style="font-size:16px">📊</span> Scheduled Reports</div>';
+        html += '<div style="font-weight:600;color:var(--text-primary);margin-bottom:12px;font-size:14px;display:flex;align-items:center;gap:8px"><span class="icon icon-section">schedule_send</span> Scheduled Reports</div>';
         html += '<div id="reports-loading" style="color:var(--text-tertiary);font-size:13px">Loading…</div>';
         html += '</div>';
 
@@ -5250,7 +5918,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
           document.getElementById('np-save')?.addEventListener('click', async () => {
             const btn = document.getElementById('np-save');
-            btn.textContent = '⏳ Saving…';
+            btn.textContent = 'Saving…';
             await fetch('/api/notification-prefs', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -5261,7 +5929,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
                 batchDigest: document.getElementById('np-batch').checked,
               }),
             });
-            btn.textContent = '✅ Saved!';
+            btn.textContent = 'Saved!';
             setTimeout(() => { btn.textContent = 'Save Preferences'; }, 2000);
           });
         });
@@ -5293,9 +5961,9 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           container.querySelectorAll('[data-report-run]').forEach(btn => {
             btn.addEventListener('click', async () => {
               const id = btn.getAttribute('data-report-run');
-              btn.textContent = '⏳';
+              btn.textContent = '...';
               await fetch('/api/reports/run', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
-              btn.textContent = '✅ Sent!';
+              btn.textContent = 'Sent!';
               setTimeout(() => { btn.textContent = 'Run Now'; }, 2000);
             });
           });
@@ -5306,16 +5974,16 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           const val = document.getElementById('model-select').value;
           const [provider, model] = val.split('::');
           const btn = document.getElementById('switch-model-btn');
-          btn.textContent = '⏳';
+          btn.textContent = '...';
           await fetch('/api/models/switch', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ provider, model }) });
-          btn.textContent = '✅ Switched!';
+          btn.textContent = 'Switched!';
           setTimeout(() => { btn.textContent = 'Switch'; loadDashboard('settings'); }, 1500);
         });
 
         // Wire config save button
         document.getElementById('cfg-save-btn')?.addEventListener('click', async () => {
           const btn = document.getElementById('cfg-save-btn');
-          btn.textContent = '⏳ Saving…';
+          btn.textContent = 'Saving…';
           await fetch('/api/settings/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -5328,7 +5996,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
               backgroundModel: document.getElementById('cfg-bg-model').value,
             }),
           });
-          btn.textContent = '✅ Saved!';
+          btn.textContent = 'Saved!';
           setTimeout(() => { btn.textContent = 'Save Configuration'; }, 2000);
         });
 
@@ -5364,6 +6032,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           }
           if (!p.isDefault) {
             html += '<button class="edit-persona-btn" data-id="' + p.id + '" style="background:none;border:1px solid var(--border);color:var(--text-secondary);padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px">Edit</button>';
+            html += '<button class="dupe-persona-btn" data-id="' + p.id + '" style="background:none;border:1px solid var(--border);color:var(--text-secondary);padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px" title="Duplicate">Dupe</button>';
             html += '<button class="del-persona-btn" data-id="' + p.id + '" style="background:none;border:1px solid #f87171;color:#f87171;padding:3px 8px;border-radius:6px;cursor:pointer;font-size:11px">Del</button>';
           } else {
             html += '<span style="font-size:11px;color:var(--text-tertiary)">Default</span>';
@@ -5426,7 +6095,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         // Activate on card click
         dashboardView.querySelectorAll('.persona-card').forEach(card => {
           card.addEventListener('click', async (e) => {
-            if (e.target.closest('.edit-persona-btn') || e.target.closest('.del-persona-btn')) return;
+            if (e.target.closest('.edit-persona-btn') || e.target.closest('.del-persona-btn') || e.target.closest('.dupe-persona-btn')) return;
             await fetch('/api/personas/' + card.dataset.id + '/activate', { method: 'POST' });
             loadDashboard('personas');
           });
@@ -5447,6 +6116,26 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           });
         });
 
+        // Duplicate buttons
+        dashboardView.querySelectorAll('.dupe-persona-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const p = personas.find(x => x.id === btn.dataset.id);
+            if (!p) return;
+            btn.textContent = '...';
+            await fetch('/api/personas', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                name: p.name + ' (Copy)',
+                description: p.description || '',
+                soul: p.soulContent || '',
+                identity: p.identityContent || '',
+              }),
+            });
+            loadDashboard('personas');
+          });
+        });
+
         // Delete buttons
         dashboardView.querySelectorAll('.del-persona-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
@@ -5463,10 +6152,10 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const pbData = await fetch('/api/playbooks').then(r => r.json()).catch(() => ({ playbooks: [] }));
         const playbooks = pbData.playbooks || [];
 
-        let html = '<h2 style="color:var(--accent);margin-bottom:20px;display:flex;align-items:center;gap:10px">📋 Playbooks <span style="font-size:13px;color:var(--text-tertiary);font-weight:400">' + playbooks.length + ' available</span></h2>';
+        let html = '<h2 style="color:var(--accent);margin-bottom:20px;display:flex;align-items:center;gap:10px"><span class="icon" style="font-size:24px">menu_book</span> Playbooks <span style="font-size:13px;color:var(--text-tertiary);font-weight:400">' + playbooks.length + ' available</span></h2>';
 
         if (playbooks.length === 0) {
-          html += '<div style="text-align:center;padding:60px 20px;color:var(--text-tertiary)"><p style="font-size:48px;margin:0">📋</p><p style="font-size:15px;margin:8px 0">No playbooks yet</p><p style="font-size:13px">Add <code>.json</code> playbook files to <code>memory/playbooks/</code></p></div>';
+          html += '<div style="text-align:center;padding:60px 20px;color:var(--text-tertiary)"><div style="width:64px;height:64px;margin:0 auto 12px;background:var(--bg-tertiary);border-radius:16px;display:flex;align-items:center;justify-content:center"><span class="icon" style="font-size:28px;opacity:0.5">menu_book</span></div><p style="font-size:16px;margin:0 0 6px;color:var(--text-primary);font-weight:600">No playbooks yet</p><p style="font-size:13px;margin:0 0 16px;line-height:1.5;max-width:360px;margin-left:auto;margin-right:auto">Playbooks let you define multi-step workflows that Alice can run on command — briefings, reports, automations, and more.</p><button id="pbCopyPath" style="background:var(--accent);color:#131314;border:none;padding:10px 22px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:600;transition:opacity 0.2s">Copy Playbooks Path</button></div>';
         } else {
           html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">';
           playbooks.forEach(pb => {
@@ -5486,11 +6175,22 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         }
         dashboardView.innerHTML = html;
 
+        // Wire copy path button for empty playbooks state
+        const pbCopyBtn = document.getElementById('pbCopyPath');
+        if (pbCopyBtn) {
+          pbCopyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText('memory/playbooks/').then(() => {
+              pbCopyBtn.textContent = 'Path Copied!';
+              setTimeout(() => { pbCopyBtn.textContent = 'Copy Playbooks Path'; }, 2000);
+            });
+          });
+        }
+
         // Wire run buttons
         dashboardView.querySelectorAll('.pb-run-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
             const name = btn.dataset.name;
-            btn.textContent = '⏳ Running…';
+            btn.textContent = 'Running…';
             btn.disabled = true;
             try {
               const res = await fetch('/api/playbooks/' + name + '/run', {
@@ -5499,14 +6199,136 @@ const WEB_UI_HTML = `<!DOCTYPE html>
                 body: JSON.stringify({ context: {} }),
               });
               const result = await res.json();
-              btn.textContent = result.success ? '✅ Done' : '⚠️ Partial';
+              btn.textContent = result.success ? 'Done' : 'Partial';
               setTimeout(() => { btn.textContent = '▶ Run'; btn.disabled = false; }, 3000);
             } catch {
-              btn.textContent = '❌ Error';
+              btn.textContent = 'Error';
               setTimeout(() => { btn.textContent = '▶ Run'; btn.disabled = false; }, 3000);
             }
           });
         });
+      }
+
+      // ── Marketplace page ─────────────────────────────
+      else if (page === 'marketplace') {
+        let html = '<h2 style="color:var(--accent);margin-bottom:6px;display:flex;align-items:center;gap:10px"><span class="icon icon-section" style="font-size:24px">storefront</span> Marketplace</h2>';
+        html += '<p style="color:var(--text-tertiary);font-size:13px;margin-bottom:20px">Browse and install skills from the ClawHub registry. Vector search across hundreds of agent capabilities.</p>';
+
+        // Search bar
+        html += '<div style="display:flex;gap:10px;margin-bottom:20px">';
+        html += '<input id="mp-search" type="text" placeholder="Search skills… (e.g. automation, TDD, security)" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text-primary);font-size:14px;outline:none">';
+        html += '<button id="mp-search-btn" class="btn-primary" style="font-size:13px;padding:10px 20px;display:flex;align-items:center;gap:6px"><span class="icon icon--sm">search</span> Search</button>';
+        html += '</div>';
+
+        // Installed filter toggle
+        html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">';
+        html += '<span style="font-size:12px;color:var(--text-tertiary)">Filter:</span>';
+        html += '<button id="mp-filter-all" class="btn-primary" style="font-size:11px;padding:4px 12px">All</button>';
+        html += '<button id="mp-filter-installed" style="font-size:11px;padding:4px 12px;background:transparent;border:1px solid var(--border);border-radius:6px;color:var(--text-secondary);cursor:pointer">Installed</button>';
+        html += '</div>';
+
+        // Skills grid
+        html += '<div id="mp-results"><div style="color:var(--text-tertiary);font-size:13px;padding:20px;text-align:center"><span class="icon" style="font-size:32px;display:block;margin:0 auto 8px;opacity:0.3">hourglass_empty</span>Loading marketplace…</div></div>';
+
+        // Souls section
+        html += '<div style="margin-top:30px">';
+        html += '<h3 style="color:var(--text-primary);font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="icon icon-section" style="font-size:20px">psychology</span> Souls</h3>';
+        html += '<p style="color:var(--text-tertiary);font-size:12px;margin-bottom:12px">Agent personality templates — identity documents that define how an agent thinks, speaks, and behaves.</p>';
+        html += '<div id="mp-souls"><div style="color:var(--text-tertiary);font-size:12px">Loading…</div></div>';
+        html += '</div>';
+
+        // JavaScript for marketplace page
+        html += '<script>';
+        html += '(async () => {';
+        html += '  const esc = (s) => (s||"").replace(/&/g,"\\u0026amp;").replace(/</g,"\\u0026lt;").replace(/>/g,"\\u0026gt;").replace(/"/g,"\\u0026quot;");';
+        html += '  let allSkills = [];';
+        html += '  const container = document.getElementById("mp-results");';
+        html += '  const renderSkills = (items) => {';
+        html += '    if (!container) return;';
+        html += '    if (items.length === 0) { container.innerHTML = \'<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:30px"><span class="icon" style="font-size:40px;display:block;margin:0 auto 8px;opacity:0.3">search_off</span>No skills found</div>\'; return; }';
+        html += '    container.innerHTML = \'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">\' +';
+        html += '      items.map(s => {';
+        html += '        const installed = s.installed;';
+        html += '        const score = s.score ? " · " + s.score.toFixed(1) + " relevance" : "";';
+        html += '        const version = s.latestVersion?.version || s.version || "";';
+        html += '        const downloads = s.stats?.downloads || 0;';
+        html += '        const stars = s.stats?.stars || 0;';
+        html += '        const tagList = s.tags ? Object.keys(s.tags).filter(t => t !== "latest").slice(0, 5) : [];';
+        html += '        return \'<div data-mp-card="\' + esc(s.slug) + \'" style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;border-left:3px solid \' + (installed ? "#4ade80" : "var(--accent)") + \';transition:transform 0.15s,box-shadow 0.15s" onmouseover="this.style.transform=\\\'translateY(-2px)\\\';this.style.boxShadow=\\\'0 4px 12px rgba(0,0,0,0.2)\\\'" onmouseout="this.style.transform=\\\'\\\';this.style.boxShadow=\\\'\\\'">\\n\' +';
+        html += '          \'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">\\n\' +';
+        html += '          \'<span style="font-size:14px;font-weight:600;color:var(--text-primary)">\' + esc(s.displayName || s.slug) + \'</span>\\n\' +';
+        html += '          (installed ? \'<span style="font-size:10px;padding:3px 8px;border-radius:5px;background:rgba(74,222,128,0.12);color:#4ade80;font-weight:600;display:flex;align-items:center;gap:3px"><span class="icon" style="font-size:14px">check_circle</span>Installed</span>\' : "") +';
+        html += '          \'</div>\\n\' +';
+        html += '          \'<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">\' + esc(s.summary) + \'</div>\\n\' +';
+        html += '          \'<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">\' +';
+        html += '          tagList.map(t => \'<span style="font-size:10px;padding:2px 7px;border-radius:5px;background:rgba(207,188,255,0.08);color:var(--text-tertiary);border:1px solid rgba(207,188,255,0.1)">\' + esc(t) + \'</span>\').join("") +';
+        html += '          \'</div>\\n\' +';
+        html += '          \'<div style="display:flex;align-items:center;justify-content:space-between">\\n\' +';
+        html += '          \'<span style="font-size:11px;color:var(--text-tertiary)">\' + (version ? "v" + version : "") + (downloads > 0 ? " · " + downloads + " downloads" : "") + (stars > 0 ? " · " + stars + " stars" : "") + score + \'</span>\\n\' +';
+        html += '          (installed ? "" : \'<button data-mp-install="\' + esc(s.slug) + \'" class="btn-primary" style="font-size:11px;padding:6px 14px;display:flex;align-items:center;gap:4px"><span class="icon" style="font-size:16px">download</span> Install</button>\') +';
+        html += '          \'</div></div>\';';
+        html += '      }).join("") + \'</div>\';';
+        html += '    container.querySelectorAll("[data-mp-install]").forEach(btn => {';
+        html += '      btn.addEventListener("click", async () => {';
+        html += '        const slug = btn.getAttribute("data-mp-install");';
+        html += '        btn.innerHTML = \'<span class="icon" style="font-size:16px">hourglass_empty</span> Installing…\';';
+        html += '        btn.disabled = true;';
+        html += '        const res = await fetch("/api/clawhub/install", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ slug }) }).then(r => r.json()).catch(() => null);';
+        html += '        if (res?.success) {';
+        html += '          btn.innerHTML = \'<span class="icon" style="font-size:16px">check_circle</span> Installed!\';';
+        html += '          const card = document.querySelector(\'[data-mp-card="\' + slug + \'"]\');';
+        html += '          if (card) card.style.borderLeftColor = "#4ade80";';
+        html += '          const skill = allSkills.find(s => s.slug === slug);';
+        html += '          if (skill) skill.installed = true;';
+        html += '        } else {';
+        html += '          btn.innerHTML = \'<span class="icon" style="font-size:16px">error</span> \' + (res?.error || "Failed");';
+        html += '        }';
+        html += '        setTimeout(() => { btn.innerHTML = \'<span class="icon" style="font-size:16px">download</span> Install\'; btn.disabled = false; }, 3000);';
+        html += '      });';
+        html += '    });';
+        html += '  };';
+
+        html += '  const skillData = await fetch("/api/clawhub/skills").then(r => r.json()).catch(() => ({ items: [] }));';
+        html += '  allSkills = skillData.items || [];';
+        html += '  renderSkills(allSkills);';
+
+        // Search handler
+        html += '  const searchInput = document.getElementById("mp-search");';
+        html += '  const searchBtn = document.getElementById("mp-search-btn");';
+        html += '  const doSearch = async () => {';
+        html += '    const q = searchInput?.value?.trim();';
+        html += '    if (!q) { renderSkills(allSkills); return; }';
+        html += '    container.innerHTML = \'<div style="color:var(--text-tertiary);font-size:13px;padding:20px;text-align:center"><span class="icon" style="font-size:32px;display:block;margin:0 auto 8px;opacity:0.3">hourglass_empty</span>Searching…</div>\';';
+        html += '    const res = await fetch("/api/clawhub/search?q=" + encodeURIComponent(q)).then(r => r.json()).catch(() => ({ results: [] }));';
+        html += '    renderSkills(res.results || []);';
+        html += '  };';
+        html += '  if (searchBtn) searchBtn.addEventListener("click", doSearch);';
+        html += '  if (searchInput) searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });';
+
+        // Filter buttons
+        html += '  const filterAll = document.getElementById("mp-filter-all");';
+        html += '  const filterInstalled = document.getElementById("mp-filter-installed");';
+        html += '  if (filterAll) filterAll.addEventListener("click", () => { renderSkills(allSkills); filterAll.classList.add("btn-primary"); filterAll.style.background=""; filterInstalled.classList.remove("btn-primary"); filterInstalled.style.background="transparent"; });';
+        html += '  if (filterInstalled) filterInstalled.addEventListener("click", () => { renderSkills(allSkills.filter(s => s.installed)); filterInstalled.classList.add("btn-primary"); filterInstalled.style.background=""; filterAll.classList.remove("btn-primary"); filterAll.style.background="transparent"; });';
+
+        // Load souls
+        html += '  const soulsData = await fetch("/api/clawhub/souls").then(r => r.json()).catch(() => ({ souls: [] }));';
+        html += '  const soulsContainer = document.getElementById("mp-souls");';
+        html += '  if (soulsContainer && soulsData.souls?.length > 0) {';
+        html += '    soulsContainer.innerHTML = \'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">\' +';
+        html += '      soulsData.souls.map(s => {';
+        html += '        return \'<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;border-left:3px solid #c084fc;transition:transform 0.15s" onmouseover="this.style.transform=\\\'translateY(-1px)\\\'" onmouseout="this.style.transform=\\\'\\\'">\' +';
+        html += '          \'<div style="font-size:14px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:6px"><span class="icon icon--filled" style="font-size:18px;color:#c084fc">psychology</span>\' + esc(s.displayName) + \'</div>\' +';
+        html += '          \'<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;line-height:1.4">\' + esc(s.summary) + \'</div>\' +';
+        html += '          \'<div style="font-size:10px;color:var(--text-tertiary);margin-top:6px">v\' + esc(s.latestVersion?.version) + \' · \' + (s.stats?.stars || 0) + \' stars</div></div>\';';
+        html += '      }).join("") + \'</div>\';';
+        html += '  } else if (soulsContainer) {';
+        html += '    soulsContainer.innerHTML = \'<div style="color:var(--text-tertiary);font-size:12px">No souls available.</div>\';';
+        html += '  }';
+        html += '})();';
+        html += '<\\/script>';
+
+        mainContent.innerHTML = html;
       }
 
       // ── Knowledge Base page ─────────────────────────────
@@ -5515,7 +6337,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         const entries = kbData.entries || [];
         const stats = kbData.stats || { total: 0, byType: {} };
 
-        let html = '<h2 style="color:var(--accent);margin-bottom:20px;display:flex;align-items:center;gap:10px">🧠 Knowledge Base <span style="font-size:13px;color:var(--text-tertiary);font-weight:400">' + stats.total + ' entries</span></h2>';
+        let html = '<h2 style="color:var(--accent);margin-bottom:20px;display:flex;align-items:center;gap:10px"><span class="icon" style="font-size:24px">school</span> Knowledge Base <span style="font-size:13px;color:var(--text-tertiary);font-weight:400">' + stats.total + ' entries</span></h2>';
 
         // Stats + type breakdown
         const typeEntries = Object.entries(stats.byType || {});
@@ -5549,7 +6371,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         // Entry list
         html += '<div id="kb-entries">';
         if (entries.length === 0) {
-          html += '<div style="text-align:center;padding:40px;color:var(--text-tertiary)"><p style="font-size:40px;margin:0">🧠</p><p>No entries yet. Add knowledge via chat or the form above.</p></div>';
+          html += '<div style="text-align:center;padding:40px;color:var(--text-tertiary)"><p style="margin:0"><span class="icon" style="font-size:40px;opacity:0.3;display:block;margin:0 auto 8px">school</span></p><p>No entries yet. Add knowledge via chat or the form above.</p></div>';
         } else {
           entries.forEach(e => {
             const tags = (e.tags || []).map(t => '<span style="font-size:11px;background:var(--bg-tertiary);color:var(--text-tertiary);padding:1px 6px;border-radius:4px">' + t + '</span>').join(' ');
@@ -5679,7 +6501,7 @@ function renderSessions(sessions, activeId, summaryMap) {
         + (summary ? '<div style="font-size:11px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px">' + summary + '</div>' : '')
         + '</div>'
         + '<div style="display:flex;gap:2px;align-items:center;flex-shrink:0">'
-        + '<button class="sidebar-item-export" data-id="' + s.id + '" title="Export as Markdown" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:2px 4px;font-size:13px;opacity:0.6;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6">⬇</button>'
+        + '<button class="sidebar-item-export" data-id="' + s.id + '" title="Export as Markdown" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;padding:2px 4px;font-size:13px;opacity:0.6;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6"><span class="icon" style="font-size:16px">download</span></button>'
         + '<button class="sidebar-item-delete" data-id="' + s.id + '" title="Delete">\u00d7</button>'
         + '</div>'
         + '</div>';
@@ -6350,7 +7172,7 @@ if ('serviceWorker' in navigator) {
               var bar = document.createElement('div');
               bar.id = 'deep-research-progress';
               bar.className = 'deep-research-bar';
-              bar.innerHTML = '🔬 <span>Deep Research in progress… <span id="dr-elapsed">0s</span></span>' +
+              bar.innerHTML = '<span class="icon" style="font-size:16px;vertical-align:-3px">biotech</span> <span>Deep Research in progress… <span id="dr-elapsed">0s</span></span>' +
                 '<div class="progress-track"><div class="progress-fill"></div></div>';
               chatArea.appendChild(bar);
               chatArea.scrollTop = chatArea.scrollHeight;

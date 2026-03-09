@@ -1037,7 +1037,7 @@ export function toGeminiFunctionDeclarations() {
         'keep_list', 'keep_create', 'meet_create', 'forms_responses',
         'standup_report', 'meeting_prep', 'email_to_task', 'weekly_digest', 'file_announce',
         'drive_download', 'sheets_write', 'docs_append', 'workspace_search', 'workspace_pipeline',
-        'list_playbooks', 'run_playbook', 'deep_research',
+        'list_playbooks', 'run_playbook',
         'find_free_time', 'schedule_meeting', 'time_block', 'meeting_cost',
         'generate_document', 'brief_person', 'relationship_health',
         'analyze_image', 'analyze_screenshot', 'time_analysis',

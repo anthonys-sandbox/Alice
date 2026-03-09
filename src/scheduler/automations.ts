@@ -9,7 +9,7 @@ const log = createLogger('Automations');
 
 // ── Types ───────────────────────────────────────────────────
 
-export type TriggerType = 'on_cron' | 'on_keyword' | 'on_file_change' | 'on_schedule';
+export type TriggerType = 'on_cron' | 'on_keyword' | 'on_file_change' | 'on_schedule' | 'on_webhook';
 
 export interface AutomationRule {
     id: string;

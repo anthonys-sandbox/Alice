@@ -1072,32 +1072,8 @@ export class Agent {
             },
         });
 
-        // ── Deep Research ───────────────────────────────────────
-        registerTool({
-            name: 'deep_research',
-            description: 'Perform deep multi-source research on a topic. Generates sub-queries, searches the web in parallel, fetches and reads sources, then synthesizes a comprehensive summary with citations. Use for thorough research tasks.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    query: { type: 'string', description: 'Research question or topic' },
-                    max_sources: { type: 'number', description: 'Max sources to fetch (default 8)' },
-                    save_to_memory: { type: 'boolean', description: 'Save findings to memory (default false)' },
-                },
-                required: ['query'],
-            },
-            execute: async (args: any) => {
-                const result = await deepResearch(args.query, this, {
-                    maxSources: args.max_sources,
-                    saveToMemory: args.save_to_memory,
-                });
-                return JSON.stringify({
-                    summary: result.summary,
-                    sources: result.sources,
-                    subQueries: result.subQueries,
-                    duration: `${result.duration}ms`,
-                }, null, 2);
-            },
-        });
+        // NOTE: deep_research is already registered above (line ~834) using Gemini Interactions API.
+        // Do NOT add a second registration here — it causes "Duplicate function declaration" errors.
 
         // ── Smart Scheduling ────────────────────────────────────
         registerTool({
