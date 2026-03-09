@@ -4653,6 +4653,13 @@ const WEB_UI_HTML = `<!DOCTYPE html>
       document.querySelector('.input-wrapper').style.display = 'none';
       dashboardView.style.display = '';
       dashboardView.innerHTML = html;
+      // Scripts injected via innerHTML don't execute — re-create them as proper DOM script elements
+      dashboardView.querySelectorAll('script').forEach(oldScript => {
+        const newScript = document.createElement('script');
+        if (oldScript.src) { newScript.src = oldScript.src; }
+        else { newScript.textContent = oldScript.textContent; }
+        oldScript.parentNode.replaceChild(newScript, oldScript);
+      });
     }
 
     async function loadDashboard(page) {
@@ -6232,16 +6239,77 @@ const WEB_UI_HTML = `<!DOCTYPE html>
 
       // ── Marketplace page ─────────────────────────────
       else if (page === 'marketplace') {
+        const mpEsc = (s) => (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+        // Fetch skills and souls in parallel
+        const [skillData, soulsData] = await Promise.all([
+          fetch('/api/clawhub/skills').then(r => r.json()).catch(() => ({ items: [] })),
+          fetch('/api/clawhub/souls').then(r => r.json()).catch(() => ({ souls: [] })),
+        ]);
+        const allSkills = skillData.items || [];
+        const allSouls = soulsData.souls || [];
+
+        // Helper: render a skill card
+        const renderCard = (s) => {
+          const installed = s.installed;
+          const version = s.latestVersion?.version || s.version || '';
+          const downloads = s.stats?.downloads || 0;
+          const stars = s.stats?.stars || 0;
+          const score = s.score ? ' &middot; ' + s.score.toFixed(1) + ' relevance' : '';
+          const tagList = s.tags ? Object.keys(s.tags).filter(t => t !== 'latest').slice(0, 5) : [];
+          const borderColor = installed ? '#4ade80' : 'var(--accent)';
+          const tagsHtml = tagList.map(t =>
+            '<span style="font-size:10px;padding:2px 7px;border-radius:5px;background:rgba(207,188,255,0.08);color:var(--text-tertiary);border:1px solid rgba(207,188,255,0.1)">' + mpEsc(t) + '</span>'
+          ).join('');
+          const installedBadge = installed
+            ? '<span style="font-size:10px;padding:3px 8px;border-radius:5px;background:rgba(74,222,128,0.12);color:#4ade80;font-weight:600;display:flex;align-items:center;gap:3px"><span class="icon" style="font-size:14px">check_circle</span>Installed</span>'
+            : '';
+          const installBtn = installed
+            ? ''
+            : '<button data-mp-install="' + mpEsc(s.slug) + '" class="btn-primary" style="font-size:11px;padding:6px 14px;display:flex;align-items:center;gap:4px"><span class="icon" style="font-size:16px">download</span> Install</button>';
+          const meta = (version ? 'v' + version : '') + (downloads > 0 ? ' &middot; ' + downloads + ' downloads' : '') + (stars > 0 ? ' &middot; ' + stars + ' stars' : '') + score;
+
+          return '<div data-mp-card="' + mpEsc(s.slug) + '" style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;border-left:3px solid ' + borderColor + ';transition:transform 0.15s,box-shadow 0.15s;cursor:default">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'
+            + '<span style="font-size:14px;font-weight:600;color:var(--text-primary)">' + mpEsc(s.displayName || s.slug) + '</span>'
+            + installedBadge
+            + '</div>'
+            + '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">' + mpEsc(s.summary) + '</div>'
+            + '<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">' + tagsHtml + '</div>'
+            + '<div style="display:flex;align-items:center;justify-content:space-between">'
+            + '<span style="font-size:11px;color:var(--text-tertiary)">' + meta + '</span>'
+            + installBtn
+            + '</div></div>';
+        };
+
+        // Helper: render a soul card
+        const renderSoulCard = (s) => {
+          return '<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;border-left:3px solid #c084fc;transition:transform 0.15s">'
+            + '<div style="font-size:14px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:6px"><span class="icon icon--filled" style="font-size:18px;color:#c084fc">psychology</span>' + mpEsc(s.displayName) + '</div>'
+            + '<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;line-height:1.4">' + mpEsc(s.summary) + '</div>'
+            + '<div style="font-size:10px;color:var(--text-tertiary);margin-top:6px">v' + mpEsc(s.latestVersion?.version || '') + ' &middot; ' + (s.stats?.stars || 0) + ' stars</div></div>';
+        };
+
+        // Build skills grid
+        const skillsGrid = allSkills.length > 0
+          ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">' + allSkills.map(renderCard).join('') + '</div>'
+          : '<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:30px"><span class="icon" style="font-size:40px;display:block;margin:0 auto 8px;opacity:0.3">search_off</span>No skills found</div>';
+
+        // Build souls grid
+        const soulsGrid = allSouls.length > 0
+          ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">' + allSouls.map(renderSoulCard).join('') + '</div>'
+          : '<div style="color:var(--text-tertiary);font-size:12px">No souls available.</div>';
+
         let html = '<h2 style="color:var(--accent);margin-bottom:6px;display:flex;align-items:center;gap:10px"><span class="icon icon-section" style="font-size:24px">storefront</span> Marketplace</h2>';
         html += '<p style="color:var(--text-tertiary);font-size:13px;margin-bottom:20px">Browse and install skills from the ClawHub registry. Vector search across hundreds of agent capabilities.</p>';
 
         // Search bar
         html += '<div style="display:flex;gap:10px;margin-bottom:20px">';
-        html += '<input id="mp-search" type="text" placeholder="Search skills… (e.g. automation, TDD, security)" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text-primary);font-size:14px;outline:none">';
+        html += '<input id="mp-search" type="text" placeholder="Search skills\u2026 (e.g. automation, TDD, security)" style="flex:1;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text-primary);font-size:14px;outline:none">';
         html += '<button id="mp-search-btn" class="btn-primary" style="font-size:13px;padding:10px 20px;display:flex;align-items:center;gap:6px"><span class="icon icon--sm">search</span> Search</button>';
         html += '</div>';
 
-        // Installed filter toggle
+        // Filter buttons
         html += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">';
         html += '<span style="font-size:12px;color:var(--text-tertiary)">Filter:</span>';
         html += '<button id="mp-filter-all" class="btn-primary" style="font-size:11px;padding:4px 12px">All</button>';
@@ -6249,107 +6317,74 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '</div>';
 
         // Skills grid
-        html += '<div id="mp-results"><div style="color:var(--text-tertiary);font-size:13px;padding:20px;text-align:center"><span class="icon" style="font-size:32px;display:block;margin:0 auto 8px;opacity:0.3">hourglass_empty</span>Loading marketplace…</div></div>';
+        html += '<div id="mp-results">' + skillsGrid + '</div>';
 
         // Souls section
         html += '<div style="margin-top:30px">';
         html += '<h3 style="color:var(--text-primary);font-size:16px;margin-bottom:12px;display:flex;align-items:center;gap:8px"><span class="icon icon-section" style="font-size:20px">psychology</span> Souls</h3>';
-        html += '<p style="color:var(--text-tertiary);font-size:12px;margin-bottom:12px">Agent personality templates — identity documents that define how an agent thinks, speaks, and behaves.</p>';
-        html += '<div id="mp-souls"><div style="color:var(--text-tertiary);font-size:12px">Loading…</div></div>';
+        html += '<p style="color:var(--text-tertiary);font-size:12px;margin-bottom:12px">Agent personality templates \u2014 identity documents that define how an agent thinks, speaks, and behaves.</p>';
+        html += '<div id="mp-souls">' + soulsGrid + '</div>';
         html += '</div>';
 
-        // JavaScript for marketplace page
-        html += '<script>';
-        html += '(async () => {';
-        html += '  const esc = (s) => (s||"").replace(/&/g,"\\u0026amp;").replace(/</g,"\\u0026lt;").replace(/>/g,"\\u0026gt;").replace(/"/g,"\\u0026quot;");';
-        html += '  let allSkills = [];';
-        html += '  const container = document.getElementById("mp-results");';
-        html += '  const renderSkills = (items) => {';
-        html += '    if (!container) return;';
-        html += '    if (items.length === 0) { container.innerHTML = \\x27<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:30px"><span class="icon" style="font-size:40px;display:block;margin:0 auto 8px;opacity:0.3">search_off</span>No skills found</div>\\x27; return; }';
-        html += '    container.innerHTML = \\x27<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">\\x27 +';
-        html += '      items.map(s => {';
-        html += '        const installed = s.installed;';
-        html += '        const score = s.score ? " · " + s.score.toFixed(1) + " relevance" : "";';
-        html += '        const version = s.latestVersion?.version || s.version || "";';
-        html += '        const downloads = s.stats?.downloads || 0;';
-        html += '        const stars = s.stats?.stars || 0;';
-        html += '        const tagList = s.tags ? Object.keys(s.tags).filter(t => t !== "latest").slice(0, 5) : [];';
-        html += '        return \\x27<div data-mp-card="\\x27 + esc(s.slug) + \\x27" style="padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;border-left:3px solid \\x27 + (installed ? "#4ade80" : "var(--accent)") + \\x27;transition:transform 0.15s,box-shadow 0.15s" onmouseover="this.style.transform=\\\\x27translateY(-2px)\\\\x27;this.style.boxShadow=\\\\x270 4px 12px rgba(0,0,0,0.2)\\\\x27" onmouseout="this.style.transform=\\\\x27\\\\x27;this.style.boxShadow=\\\\x27\\\\x27">\\n\\x27 +';
-        html += '          \\x27<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">\\n\\x27 +';
-        html += '          \\x27<span style="font-size:14px;font-weight:600;color:var(--text-primary)">\\x27 + esc(s.displayName || s.slug) + \\x27</span>\\n\\x27 +';
-        html += '          (installed ? \\x27<span style="font-size:10px;padding:3px 8px;border-radius:5px;background:rgba(74,222,128,0.12);color:#4ade80;font-weight:600;display:flex;align-items:center;gap:3px"><span class="icon" style="font-size:14px">check_circle</span>Installed</span>\\x27 : "") +';
-        html += '          \\x27</div>\\n\\x27 +';
-        html += '          \\x27<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">\\x27 + esc(s.summary) + \\x27</div>\\n\\x27 +';
-        html += '          \\x27<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">\\x27 +';
-        html += '          tagList.map(t => \\x27<span style="font-size:10px;padding:2px 7px;border-radius:5px;background:rgba(207,188,255,0.08);color:var(--text-tertiary);border:1px solid rgba(207,188,255,0.1)">\\x27 + esc(t) + \\x27</span>\\x27).join("") +';
-        html += '          \\x27</div>\\n\\x27 +';
-        html += '          \\x27<div style="display:flex;align-items:center;justify-content:space-between">\\n\\x27 +';
-        html += '          \\x27<span style="font-size:11px;color:var(--text-tertiary)">\\x27 + (version ? "v" + version : "") + (downloads > 0 ? " · " + downloads + " downloads" : "") + (stars > 0 ? " · " + stars + " stars" : "") + score + \\x27</span>\\n\\x27 +';
-        html += '          (installed ? "" : \\x27<button data-mp-install="\\x27 + esc(s.slug) + \\x27" class="btn-primary" style="font-size:11px;padding:6px 14px;display:flex;align-items:center;gap:4px"><span class="icon" style="font-size:16px">download</span> Install</button>\\x27) +';
-        html += '          \\x27</div></div>\\x27;';
-        html += '      }).join("") + \\x27</div>\\x27;';
-        html += '    container.querySelectorAll("[data-mp-install]").forEach(btn => {';
-        html += '      btn.addEventListener("click", async () => {';
-        html += '        const slug = btn.getAttribute("data-mp-install");';
-        html += '        btn.innerHTML = \\x27<span class="icon" style="font-size:16px">hourglass_empty</span> Installing…\\x27;';
-        html += '        btn.disabled = true;';
-        html += '        const res = await fetch("/api/clawhub/install", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ slug }) }).then(r => r.json()).catch(() => null);';
-        html += '        if (res?.success) {';
-        html += '          btn.innerHTML = \\x27<span class="icon" style="font-size:16px">check_circle</span> Installed!\\x27;';
-        html += '          const card = document.querySelector(\\x27[data-mp-card="\\x27 + slug + \\x27"]\\x27);';
-        html += '          if (card) card.style.borderLeftColor = "#4ade80";';
-        html += '          const skill = allSkills.find(s => s.slug === slug);';
-        html += '          if (skill) skill.installed = true;';
-        html += '        } else {';
-        html += '          btn.innerHTML = \\x27<span class="icon" style="font-size:16px">error</span> \\x27 + (res?.error || "Failed");';
-        html += '        }';
-        html += '        setTimeout(() => { btn.innerHTML = \\x27<span class="icon" style="font-size:16px">download</span> Install\\x27; btn.disabled = false; }, 3000);';
-        html += '      });';
-        html += '    });';
-        html += '  };';
-
-        html += '  const skillData = await fetch("/api/clawhub/skills").then(r => r.json()).catch(() => ({ items: [] }));';
-        html += '  allSkills = skillData.items || [];';
-        html += '  renderSkills(allSkills);';
-
-        // Search handler
-        html += '  const searchInput = document.getElementById("mp-search");';
-        html += '  const searchBtn = document.getElementById("mp-search-btn");';
-        html += '  const doSearch = async () => {';
-        html += '    const q = searchInput?.value?.trim();';
-        html += '    if (!q) { renderSkills(allSkills); return; }';
-        html += '    container.innerHTML = \\x27<div style="color:var(--text-tertiary);font-size:13px;padding:20px;text-align:center"><span class="icon" style="font-size:32px;display:block;margin:0 auto 8px;opacity:0.3">hourglass_empty</span>Searching…</div>\\x27;';
-        html += '    const res = await fetch("/api/clawhub/search?q=" + encodeURIComponent(q)).then(r => r.json()).catch(() => ({ results: [] }));';
-        html += '    renderSkills(res.results || []);';
-        html += '  };';
-        html += '  if (searchBtn) searchBtn.addEventListener("click", doSearch);';
-        html += '  if (searchInput) searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });';
-
-        // Filter buttons
-        html += '  const filterAll = document.getElementById("mp-filter-all");';
-        html += '  const filterInstalled = document.getElementById("mp-filter-installed");';
-        html += '  if (filterAll) filterAll.addEventListener("click", () => { renderSkills(allSkills); filterAll.classList.add("btn-primary"); filterAll.style.background=""; filterInstalled.classList.remove("btn-primary"); filterInstalled.style.background="transparent"; });';
-        html += '  if (filterInstalled) filterInstalled.addEventListener("click", () => { renderSkills(allSkills.filter(s => s.installed)); filterInstalled.classList.add("btn-primary"); filterInstalled.style.background=""; filterAll.classList.remove("btn-primary"); filterAll.style.background="transparent"; });';
-
-        // Load souls
-        html += '  const soulsData = await fetch("/api/clawhub/souls").then(r => r.json()).catch(() => ({ souls: [] }));';
-        html += '  const soulsContainer = document.getElementById("mp-souls");';
-        html += '  if (soulsContainer && soulsData.souls?.length > 0) {';
-        html += '    soulsContainer.innerHTML = \\x27<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">\\x27 +';
-        html += '      soulsData.souls.map(s => {';
-        html += '        return \\x27<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:12px;border-left:3px solid #c084fc;transition:transform 0.15s" onmouseover="this.style.transform=\\\\x27translateY(-1px)\\\\x27" onmouseout="this.style.transform=\\\\x27\\\\x27">\\x27 +';
-        html += '          \\x27<div style="font-size:14px;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:6px"><span class="icon icon--filled" style="font-size:18px;color:#c084fc">psychology</span>\\x27 + esc(s.displayName) + \\x27</div>\\x27 +';
-        html += '          \\x27<div style="font-size:12px;color:var(--text-secondary);margin-top:4px;line-height:1.4">\\x27 + esc(s.summary) + \\x27</div>\\x27 +';
-        html += '          \\x27<div style="font-size:10px;color:var(--text-tertiary);margin-top:6px">v\\x27 + esc(s.latestVersion?.version) + \\x27 · \\x27 + (s.stats?.stars || 0) + \\x27 stars</div></div>\\x27;';
-        html += '      }).join("") + \\x27</div>\\x27;';
-        html += '  } else if (soulsContainer) {';
-        html += '    soulsContainer.innerHTML = \\x27<div style="color:var(--text-tertiary);font-size:12px">No souls available.</div>\\x27;';
-        html += '  }';
-        html += '})();';
-        html += '<\\/script>';
-
         showDashboardView(html);
+
+        // Wire up install buttons
+        function wireInstalls() {
+          document.querySelectorAll('[data-mp-install]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+              const slug = btn.getAttribute('data-mp-install');
+              btn.innerHTML = '<span class="icon" style="font-size:16px">hourglass_empty</span> Installing\u2026';
+              btn.disabled = true;
+              const installRes = await fetch('/api/clawhub/install', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ slug }) }).then(r => r.json()).catch(() => null);
+              if (installRes?.success) {
+                btn.innerHTML = '<span class="icon" style="font-size:16px">check_circle</span> Installed!';
+                const card = document.querySelector('[data-mp-card="' + slug + '"]');
+                if (card) card.style.borderLeftColor = '#4ade80';
+              } else {
+                btn.innerHTML = '<span class="icon" style="font-size:16px">error</span> ' + (installRes?.error || 'Failed');
+              }
+              setTimeout(() => { btn.innerHTML = '<span class="icon" style="font-size:16px">download</span> Install'; btn.disabled = false; }, 3000);
+            });
+          });
+        }
+        wireInstalls();
+
+        // Wire up search
+        const searchInput = document.getElementById('mp-search');
+        const searchBtn = document.getElementById('mp-search-btn');
+        const mpContainer = document.getElementById('mp-results');
+        const doSearch = async () => {
+          const q = searchInput?.value?.trim();
+          if (!q) { mpContainer.innerHTML = skillsGrid; wireInstalls(); return; }
+          mpContainer.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px;padding:20px;text-align:center"><span class="icon" style="font-size:32px;display:block;margin:0 auto 8px;opacity:0.3">hourglass_empty</span>Searching\u2026</div>';
+          const searchRes = await fetch('/api/clawhub/search?q=' + encodeURIComponent(q)).then(r => r.json()).catch(() => ({ results: [] }));
+          const results = searchRes.results || [];
+          mpContainer.innerHTML = results.length > 0
+            ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">' + results.map(renderCard).join('') + '</div>'
+            : '<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:30px"><span class="icon" style="font-size:40px;display:block;margin:0 auto 8px;opacity:0.3">search_off</span>No skills found</div>';
+          wireInstalls();
+        };
+        if (searchBtn) searchBtn.addEventListener('click', doSearch);
+        if (searchInput) searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+
+        // Wire up filter buttons
+        const filterAll = document.getElementById('mp-filter-all');
+        const filterInstalled = document.getElementById('mp-filter-installed');
+        if (filterAll) filterAll.addEventListener('click', () => {
+          mpContainer.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">' + allSkills.map(renderCard).join('') + '</div>';
+          wireInstalls();
+          filterAll.classList.add('btn-primary'); filterAll.style.background = '';
+          filterInstalled.classList.remove('btn-primary'); filterInstalled.style.background = 'transparent';
+        });
+        if (filterInstalled) filterInstalled.addEventListener('click', () => {
+          const installed = allSkills.filter(s => s.installed);
+          mpContainer.innerHTML = installed.length > 0
+            ? '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">' + installed.map(renderCard).join('') + '</div>'
+            : '<div style="color:var(--text-tertiary);font-size:13px;text-align:center;padding:30px"><span class="icon" style="font-size:40px;display:block;margin:0 auto 8px;opacity:0.3">search_off</span>No installed skills</div>';
+          wireInstalls();
+          filterInstalled.classList.add('btn-primary'); filterInstalled.style.background = '';
+          filterAll.classList.remove('btn-primary'); filterAll.style.background = 'transparent';
+        });
       }
 
       // ── Knowledge Base page ─────────────────────────────
