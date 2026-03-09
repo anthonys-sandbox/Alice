@@ -6349,7 +6349,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
         html += '})();';
         html += '<\\/script>';
 
-        mainContent.innerHTML = html;
+        showDashboardView(html);
       }
 
       // ── Knowledge Base page ─────────────────────────────
