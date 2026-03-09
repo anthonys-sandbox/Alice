@@ -48,7 +48,16 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 - 🌐 **Persistent browser** — Chromium with saved cookies and login sessions across restarts
 - 📍 **Location services** — Alice can request your device location for weather, directions, etc.
 - 🖥️ **Activity console** — live backend visibility panel showing LLM calls, tool usage, rate limits, errors, and timing
-- 📊 **Mission Control dashboard** — Command Center (system health, quick actions, cron jobs), Tools & Plugins (categorized + searchable), Memory (search + CRUD), Reminders (create/delete), Connections (providers + MCP servers with tool counts), Settings (runtime model switching)
+- 📊 **Mission Control dashboard** — Command Center, Integrations, Memory, Playbooks, Personas, Marketplace, Settings (see [Dashboard](#mission-control-dashboard))
+- ⚡ **Automations** — event-driven rules Alice executes automatically (e.g., "Every weekday at 9am, send me a summary of unread emails")
+- 🔗 **Webhooks** — inbound HTTP endpoints (Generic, GitHub, Slack) that trigger Alice actions
+- 🤖 **Agent Crews** — multi-step pipelines that chain sub-agents (Research & Report, Email Triage, Code Review, Content Pipeline)
+- 📓 **Playbooks** — step-by-step automated workflows with conditional logic, parallel steps, and human-approval gates
+- 🎭 **Personas** — switchable personality profiles that change Alice's tone and behavior
+- 🧪 **Pattern Mining** — behavioral analysis that discovers usage patterns, generates insights, and provides time analytics
+- 📧 **Email Watcher** — automatic inbox monitoring with configurable triage and notifications
+- 📅 **Meeting Prep** — automatic pre-meeting briefings with attendee intel and agenda summaries
+- 🧠 **Knowledge Base** — structured long-term knowledge store with semantic search (facts, decisions, preferences, research)
 
 ## Architecture
 
@@ -364,11 +373,12 @@ The web UI includes a full-featured dashboard accessible via the sidebar. All pa
 
 | Page | Description |
 |---|---|
-| **Command Center** | 6 stat cards (uptime, messages, tool calls, API calls, sessions, active model), System Health panel (provider/fallback/connection status), Quick Actions (run briefing, trigger heartbeat, git backup, refresh), Scheduled Jobs with run-now buttons, Top Tools bar chart |
-| **Tools & Plugins** | Auto-categorized by type (File System, Web, Browser, Memory, Scheduling, Git, etc). MCP tools are auto-grouped by server name. Collapsible sections with tool count badges and a search/filter bar |
+| **Command Center** | 8 stat cards (uptime, messages, tool calls, API calls, sessions, active model, playbooks, KB entries), System Health panel (provider/fallback/connection status with toggles for Meeting Prep, Email Watcher, Proactive AI), Quick Actions (run briefing, triage, weekly report, heartbeat, git backup, deep research, person brief, generate doc, time analysis, daily insight), collapsible accordion sections for Reminders, Knowledge Base, Automations, Webhooks, Behavior Insights (activity heatmap + pattern mining), Agent Crews (4 multi-step pipelines with run buttons), Background Tasks, Scheduled Jobs with run-now buttons, Top Tools bar chart |
+| **Integrations** | Split view: Providers (Gemini, Ollama) and MCP Servers with status dots, tool count badges, and connection details |
 | **Memory** | Tabbed view of memory files (USER, MEMORY, SOUL, IDENTITY, HEARTBEAT). DB-backed items have add/delete with section grouping. Search bar filters items in real time |
-| **Reminders** | Full CRUD — create reminders with message + schedule (natural language or cron), view with CRON/ONE-SHOT type badges, delete individual reminders |
-| **Connections** | Split view: Providers (Gemini, Ollama) and MCP Servers with status dots, tool count badges, and connection details |
+| **Playbooks** | Create, manage, and run multi-step automated workflows. Each playbook has a step list with conditions, parallel execution, and human-approval gates |
+| **Personas** | Browse, create, and switch between personality profiles. Each persona defines tone, behavior, and communication style |
+| **Marketplace** | Browse and install skills and souls from ClawHub. Cards show descriptions with install buttons. Filterable by type (Skills/Souls) with search |
 | **Settings** | Runtime model switching via dropdown (grouped by provider), config summary grid, SOUL.md and IDENTITY.md editors with save buttons |
 
 ---
@@ -444,6 +454,8 @@ Alice has built-in tools plus any MCP-provided tools she can use during conversa
 | `read_pdf` | Extract text from PDF files |
 | `generate_image` | Generate images with Gemini |
 | `gemini_code` | Generate, modify, or explain code using Gemini |
+| `generate_document` | Generate structured documents (proposals, meeting notes, status reports, memos) |
+| `workspace_status` | Show workspace overview (recent files, git status, running processes) |
 | `git_status` | Show git repository status |
 | `git_diff` | Show file diffs (staged or unstaged) |
 | `git_commit` | Stage and commit changes |
@@ -485,6 +497,15 @@ These tools enable full browser automation with a **persistent browser profile**
 | `create_cron_job` | Create a persistent scheduled job (name, cron expression, prompt) |
 | `list_cron_jobs` | List all active cron jobs |
 | `delete_cron_job` | Remove a cron job by ID |
+
+### Sub-Agent Tools
+
+| Tool | Description |
+|---|---|
+| `deep_research` | Launch a multi-step research agent that gathers information from multiple sources |
+| `compose_email` | Draft emails with context-aware tone and formatting |
+| `person_briefing` | Generate a dossier on a person from available information |
+| `run_crew_pipeline` | Execute a multi-agent pipeline (research, triage, code review, content) |
 
 ---
 
@@ -642,6 +663,16 @@ alice/
 │   ├── gateway/server.ts      # Express server, WebSocket, web UI, /api/transcribe
 │   ├── runtime/
 │   │   ├── agent.ts           # Core ReAct agentic loop + model switcher
+│   │   ├── agent-crew.ts      # Multi-agent pipeline system (Research, Triage, Review, Content)
+│   │   ├── approval-workflow.ts # Human-in-the-loop approval gates
+│   │   ├── coding-agent.ts    # Specialized coding sub-agent
+│   │   ├── deep-research.ts   # Multi-step research sub-agent
+│   │   ├── doc-generator.ts   # Document generation sub-agent
+│   │   ├── email-composer.ts  # Email drafting sub-agent
+│   │   ├── file-watcher.ts    # File system change monitoring
+│   │   ├── people-intel.ts    # Person briefing/dossier sub-agent
+│   │   ├── playbook-engine.ts # Playbook step executor with conditionals
+│   │   ├── sub-agent.ts       # Base sub-agent framework
 │   │   ├── providers/
 │   │   │   ├── gemini.ts      # Gemini API provider (API key + CLI auth)
 │   │   │   ├── gemini-cli-auth.ts # Gemini CLI OAuth token manager
@@ -658,11 +689,24 @@ alice/
 │   │   ├── index.ts           # Memory file loader
 │   │   ├── sessions.ts        # SQLite session store
 │   │   ├── embeddings.ts      # Embedding-based semantic memory search
+│   │   ├── knowledge-base.ts  # Structured knowledge store (facts, decisions, research)
+│   │   ├── consolidation.ts   # Memory deduplication and cleanup
+│   │   ├── rag-index.ts       # RAG vector index for semantic retrieval
 │   │   └── memory-store.ts    # Structured memory storage
 │   ├── scheduler/
 │   │   ├── heartbeat.ts       # Periodic heartbeat system
 │   │   ├── cron-jobs.ts       # Persistent cron job system + morning briefing
-│   │   └── task-scheduler.ts  # Reminders & file watchers
+│   │   ├── task-scheduler.ts  # Reminders & file watchers
+│   │   ├── automations.ts     # Event-driven automation rules
+│   │   ├── webhook-receiver.ts # Inbound webhook endpoints (Generic/GitHub/Slack)
+│   │   ├── email-watcher.ts   # Automatic email inbox monitoring
+│   │   ├── meeting-prep.ts    # Pre-meeting briefing generator
+│   │   ├── pattern-miner.ts   # Behavioral pattern analysis + insights
+│   │   ├── proactive-engine.ts # Proactive suggestion engine
+│   │   ├── notification-learner.ts # Adaptive notification timing
+│   │   ├── clawhub-client.ts  # ClawHub marketplace API client
+│   │   ├── reports.ts         # Report generation (weekly, status)
+│   │   └── task-queue.ts      # Background task queue
 │   ├── skills/loader.ts       # Skill file loader
 │   └── utils/
 │       ├── config.ts          # Configuration system
