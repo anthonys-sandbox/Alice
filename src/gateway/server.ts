@@ -2005,14 +2005,16 @@ export class Gateway {
           log.info('📅 Cron job scheduler started');
 
           // Start meeting auto-prep and email watcher
-          startMeetingPrep(this.agent, this.chat);
-          log.info('📋 Meeting auto-prep started');
+          // Token optimization: disabled to reduce background LLM calls
+          // Re-enable via alice.config.json if needed
+          // startMeetingPrep(this.agent, this.chat);
+          // log.info('📋 Meeting auto-prep started');
 
-          startEmailWatcher(this.agent, this.chat);
-          log.info('📧 Email watcher started');
+          // startEmailWatcher(this.agent, this.chat);
+          // log.info('📧 Email watcher started');
 
-          startProactiveEngine(this.agent, this.chat);
-          log.info('🔮 Proactive intelligence engine started');
+          // startProactiveEngine(this.agent, this.chat);
+          // log.info('🔮 Proactive intelligence engine started');
 
           // Initialize background task queue
           import('../scheduler/task-queue.js').then(({ taskQueue }) => {

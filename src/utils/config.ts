@@ -91,7 +91,7 @@ const DEFAULTS: AliceConfig = {
     },
     heartbeat: {
         enabled: true,
-        intervalMinutes: 30,
+        intervalMinutes: 480, // 8 hours (3 heartbeats per day)
     },
     memory: {
         dir: './memory',

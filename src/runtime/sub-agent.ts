@@ -85,7 +85,7 @@ export class SubAgent {
         ].join('\n');
 
         // Build function declarations (includes MCP tools when no whitelist is set)
-        const allDecls = toGeminiFunctionDeclarations();
+        const allDecls = toGeminiFunctionDeclarations(task.task);
         const filteredDecls = this.allowedTools.size > 0
             ? allDecls.filter(d => this.allowedTools.has(d.name))
             : allDecls;  // Empty whitelist = ALL tools including MCP

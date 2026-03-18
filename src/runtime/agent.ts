@@ -2455,7 +2455,7 @@ Use emoji and clean formatting.`,
             parts: [{ text: userMessage }],
         });
 
-        const functionDeclarations = toGeminiFunctionDeclarations();
+        const functionDeclarations = toGeminiFunctionDeclarations(userMessage);
         const toolsUsed: string[] = [];
         let iterations = 0;
         let rateLimitRetries = 0;
@@ -2795,7 +2795,7 @@ Use emoji and clean formatting.`,
             parts: userParts,
         });
 
-        const functionDeclarations = toGeminiFunctionDeclarations();
+        const functionDeclarations = toGeminiFunctionDeclarations(typeof userParts[0] === 'object' && 'text' in userParts[0] ? (userParts[0] as any).text : '');
         const toolsUsed: string[] = [];
         let iterations = 0;
         let rateLimitRetries = 0;
@@ -3516,7 +3516,7 @@ Format:
         } else {
             bgProvider = this.backgroundProvider ?? this.provider;
         }
-        const functionDeclarations = toGeminiFunctionDeclarations();
+        const functionDeclarations = toGeminiFunctionDeclarations(message);
         const maxIterations = 10;
         const toolsUsed: string[] = [];
 

@@ -1016,40 +1016,128 @@ function sanitizeSchema(schema: any): any {
 }
 
 /**
- * Convert tools to Gemini function declarations format.
- * Send core tools + all MCP tools to the model.
- * Non-core built-in tools remain registered and executable — just not advertised.
+ * Tool categories for dynamic loading.
+ * ALWAYS tools are sent every call (~10 tools).
+ * Category tools are activated based on keyword matching on the user message.
+ * This reduces per-call tool schemas from ~86 to ~15-25 (saving ~3-4k tokens/call).
  */
-export function toGeminiFunctionDeclarations() {
-    const CORE_TOOLS = new Set([
+const TOOL_CATEGORIES: Record<string, string[]> = {
+    // Always included — essential interaction tools
+    ALWAYS: [
         'bash', 'read_file', 'write_file', 'edit_file',
-        'web_search', 'search_memory', 'semantic_search', 'search_codebase',
-        'set_reminder', 'generate_image', 'delegate_task', 'code', 'workspace_status',
-        'browse_page', 'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
-        'deep_research', 'parallel_tasks',
-        'knowledge_graph', 'add_knowledge',
+        'web_search', 'search_memory', 'knowledge_graph',
+        'canvas', 'set_reminder', 'generate_image',
+    ],
+
+    // Google Workspace: email, calendar, drive, docs
+    GOOGLE_WORKSPACE: [
         'gmail_search', 'gmail_read', 'gmail_send',
-        'calendar_list', 'calendar_create',
-        'drive_list', 'drive_search', 'sheets_read',
-        'docs_get', 'docs_create', 'slides_get',
-        'tasks_list', 'tasks_create', 'contacts_search',
-        'chat_send', 'chat_list_spaces',
+        'calendar_list', 'calendar_create', 'find_free_time', 'schedule_meeting', 'time_block', 'meeting_cost',
+        'drive_list', 'drive_search', 'drive_download',
+        'sheets_read', 'sheets_write',
+        'docs_get', 'docs_create', 'docs_append',
+        'slides_get', 'tasks_list', 'tasks_create',
+        'contacts_search', 'workspace_search', 'workspace_pipeline',
         'keep_list', 'keep_create', 'meet_create', 'forms_responses',
-        'standup_report', 'meeting_prep', 'email_to_task', 'weekly_digest', 'file_announce',
-        'drive_download', 'sheets_write', 'docs_append', 'workspace_search', 'workspace_pipeline',
-        'list_playbooks', 'run_playbook',
-        'find_free_time', 'schedule_meeting', 'time_block', 'meeting_cost',
-        'generate_document', 'brief_person', 'relationship_health',
-        'analyze_image', 'analyze_screenshot', 'time_analysis',
+    ],
+
+    // Google Chat
+    CHAT: [
+        'chat_with_person', 'chat_history', 'chat_read',
+        'chat_send', 'chat_list_spaces',
+    ],
+
+    // Code & GitHub
+    CODE: [
+        'code', 'search_codebase', 'workspace_status',
         'github_repos', 'github_issues', 'github_create_issue', 'github_prs', 'github_search_code',
-        'delegate_tasks', 'kb_search', 'kb_add', 'kb_list', 'kb_stats',
-        'compose_email', 'list_approvals', 'approve_action', 'reject_action',
-        'browse_templates', 'install_template',
-        'create_automation', 'list_automations', 'toggle_automation', 'delete_automation',
+    ],
+
+    // Browser automation
+    BROWSER: [
+        'browse_page', 'screenshot', 'click_element', 'type_text', 'browser_clear_data',
+        'analyze_image', 'analyze_screenshot',
+    ],
+
+    // Sub-agents and multi-step work
+    SUB_AGENTS: [
+        'deep_research', 'compose_email', 'brief_person', 'generate_document',
+        'delegate_task', 'delegate_tasks', 'parallel_tasks',
         'start_background_task', 'check_task_status', 'list_background_tasks',
-    ]);
+    ],
+
+    // Knowledge and memory
+    KNOWLEDGE: [
+        'semantic_search', 'add_knowledge',
+        'kb_search', 'kb_add', 'kb_list', 'kb_stats',
+        'relationship_health', 'time_analysis',
+    ],
+
+    // Scheduling and automation
+    SCHEDULING: [
+        'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
+        'create_automation', 'list_automations', 'toggle_automation', 'delete_automation',
+        'list_playbooks', 'run_playbook',
+    ],
+
+    // Workflow tools
+    WORKFLOW: [
+        'standup_report', 'meeting_prep', 'email_to_task', 'weekly_digest', 'file_announce',
+        'list_approvals', 'approve_action', 'reject_action',
+    ],
+
+    // Marketplace
+    MARKETPLACE: [
+        'browse_templates', 'install_template',
+    ],
+};
+
+/**
+ * Keyword patterns that activate each tool category.
+ * Case-insensitive matching on user message.
+ */
+const CATEGORY_TRIGGERS: Record<string, RegExp> = {
+    GOOGLE_WORKSPACE: /\b(email|gmail|mail|inbox|send|calendar|meeting|schedule|event|drive|doc|sheet|slide|task|contact|keep|note|form|workspace|appointment|agenda|busy|free time)\b/i,
+    CHAT: /\b(chat|dm|direct message|google chat|conversation with|talk(?:ed|ing)?\s+(?:to|with|about)|message[sd]?\s+(?:with|from|to))\b/i,
+    CODE: /\b(code|github|repo|commit|pull request|pr|issue|branch|git|debug|function|class|typescript|javascript|python|programming|workspace status)\b/i,
+    BROWSER: /\b(browse|website|url|http|screenshot|click|page|navigate|login|scrape|image|photo|picture)\b/i,
+    SUB_AGENTS: /\b(research|investigate|deep dive|compose email|draft|briefing|dossier|document|report|background task|delegate)\b/i,
+    KNOWLEDGE: /\b(knowledge|remember|recall|fact|decision|learn|insight|relationship|analytics|time analysis|semantic)\b/i,
+    SCHEDULING: /\b(cron|automat|schedule|playbook|recurring|every day|every week|routine|rule|trigger)\b/i,
+    WORKFLOW: /\b(standup|digest|approve|reject|approval|workflow|triage)\b/i,
+    MARKETPLACE: /\b(template|marketplace|install|browse templates|skill)\b/i,
+};
+
+/**
+ * Convert tools to Gemini function declarations format.
+ * Dynamically selects relevant tools based on user message content.
+ * Always includes core tools + MCP tools. Category tools are activated by keyword matching.
+ * Non-advertised tools remain executable if the model calls them from history context.
+ *
+ * @param userMessage Optional user message to determine relevant tool categories
+ */
+export function toGeminiFunctionDeclarations(userMessage?: string) {
+    // Start with ALWAYS tools
+    const selectedTools = new Set<string>(TOOL_CATEGORIES.ALWAYS);
+
+    if (userMessage) {
+        // Activate categories based on keyword matching
+        for (const [category, pattern] of Object.entries(CATEGORY_TRIGGERS)) {
+            if (pattern.test(userMessage)) {
+                for (const tool of TOOL_CATEGORIES[category]) {
+                    selectedTools.add(tool);
+                }
+            }
+        }
+    } else {
+        // No message context — include all tools (fallback for background tasks etc.)
+        for (const tools of Object.values(TOOL_CATEGORIES)) {
+            for (const tool of tools) selectedTools.add(tool);
+        }
+    }
+
     return ALL_TOOLS
-        .filter(tool => CORE_TOOLS.has(tool.name) || tool.name.startsWith('mcp_'))
+        .filter(tool => selectedTools.has(tool.name) || tool.name.startsWith('mcp_'))
         .map(tool => ({
             name: tool.name,
             description: tool.description,
