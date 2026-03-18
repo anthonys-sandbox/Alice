@@ -1,0 +1,54 @@
+{
+  "historyId": "10118364",
+  "id": "19cd392722ccc1ec",
+  "internalDate": "1773076116000",
+  "labelIds": [
+    "SENT"
+  ],
+  "payload": {
+    "body": {
+      "data": "VmVyc2UgMToKU3RhcmluZyBhdCB0aGUga2liYmxlIG9uIHRoZSBsaW5vbGV1bSBmbG9vcgpJIGZvcmdvdCB0byBidXkgdGhlIGJyYW5kIHlvdSBsaWtlIGF0IHRoZSBncm9jZXJ5IHN0b3JlCllvdeKAmXJlIGxvb2tpbmcgYXQgbWUgd2l0aCB0aG9zZSBiaWcgYnJvd24gZXllcwpBbmQgSSdtIHJlYWxpemluZyBteSBlbnRpcmUgbGlmZSBpcyBhIGNvbXByb21pc2UKSSBjYW7igJl0IGdvIHRvIHRoZSBiYXNlbWVudCBzaG93LCBJIGdvdHRhIHdhbGsgeW91IGluIHRoZSBzbm93CgpDaG9ydXM6CkFuZCB0aGUgdmV0IGJpbGxzIGFyZSBwaWxpbmcgdXAgbGlrZSBsZWF2ZXMgaW4gTm92ZW1iZXIKSSBjYW4ndCBldmVuIHJlbWVtYmVyIApUaGUgbGFzdCB0aW1lIEkgc2xlcHQgaW4gcGFzdCA2IEFNCllvdSdyZSBjaGV3aW5nIG9uIHRoZSBjYXJwZXQgYWdhaW4KQnV0IEkgbG92ZSB5b3Ugc28gbXVjaCBpdCBtYWtlcyBteSBjaGVzdCBjYXZlIGluClllYWgsIEkgbG92ZSB5b3Ugc28gbXVjaCBpdCBtYWtlcyBteSBjaGVzdCBjYXZlIGluCgpWZXJzZSAyOgpJIGJvdWdodCB5b3UgYSBzd2VhdGVyIGJ1dCB5b3UgdG9yZSBpdCBhcGFydApKdXN0IGxpa2UgeW91IHRvcmUgYSBob2xlIHJpZ2h0IHRocm91Z2ggbXkgYW5nc3QtcmlkZGVuIGhlYXJ0Ckkgd29ycnkgd2hlbiB5b3UgY291Z2gsIEkgcGFuaWMgd2hlbiB5b3Ugc2xlZXAgdG9vIGxvbmcKSSB3cm90ZSB5b3UgdGhpcyBzdHVwaWQgTWlkd2VzdCBlbW8gc29uZwpCZWNhdXNlIEnigJltIHRlcnJpZmllZCBvZiB0aGUgZGF5IHlvdSB3b24ndCBiZSBoZXJlCgpDaG9ydXM6CkFuZCB0aGUgdmV0IGJpbGxzIGFyZSBwaWxpbmcgdXAgbGlrZSBsZWF2ZXMgaW4gTm92ZW1iZXIKSSBjYW4ndCBldmVuIHJlbWVtYmVyIApUaGUgbGFzdCB0aW1lIEkgc2xlcHQgaW4gcGFzdCA2IEFNCllvdSdyZSBjaGV3aW5nIG9uIHRoZSBjYXJwZXQgYWdhaW4KQnV0IEkgbG92ZSB5b3Ugc28gbXVjaCBpdCBtYWtlcyBteSBjaGVzdCBjYXZlIGluClllYWgsIEkgbG92ZSB5b3Ugc28gbXVjaCBpdCBtYWtlcyBteSBjaGVzdCBjYXZlIGluCgpPdXRybzoKKEd1aXRhciB0d2FuZywgaGVhdnkgZGlzdG9ydGlvbikKU3RvcCBlYXRpbmcgZ3Jhc3MuLi4gcGxlYXNlIHN0b3AgZWF0aW5nIGdyYXNzLi4uCkkgbmVlZCB0byBwYXkgcmVudCwgYnV0IEkgYm91Z2h0IHlvdSBhIGJyYXNzCk5hbWUgdGFnIHdpdGggbXkgcGhvbmUgbnVtYmVyIG9uIGl0LgooRmFkZSBvdXQgd2l0aCB0aGUgc291bmQgb2YgYSBzcXVlYWt5IHRveSk=",
+      "size": 1268
+    },
+    "filename": "",
+    "headers": [
+      {
+        "name": "Received",
+        "value": "from 476243715181 named unknown by gmailapi.google.com with HTTPREST; Mon, 9 Mar 2026 13:08:36 -0400"
+      },
+      {
+        "name": "Received",
+        "value": "from 476243715181 named unknown by gmailapi.google.com with HTTPREST; Mon, 9 Mar 2026 13:08:36 -0400"
+      },
+      {
+        "name": "To",
+        "value": "tyler_barnes@hillspet.com"
+      },
+      {
+        "name": "Subject",
+        "value": "Pet Ownership Angst (A Midwest Emo Song)"
+      },
+      {
+        "name": "Content-Type",
+        "value": "text/plain; charset=utf-8"
+      },
+      {
+        "name": "Date",
+        "value": "Mon, 9 Mar 2026 13:08:36 -0400"
+      },
+      {
+        "name": "Message-Id",
+        "value": "<CABZw1Dm7iK7yeinOMBnuyj7qsiwi9kn6MEZsZ_Ea_uCCF8UVoQ@mail.gmail.com>"
+      },
+      {
+        "name": "From",
+        "value": "anthony_tackett@hillspet.com"
+      }
+    ],
+    "mimeType": "text/plain",
+    "partId": ""
+  },
+  "sizeEstimate": 1789,
+  "snippet": "Verse 1: Staring at the kibble on the linoleum floor I forgot to buy the brand you like at the grocery store You&#39;re looking at me with those big brown eyes And I&#39;m realizing my entire life is a",
+  "threadId": "19cd392722ccc1ec"
+}

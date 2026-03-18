@@ -1,0 +1,175 @@
+{
+  "historyId": "10118364",
+  "id": "19cd3a30ad0ca2e4",
+  "internalDate": "1773077192000",
+  "labelIds": [
+    "IMPORTANT",
+    "CATEGORY_PERSONAL",
+    "INBOX"
+  ],
+  "payload": {
+    "body": {
+      "size": 0
+    },
+    "filename": "",
+    "headers": [
+      {
+        "name": "Delivered-To",
+        "value": "anthony_tackett@hillspet.com"
+      },
+      {
+        "name": "Received",
+        "value": "by 2002:a05:612c:1ed3:b0:561:3cd9:1a06 with SMTP id ji19csp1450984vqb;        Mon, 9 Mar 2026 10:26:44 -0700 (PDT)"
+      },
+      {
+        "name": "X-Received",
+        "value": "by 2002:a05:690e:1547:10b0:64c:989a:c66d with SMTP id 956f58d0204a3-64d140ceec4mr8697745d50.22.1773077203928;        Mon, 09 Mar 2026 10:26:43 -0700 (PDT)"
+      },
+      {
+        "name": "ARC-Seal",
+        "value": "i=2; a=rsa-sha256; t=1773077203; cv=pass;        d=google.com; s=arc-20240605;        b=h9d9izIPFp5kEagE9s5cbcIgf7TOXS8UIRU0mvXcfnH0JFvm2HGSdQ0FazSDkiZwYy         GTbTQ7jyMHpjQa3QYE10/PCyy3YKIkNmVaeBDDoDTAhbR4UMDNGjiyfTEcBMVlJTNUt9         4nDobFSd24numl7FpOEixOe+0ZI+s6iIkCbUAuYgpgeRc5y6Gzw27JAiiOasGVStjeiM         lC5JZixhDAPyjIXe5Gn1OU4MbpHASgbfkt/++SIw6CTF/sGujKWQ673ZUdm37w2J5Tpk         X8nVC5OPtS0FdFZg1bO2LtMp7s0+SZXgymxeyKI+nf5PxGRjbkSlWHsbOH8zGU+DqZ9x         eHaw=="
+      },
+      {
+        "name": "ARC-Message-Signature",
+        "value": "i=2; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;        h=to:subject:message-id:date:from:in-reply-to:references:mime-version         :dkim-signature;        bh=GZdNIMAMD8rlJo6zRZyybP86aOLwcntfOI/i6U6P8SY=;        fh=fVcVqPPLCY8Tz7IFitkCrVl1ZwlBGzHXafs0footFjY=;        b=JPBdEDOZzDKkXJrPJif9+rfbQB/6fM19DZcUL5apE3LPOWn7+GdxqvFmNxwmBbohtf         XkFO4gNhwlr/289xB0zLLarEtkC6N/OJeXKQ9g4HGS7nn2zVcN2Fy/IYODZ5FNBfa225         8Nqwx8nLJD0z1Zt/d+zrHiaIEddD1Np/4F5NcWD/yHqCrcGXyjibHEaPhAUE+Nj4S6XR         Y5NnUlKYRgrSPtzn0lTzL1BSjGGT79LCUZdIp1QYOSsSIYRTQ7BoFM+4DdNB9sp2ycq+         eYaoxzgnA7QPWZkJd0ACMZvOotWkZzfwIxM8/6CHavf4jX4MHWOSG/2gR/6/WaeTfUgU         KZCg==;        dara=google.com"
+      },
+      {
+        "name": "ARC-Authentication-Results",
+        "value": "i=2; mx.google.com;       dkim=pass header.i=@hillspet.com header.s=google header.b=CX2V+XDp;       arc=pass (i=1);       spf=pass (google.com: domain of tyler_barnes@hillspet.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=tyler_barnes@hillspet.com;       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=hillspet.com;       dara=neutral header.i=@hillspet.com"
+      },
+      {
+        "name": "Return-Path",
+        "value": "<tyler_barnes@hillspet.com>"
+      },
+      {
+        "name": "Received",
+        "value": "from mail-sor-f41.google.com (mail-sor-f41.google.com. [209.85.220.41])        by mx.google.com with SMTPS id 956f58d0204a3-64d176d029csor3724008d50.14.2026.03.09.10.26.43        for <anthony_tackett@hillspet.com>        (Google Transport Security);        Mon, 09 Mar 2026 10:26:43 -0700 (PDT)"
+      },
+      {
+        "name": "Received-SPF",
+        "value": "pass (google.com: domain of tyler_barnes@hillspet.com designates 209.85.220.41 as permitted sender) client-ip=209.85.220.41;"
+      },
+      {
+        "name": "Authentication-Results",
+        "value": "mx.google.com;       dkim=pass header.i=@hillspet.com header.s=google header.b=CX2V+XDp;       arc=pass (i=1);       spf=pass (google.com: domain of tyler_barnes@hillspet.com designates 209.85.220.41 as permitted sender) smtp.mailfrom=tyler_barnes@hillspet.com;       dmarc=pass (p=REJECT sp=REJECT dis=NONE) header.from=hillspet.com;       dara=neutral header.i=@hillspet.com"
+      },
+      {
+        "name": "ARC-Seal",
+        "value": "i=1; a=rsa-sha256; t=1773077203; cv=none;        d=google.com; s=arc-20240605;        b=QPFgTavuchNs7eR4k1awYYWjV/x2S6arP3ohNDY+gp9KSokgDEl1KXSXsDEAuPHas5         zM+Kere4+LfYHBBRsKzd7LpfPmu5Jbha+iEGrR4SqUvXbrJlVp1EJ14QhY+gwQDbZCkm         OzZY0OZ9ifbmHcdBYVFdvPX9YwsDkz8YteTF1fs5v8cjQ91uktkthTJZerX0J0acWeZq         fhUEq+fm4IgW+CrucBByhUgCmnTW2WdWe9s+uB+MibCoTp+5Av3FKp851OlS+1h0Ezcb         j9fxfgv3JAnnHM8jFyvmum4lRYBvZ2BDCjGgCYsGMpDMhDky1gqgwQi1PEs0EbFkCyMI         Dlkw=="
+      },
+      {
+        "name": "ARC-Message-Signature",
+        "value": "i=1; a=rsa-sha256; c=relaxed/relaxed; d=google.com; s=arc-20240605;        h=to:subject:message-id:date:from:in-reply-to:references:mime-version         :dkim-signature;        bh=GZdNIMAMD8rlJo6zRZyybP86aOLwcntfOI/i6U6P8SY=;        fh=fVcVqPPLCY8Tz7IFitkCrVl1ZwlBGzHXafs0footFjY=;        b=Q6mHijpLft5/rMllzOadPep59dLMSpUvAHLttqbX0h/wpbkXSys9XoEYEhlGZnjwdU         gxg44oUNLQQZyq1sxno1zjiQj9Sm6cRG9vSdK64RC0Jx6QJdIqP9U42A4n4MK/YYGOGh         8la11N2w67HPnYWOPJkxEs0mm/bFDs0nADXFriWWboe74+tt+3Ho9knTJuK3eA9247MQ         LtLYuM4T6EdOsGQD3D//lHxG4KZbEBAzG7gW855oYrdBHtwqP4fWKuHFBiGivMV71QcB         kqSGrDdkuB7sUlZAzG4lHeyXoDjoSnpqOG17lkrtApQWplARCDGl1lAMspLJ6YqWql/R         7kEA==;        darn=hillspet.com"
+      },
+      {
+        "name": "ARC-Authentication-Results",
+        "value": "i=1; mx.google.com; arc=none"
+      },
+      {
+        "name": "DKIM-Signature",
+        "value": "v=1; a=rsa-sha256; c=relaxed/relaxed;        d=hillspet.com; s=google; t=1773077203; x=1773682003; darn=hillspet.com;        h=to:subject:message-id:date:from:in-reply-to:references:mime-version         :from:to:cc:subject:date:message-id:reply-to;        bh=GZdNIMAMD8rlJo6zRZyybP86aOLwcntfOI/i6U6P8SY=;        b=CX2V+XDpIIeFO+5N17vvKnDSRpH1pipph6DXmZDY7TdZVBuBu/YUXo3Y3jknHCJy7w         MJoMEO8DsxkSkTccqWWGrnT517HYCvEI8DfGvHK2AHhM/gCpfMtoO6sQ+jHjrTKeb0SX         wL32v0b9oP98J1Iped9CTeQ6zQfwCWqoMeqFQ="
+      },
+      {
+        "name": "X-Google-DKIM-Signature",
+        "value": "v=1; a=rsa-sha256; c=relaxed/relaxed;        d=1e100.net; s=20230601; t=1773077203; x=1773682003;        h=to:subject:message-id:date:from:in-reply-to:references:mime-version         :x-gm-gg:x-gm-message-state:from:to:cc:subject:date:message-id         :reply-to;        bh=GZdNIMAMD8rlJo6zRZyybP86aOLwcntfOI/i6U6P8SY=;        b=un5PuoeRVl8XO/ej2z6VL85epPIlWXVW+ZOhBbPD61yx0buPcCT70yhULnE4aD3d0x         ZuPv64SmI9GIH2QPFkD6Ot5qkecEoC+JMngvqGLRYguoa03LLU/EkHYiqrM99S2/K0uV         8XVBhT6z2EHlsAyamO2fAsYwoA/GYz7O4t7AazJcUKUK5itIhUIIRot3mlA/AF9OTfHS         BgCzvV5Q9Tn1KgbgKFP+S94fGeJDAZjj0uxl/578NslbDxUKTeNrv+BOI15cLpcFfXn0         3YbZJLXWTIG5qqkywIllYSa1wadj6BwWUAct5d3Y892OHPmhjMT5Wb58g00q5Ys1bBOA         4pvg=="
+      },
+      {
+        "name": "X-Gm-Message-State",
+        "value": "AOJu0YyUT7BpjeCO4cRgWob9+YWbWYi6u4YwVQlD/YISTritVXmd4VPW +yTIX8//thJsstPkFWtJiZXNd9s78n61DzXJaQcXTIKIimu3TvMfyrxVr2ExxVTSbvamKi73wYH Z2wPP3PFKIxv+qUSO6dcBsFoDxaU1FoAvhBaN7YKUe1N/aWwtJOz6yfdpHg=="
+      },
+      {
+        "name": "X-Gm-Gg",
+        "value": "ATEYQzxlDq5botPX5nhmlnZ7M1HpCfj69IXsIl0qBRgRr+60G4VLSZ1GNsf1q7rDYgt fpDsITmlxIAfsN8H2S+togqWAMayv0Zix+uifZ4feS/TnurIaQBAnHwQ0BjCMPa/cqlR+MQSw8J o+jiTI1Lf3aiqakjkUX5Q+kMqsVvtlM47/5e8ymIYb8M49RqT+AFJPOaWj1oQHzeFLYtWz9k9rF NZ4hnNGTjT86KGmJA+fBlC4AZF2KQHm0Jjvt0jWXRxcpQ994PwzbApbBvu01ndMNqUYM8q/qEPS U3nIT4Yi"
+      },
+      {
+        "name": "X-Received",
+        "value": "by 2002:a53:e181:0:b0:649:34b6:d209 with SMTP id 956f58d0204a3-64d1436c000mr8623539d50.82.1773077203013; Mon, 09 Mar 2026 10:26:43 -0700 (PDT)"
+      },
+      {
+        "name": "MIME-Version",
+        "value": "1.0"
+      },
+      {
+        "name": "References",
+        "value": "<CABZw1Dm7iK7yeinOMBnuyj7qsiwi9kn6MEZsZ_Ea_uCCF8UVoQ@mail.gmail.com>"
+      },
+      {
+        "name": "In-Reply-To",
+        "value": "<CABZw1Dm7iK7yeinOMBnuyj7qsiwi9kn6MEZsZ_Ea_uCCF8UVoQ@mail.gmail.com>"
+      },
+      {
+        "name": "From",
+        "value": "Tyler Barnes <tyler_barnes@hillspet.com>"
+      },
+      {
+        "name": "Date",
+        "value": "Mon, 9 Mar 2026 12:26:32 -0500"
+      },
+      {
+        "name": "X-Gm-Features",
+        "value": "AaiRm50CQQGnJIp1SAYcJBBi0U_cmTrQSziNnPalWhWZhoKwEWduLWWeHU77vaQ"
+      },
+      {
+        "name": "Message-ID",
+        "value": "<CABL0grkzLDcM4Wa+bEsrB6ugmTy6JpCyNUoRvbyUrMoEuZwBwQ@mail.gmail.com>"
+      },
+      {
+        "name": "Subject",
+        "value": "Re: Pet Ownership Angst (A Midwest Emo Song)"
+      },
+      {
+        "name": "To",
+        "value": "anthony_tackett@hillspet.com"
+      },
+      {
+        "name": "Content-Type",
+        "value": "multipart/alternative; boundary=\"000000000000d87ff0064c9ab41a\""
+      }
+    ],
+    "mimeType": "multipart/alternative",
+    "partId": "",
+    "parts": [
+      {
+        "body": {
+          "data": "UHV0dGluZyB0aGlzIG9uIEhpbGwncyB0byBIb21lIHJpZ2h0IG5vdy4uLg0KDQoNCk9uIE1vbiwgTWFyIDksIDIwMjYgYXQgMTI6MDjigK9QTSA8YW50aG9ueV90YWNrZXR0QGhpbGxzcGV0LmNvbT4gd3JvdGU6DQoNCj4gVmVyc2UgMToNCj4gU3RhcmluZyBhdCB0aGUga2liYmxlIG9uIHRoZSBsaW5vbGV1bSBmbG9vcg0KPiBJIGZvcmdvdCB0byBidXkgdGhlIGJyYW5kIHlvdSBsaWtlIGF0IHRoZSBncm9jZXJ5IHN0b3JlDQo-IFlvdeKAmXJlIGxvb2tpbmcgYXQgbWUgd2l0aCB0aG9zZSBiaWcgYnJvd24gZXllcw0KPiBBbmQgSSdtIHJlYWxpemluZyBteSBlbnRpcmUgbGlmZSBpcyBhIGNvbXByb21pc2UNCj4gSSBjYW7igJl0IGdvIHRvIHRoZSBiYXNlbWVudCBzaG93LCBJIGdvdHRhIHdhbGsgeW91IGluIHRoZSBzbm93DQo-DQo-IENob3J1czoNCj4gQW5kIHRoZSB2ZXQgYmlsbHMgYXJlIHBpbGluZyB1cCBsaWtlIGxlYXZlcyBpbiBOb3ZlbWJlcg0KPiBJIGNhbid0IGV2ZW4gcmVtZW1iZXINCj4gVGhlIGxhc3QgdGltZSBJIHNsZXB0IGluIHBhc3QgNiBBTQ0KPiBZb3UncmUgY2hld2luZyBvbiB0aGUgY2FycGV0IGFnYWluDQo-IEJ1dCBJIGxvdmUgeW91IHNvIG11Y2ggaXQgbWFrZXMgbXkgY2hlc3QgY2F2ZSBpbg0KPiBZZWFoLCBJIGxvdmUgeW91IHNvIG11Y2ggaXQgbWFrZXMgbXkgY2hlc3QgY2F2ZSBpbg0KPg0KPiBWZXJzZSAyOg0KPiBJIGJvdWdodCB5b3UgYSBzd2VhdGVyIGJ1dCB5b3UgdG9yZSBpdCBhcGFydA0KPiBKdXN0IGxpa2UgeW91IHRvcmUgYSBob2xlIHJpZ2h0IHRocm91Z2ggbXkgYW5nc3QtcmlkZGVuIGhlYXJ0DQo-IEkgd29ycnkgd2hlbiB5b3UgY291Z2gsIEkgcGFuaWMgd2hlbiB5b3Ugc2xlZXAgdG9vIGxvbmcNCj4gSSB3cm90ZSB5b3UgdGhpcyBzdHVwaWQgTWlkd2VzdCBlbW8gc29uZw0KPiBCZWNhdXNlIEnigJltIHRlcnJpZmllZCBvZiB0aGUgZGF5IHlvdSB3b24ndCBiZSBoZXJlDQo-DQo-IENob3J1czoNCj4gQW5kIHRoZSB2ZXQgYmlsbHMgYXJlIHBpbGluZyB1cCBsaWtlIGxlYXZlcyBpbiBOb3ZlbWJlcg0KPiBJIGNhbid0IGV2ZW4gcmVtZW1iZXINCj4gVGhlIGxhc3QgdGltZSBJIHNsZXB0IGluIHBhc3QgNiBBTQ0KPiBZb3UncmUgY2hld2luZyBvbiB0aGUgY2FycGV0IGFnYWluDQo-IEJ1dCBJIGxvdmUgeW91IHNvIG11Y2ggaXQgbWFrZXMgbXkgY2hlc3QgY2F2ZSBpbg0KPiBZZWFoLCBJIGxvdmUgeW91IHNvIG11Y2ggaXQgbWFrZXMgbXkgY2hlc3QgY2F2ZSBpbg0KPg0KPiBPdXRybzoNCj4gKEd1aXRhciB0d2FuZywgaGVhdnkgZGlzdG9ydGlvbikNCj4gU3RvcCBlYXRpbmcgZ3Jhc3MuLi4gcGxlYXNlIHN0b3AgZWF0aW5nIGdyYXNzLi4uDQo-IEkgbmVlZCB0byBwYXkgcmVudCwgYnV0IEkgYm91Z2h0IHlvdSBhIGJyYXNzDQo-IE5hbWUgdGFnIHdpdGggbXkgcGhvbmUgbnVtYmVyIG9uIGl0Lg0KPiAoRmFkZSBvdXQgd2l0aCB0aGUgc291bmQgb2YgYSBzcXVlYWt5IHRveSkNCj4NCg0KDQotLSANCg0KKlR5bGVyIEJhcm5lcyoNClNyLiBEaXJlY3RvciAtIEhpbGzigJlzIERpZ2l0YWwgUHJvZHVjdCBNYW5hZ2VtZW50DQpIaWxs4oCZcyBQZXQgTnV0cml0aW9uLCBJbmMuIHwgNjE4MCBTcHJpbnQgUGFya3dheSB8IE92ZXJsYW5kIFBhcmssIEtTICA2NjIxMQ0KdHlsZXJfYmFybmVzQGhpbGxzcGV0LmNvbSB8IDQxNy01OTItMjQxOA0KaGUgLyBoaW0gLyBoaXMNCg0KKlRoaXMgY29tbXVuaWNhdGlvbiwgaW5jbHVkaW5nIGFueS9hbGwgYXR0YWNobWVudHMsIGlzIGZvciB0aGUgc29sZSB1c2Ugb2YNCnRoZSBpbnRlbmRlZCByZWNpcGllbnQgYW5kIG1heSBjb250YWluIGNvbmZpZGVudGlhbCBhbmQvb3IgcHJpdmlsZWdlZA0KaW5mb3JtYXRpb24uICBBbnkgcmV2aWV3LCByZWxpYW5jZSBvciBkaXN0cmlidXRpb24gYnkgb3RoZXJzIG9yIGZvcndhcmRpbmcNCndpdGgqDQo=",
+          "size": 1946
+        },
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/plain; charset=\"UTF-8\""
+          },
+          {
+            "name": "Content-Transfer-Encoding",
+            "value": "quoted-printable"
+          }
+        ],
+        "mimeType": "text/plain",
+        "partId": "0"
+      },
+      {
+        "body": {
+          "data": "PGRpdiBkaXI9Imx0ciI-UHV0dGluZyB0aGlzIG9uIEhpbGwmIzM5O3MgdG8gSG9tZSByaWdodCBub3cuLi48ZGl2Pjxicj48L2Rpdj48L2Rpdj48YnI-PGRpdiBjbGFzcz0iZ21haWxfcXVvdGUgZ21haWxfcXVvdGVfY29udGFpbmVyIj48ZGl2IGRpcj0ibHRyIiBjbGFzcz0iZ21haWxfYXR0ciI-T24gTW9uLCBNYXIgOSwgMjAyNiBhdCAxMjowOOKAr1BNICZsdDs8YSBocmVmPSJtYWlsdG86YW50aG9ueV90YWNrZXR0QGhpbGxzcGV0LmNvbSI-YW50aG9ueV90YWNrZXR0QGhpbGxzcGV0LmNvbTwvYT4mZ3Q7IHdyb3RlOjxicj48L2Rpdj48YmxvY2txdW90ZSBjbGFzcz0iZ21haWxfcXVvdGUiIHN0eWxlPSJtYXJnaW46MHB4IDBweCAwcHggMC44ZXg7Ym9yZGVyLWxlZnQ6MXB4IHNvbGlkIHJnYigyMDQsMjA0LDIwNCk7cGFkZGluZy1sZWZ0OjFleCI-VmVyc2UgMTo8YnI-DQpTdGFyaW5nIGF0IHRoZSBraWJibGUgb24gdGhlIGxpbm9sZXVtIGZsb29yPGJyPg0KSSBmb3Jnb3QgdG8gYnV5IHRoZSBicmFuZCB5b3UgbGlrZSBhdCB0aGUgZ3JvY2VyeSBzdG9yZTxicj4NCllvdeKAmXJlIGxvb2tpbmcgYXQgbWUgd2l0aCB0aG9zZSBiaWcgYnJvd24gZXllczxicj4NCkFuZCBJJiMzOTttIHJlYWxpemluZyBteSBlbnRpcmUgbGlmZSBpcyBhIGNvbXByb21pc2U8YnI-DQpJIGNhbuKAmXQgZ28gdG8gdGhlIGJhc2VtZW50IHNob3csIEkgZ290dGEgd2FsayB5b3UgaW4gdGhlIHNub3c8YnI-DQo8YnI-DQpDaG9ydXM6PGJyPg0KQW5kIHRoZSB2ZXQgYmlsbHMgYXJlIHBpbGluZyB1cCBsaWtlIGxlYXZlcyBpbiBOb3ZlbWJlcjxicj4NCkkgY2FuJiMzOTt0IGV2ZW4gcmVtZW1iZXI8YnI-DQpUaGUgbGFzdCB0aW1lIEkgc2xlcHQgaW4gcGFzdCA2IEFNPGJyPg0KWW91JiMzOTtyZSBjaGV3aW5nIG9uIHRoZSBjYXJwZXQgYWdhaW48YnI-DQpCdXQgSSBsb3ZlIHlvdSBzbyBtdWNoIGl0IG1ha2VzIG15IGNoZXN0IGNhdmUgaW48YnI-DQpZZWFoLCBJIGxvdmUgeW91IHNvIG11Y2ggaXQgbWFrZXMgbXkgY2hlc3QgY2F2ZSBpbjxicj4NCjxicj4NClZlcnNlIDI6PGJyPg0KSSBib3VnaHQgeW91IGEgc3dlYXRlciBidXQgeW91IHRvcmUgaXQgYXBhcnQ8YnI-DQpKdXN0IGxpa2UgeW91IHRvcmUgYSBob2xlIHJpZ2h0IHRocm91Z2ggbXkgYW5nc3QtcmlkZGVuIGhlYXJ0PGJyPg0KSSB3b3JyeSB3aGVuIHlvdSBjb3VnaCwgSSBwYW5pYyB3aGVuIHlvdSBzbGVlcCB0b28gbG9uZzxicj4NCkkgd3JvdGUgeW91IHRoaXMgc3R1cGlkIE1pZHdlc3QgZW1vIHNvbmc8YnI-DQpCZWNhdXNlIEnigJltIHRlcnJpZmllZCBvZiB0aGUgZGF5IHlvdSB3b24mIzM5O3QgYmUgaGVyZTxicj4NCjxicj4NCkNob3J1czo8YnI-DQpBbmQgdGhlIHZldCBiaWxscyBhcmUgcGlsaW5nIHVwIGxpa2UgbGVhdmVzIGluIE5vdmVtYmVyPGJyPg0KSSBjYW4mIzM5O3QgZXZlbiByZW1lbWJlcjxicj4NClRoZSBsYXN0IHRpbWUgSSBzbGVwdCBpbiBwYXN0IDYgQU08YnI-DQpZb3UmIzM5O3JlIGNoZXdpbmcgb24gdGhlIGNhcnBldCBhZ2Fpbjxicj4NCkJ1dCBJIGxvdmUgeW91IHNvIG11Y2ggaXQgbWFrZXMgbXkgY2hlc3QgY2F2ZSBpbjxicj4NClllYWgsIEkgbG92ZSB5b3Ugc28gbXVjaCBpdCBtYWtlcyBteSBjaGVzdCBjYXZlIGluPGJyPg0KPGJyPg0KT3V0cm86PGJyPg0KKEd1aXRhciB0d2FuZywgaGVhdnkgZGlzdG9ydGlvbik8YnI-DQpTdG9wIGVhdGluZyBncmFzcy4uLiBwbGVhc2Ugc3RvcCBlYXRpbmcgZ3Jhc3MuLi48YnI-DQpJIG5lZWQgdG8gcGF5IHJlbnQsIGJ1dCBJIGJvdWdodCB5b3UgYSBicmFzczxicj4NCk5hbWUgdGFnIHdpdGggbXkgcGhvbmUgbnVtYmVyIG9uIGl0Ljxicj4NCihGYWRlIG91dCB3aXRoIHRoZSBzb3VuZCBvZiBhIHNxdWVha3kgdG95KTxicj4NCjwvYmxvY2txdW90ZT48L2Rpdj48ZGl2PjxiciBjbGVhcj0iYWxsIj48L2Rpdj48ZGl2Pjxicj48L2Rpdj48c3BhbiBjbGFzcz0iZ21haWxfc2lnbmF0dXJlX3ByZWZpeCI-LS0gPC9zcGFuPjxicj48ZGl2IGRpcj0ibHRyIiBjbGFzcz0iZ21haWxfc2lnbmF0dXJlIj48ZGl2IGRpcj0ibHRyIj48ZGl2PjxiIHN0eWxlPSJjb2xvcjpyZ2IoMTM2LDEzNiwxMzYpIj48c3BhbiBzdHlsZT0iY29sb3I6bmF2eTtmb250LWZhbWlseTpBcmlhbCxzYW5zLXNlcmlmO2ZvbnQtc2l6ZToxMHB0Ij48YnI-PC9zcGFuPjwvYj48L2Rpdj48YiBzdHlsZT0iY29sb3I6cmdiKDEzNiwxMzYsMTM2KSI-PHNwYW4gc3R5bGU9ImNvbG9yOm5hdnk7Zm9udC1mYW1pbHk6QXJpYWwsc2Fucy1zZXJpZjtmb250LXNpemU6MTBwdCI-VHlsZXIgQmFybmVzPC9zcGFuPjwvYj48c3BhbiBzdHlsZT0iY29sb3I6cmdiKDEzNiwxMzYsMTM2KTtmb250LWZhbWlseTpBcmlhbCxzYW5zLXNlcmlmIj48YnI-PC9zcGFuPjxmb250IGNvbG9yPSIjODg4ODg4Ij48Zm9udCBmYWNlPSJBcmlhbCwgc2Fucy1zZXJpZiIgc2l6ZT0iMSI-U3IuIERpcmVjdG9yIC0gSGlsbOKAmXMgRGlnaXRhbCBQcm9kdWN0IE1hbmFnZW1lbnTCoDwvZm9udD48L2ZvbnQ-PHNwYW4gc3R5bGU9ImNvbG9yOnJnYigxMzYsMTM2LDEzNik7Zm9udC1mYW1pbHk6QXJpYWwsc2Fucy1zZXJpZiI-PGJyPjwvc3Bhbj48Zm9udCBjb2xvcj0iIzg4ODg4OCIgc3R5bGU9ImZvbnQtZmFtaWx5OkFyaWFsLHNhbnMtc2VyaWY7Zm9udC1zaXplOjEwLjY2NjdweCI-SGlsbOKAmXMgUGV0IE51dHJpdGlvbiwgSW5jLjwvZm9udD48c3BhbiBzdHlsZT0iZm9udC1mYW1pbHk6QXJpYWwsc2Fucy1zZXJpZjtmb250LXNpemU6MTAuNjY2N3B4O2NvbG9yOm5hdnkiPsKgfDwvc3Bhbj48Zm9udCBjb2xvcj0iIzAwODA4MCIgc3R5bGU9ImZvbnQtZmFtaWx5OkFyaWFsLHNhbnMtc2VyaWY7Zm9udC1zaXplOjEwLjY2NjdweCI-wqA8L2ZvbnQ-PGZvbnQgc3R5bGU9ImZvbnQtZmFtaWx5OkFyaWFsLHNhbnMtc2VyaWY7Zm9udC1zaXplOjEwLjY2NjdweCIgY29sb3I9IiM4ODg4ODgiPjYxODAgU3ByaW50IFBhcmt3YXk8L2ZvbnQ-PHNwYW4gc3R5bGU9ImNvbG9yOnJnYigxMzYsMTM2LDEzNik7Zm9udC1mYW1pbHk6QXJpYWwsc2Fucy1zZXJpZjtmb250LXNpemU6OHB0Ij48c3BhbiBzdHlsZT0iY29sb3I6bmF2eSI-wqB8IDwvc3Bhbj5PdmVybGFuZCBQYXJrLCBLU8KgIDY2MjExwqA8L3NwYW4-PGRpdj48c3BhbiBzdHlsZT0iY29sb3I6bmF2eTtmb250LXNpemU6OHB0Ij48Zm9udCBmYWNlPSJBcmlhbCwgc2Fucy1zZXJpZiI-PGEgaHJlZj0ibWFpbHRvOnR5bGVyX2Jhcm5lc0BoaWxsc3BldC5jb20iIHRhcmdldD0iX2JsYW5rIj50eWxlcl9iYXJuZXNAaGlsbHNwZXQuY29tPC9hPsKgfMKgPC9mb250Pjwvc3Bhbj48c3BhbiBzdHlsZT0iY29sb3I6cmdiKDEzNiwxMzYsMTM2KTtmb250LWZhbWlseTpBcmlhbCxzYW5zLXNlcmlmO2ZvbnQtc2l6ZToxMC42NjY3cHgiPjQxNy01OTItMjQxODwvc3Bhbj48ZGl2PjxzcGFuIHN0eWxlPSJjb2xvcjpyZ2IoMTM2LDEzNiwxMzYpO2ZvbnQtZmFtaWx5OkFyaWFsLHNhbnMtc2VyaWY7Zm9udC1zaXplOjEwLjY2NjdweCI-aGUgLyBoaW0gLyBoaXM8L3NwYW4-PC9kaXY-PGRpdj48Zm9udCBjb2xvcj0iIzg4ODg4OCIgZmFjZT0iQXJpYWwsIHNhbnMtc2VyaWYiIHNpemU9IjEiPjxzcGFuPjxicj48L3NwYW4-PC9mb250PjxpIHN0eWxlPSJjb2xvcjpyZ2IoMTM2LDEzNiwxMzYpIj48c3BhbiBzdHlsZT0iZm9udC1mYW1pbHk6QXJpYWwsc2Fucy1zZXJpZjtmb250LXNpemU6OHB0Ij5UaGlzIGNvbW11bmljYXRpb24sIGluY2x1ZGluZyBhbnkvYWxsIGF0dGFjaG1lbnRzLCBpcyBmb3IgdGhlIHNvbGUgdXNlIG9mIHRoZSBpbnRlbmRlZCByZWNpcGllbnQgYW5kIG1heSBjb250YWluIGNvbmZpZGVudGlhbCBhbmQvb3IgcHJpdmlsZWdlZCBpbmZvcm1hdGlvbi7CoCBBbnkgcmV2aWV3LCByZWxpYW5jZSBvciBkaXN0cmlidXRpb24gYnkgb3RoZXJzIG9yIGZvcndhcmRpbmcgd2l0aDwvc3Bhbj48L2k-PGJyPjwvZGl2PjwvZGl2PjwvZGl2PjwvZGl2Pg0K",
+          "size": 3987
+        },
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "text/html; charset=\"UTF-8\""
+          },
+          {
+            "name": "Content-Transfer-Encoding",
+            "value": "quoted-printable"
+          }
+        ],
+        "mimeType": "text/html",
+        "partId": "1"
+      }
+    ]
+  },
+  "sizeEstimate": 13364,
+  "snippet": "Putting this on Hill&#39;s to Home right now... On Mon, Mar 9, 2026 at 12:08 PM &lt;anthony_tackett@hillspet.com&gt; wrote: Verse 1: Staring at the kibble on the linoleum floor I forgot to buy the",
+  "threadId": "19cd392722ccc1ec"
+}

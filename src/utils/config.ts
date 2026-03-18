@@ -119,7 +119,7 @@ const DEFAULTS: AliceConfig = {
         model: 'gpt-4o',
     },
     background: {
-        model: 'llama3.1:8b',
+        model: 'gemini-2.5-flash-lite',
     },
 };
 

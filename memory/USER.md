@@ -11,9 +11,10 @@
 - User checks their calendar regularly.
 - Prefers Fahrenheit over Celcius when talking about the weather. Imperial units over metric unless asked.
 - Personal project: Alice, AI agent runtime designed to run natively on Mac
-- Delegated task to check Nashville weather
-- Location: New York City
 - Resides in Independence, Missouri
+- My name is Anthony Tackett.
+- Tyler Martin reports directly to me.
+- Kati Callahan is a colleague.
 
 ## Active Projects
 

@@ -15,7 +15,7 @@ let heartbeatCount = 0;
  * Reads HEARTBEAT.md and sends it to the agent at regular intervals.
  * Every 3rd heartbeat, also consolidates memory files.
  * 
- * When CLI auth is active, heartbeat uses Ollama to avoid burning
+ * When CLI auth is active, heartbeat uses the background provider (gemini-2.5-flash-lite)
  * Code Assist API quota on background tasks.
  */
 export function startHeartbeat(

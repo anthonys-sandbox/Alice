@@ -28,8 +28,10 @@ export interface MemoryItem {
     file: string;       // 'memory' or 'user'
     section: string;     // e.g. 'Technical Knowledge', 'About Anthony'
     content: string;     // the fact text
+    confidence: number;  // 0.0–1.0 extraction confidence
     createdAt: string;
     updatedAt: string;
+    lastAccessed: string; // last time this fact was referenced
 }
 
 export class MemoryStore {
@@ -83,11 +85,16 @@ export class MemoryStore {
             CREATE INDEX IF NOT EXISTS idx_rel_to ON entity_relationships(to_id);
         `);
 
-        // Add embedding column if not already present
-        try {
-            this.db.exec('ALTER TABLE memory_items ADD COLUMN embedding BLOB');
-            log.info('Added embedding column to memory_items');
-        } catch { /* column already exists */ }
+        // Add columns if not already present
+        const migrations: [string, string][] = [
+            ['ALTER TABLE memory_items ADD COLUMN embedding BLOB', 'embedding'],
+            ['ALTER TABLE memory_items ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0', 'confidence'],
+            ['ALTER TABLE memory_items ADD COLUMN last_accessed TEXT NOT NULL DEFAULT (datetime(\'now\'))', 'last_accessed'],
+        ];
+        for (const [sql, col] of migrations) {
+            try { this.db.exec(sql); log.info(`Added ${col} column to memory_items`); }
+            catch { /* column already exists */ }
+        }
     }
 
     // ── CRUD Operations ───────────────────────────────────────
@@ -135,7 +142,7 @@ export class MemoryStore {
     /**
      * Add a new memory item. Returns the new item's ID.
      */
-    addItem(file: string, section: string, content: string): number {
+    addItem(file: string, section: string, content: string, confidence: number = 1.0): number {
         const cleaned = content.replace(/^[-•*]\s*/, '').trim();
         if (cleaned.length < 3) {
             throw new Error('Content too short');
@@ -148,12 +155,18 @@ export class MemoryStore {
             return existing.id;
         }
 
+        // Skip low-confidence facts
+        if (confidence < 0.5) {
+            log.debug('Low-confidence item skipped', { file, confidence, content: cleaned.slice(0, 50) });
+            return -1;
+        }
+
         const result = this.db.prepare(
-            'INSERT INTO memory_items (file, section, content) VALUES (?, ?, ?)'
-        ).run(file, section || '', cleaned);
+            'INSERT INTO memory_items (file, section, content, confidence) VALUES (?, ?, ?, ?)'
+        ).run(file, section || '', cleaned, confidence);
 
         const id = Number(result.lastInsertRowid);
-        log.info('Memory item added', { id, file, section });
+        log.info('Memory item added', { id, file, section, confidence: confidence.toFixed(2) });
         return id;
     }
 
@@ -298,10 +311,14 @@ export class MemoryStore {
         }
 
         for (const { section, items } of sections) {
+            // Filter out low-confidence items from the system prompt
+            const highConfidence = items.filter(item => item.confidence >= 0.5);
+            if (highConfidence.length === 0) continue;
+
             if (section) {
                 lines.push(`## ${section}`, '');
             }
-            for (const item of items) {
+            for (const item of highConfidence) {
                 lines.push(`- ${item.content}`);
             }
             lines.push('');
@@ -425,14 +442,36 @@ export class MemoryStore {
 
     // ── Internal ──────────────────────────────────────────────
 
+    /**
+     * Bump the last_accessed timestamp for a memory item (called when it's referenced).
+     */
+    touchItem(id: number): void {
+        this.db.prepare(
+            "UPDATE memory_items SET last_accessed = datetime('now') WHERE id = ?"
+        ).run(id);
+    }
+
+    /**
+     * Get stale items not accessed in the given number of days.
+     */
+    getStaleItems(olderThanDays: number = 30): MemoryItem[] {
+        const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
+        const rows = this.db.prepare(
+            'SELECT * FROM memory_items WHERE last_accessed < ? ORDER BY last_accessed ASC'
+        ).all(cutoff) as any[];
+        return rows.map(this.rowToItem);
+    }
+
     private rowToItem(row: any): MemoryItem {
         return {
             id: row.id,
             file: row.file,
             section: row.section,
             content: row.content,
+            confidence: row.confidence ?? 1.0,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            lastAccessed: row.last_accessed || row.created_at,
         };
     }
 
@@ -445,13 +484,16 @@ export class MemoryStore {
     /** Add or update an entity. Returns the entity ID. */
     upsertEntity(name: string, type: string, description: string = ''): number {
         const existing = this.db.prepare(
-            'SELECT id FROM entities WHERE name = ? COLLATE NOCASE'
+            'SELECT id, type, description FROM entities WHERE name = ? COLLATE NOCASE'
         ).get(name) as any;
 
         if (existing) {
+            // Don't overwrite a specific type with 'concept', or a description with empty
+            const newType = (type && type !== 'concept') ? type : existing.type;
+            const newDesc = description || existing.description || '';
             this.db.prepare(
                 "UPDATE entities SET type = ?, description = ?, updated_at = datetime('now') WHERE id = ?"
-            ).run(type, description, existing.id);
+            ).run(newType, newDesc, existing.id);
             return existing.id;
         }
 

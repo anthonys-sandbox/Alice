@@ -205,6 +205,7 @@ export interface MemoryUpdate {
     section?: string;   // e.g. "About Anthony", "Preferences", "Active Projects"
     content: string;    // the new fact or replacement content
     match?: string;     // for update/remove: text to find and replace/delete
+    confidence?: number; // 0.0–1.0 extraction confidence (default 1.0)
 }
 
 const FILE_MAP: Record<string, string> = {
@@ -237,12 +238,15 @@ async function updateMemoryViaStore(memoryDir: string, updates: MemoryUpdate[]):
     memoryWriteLock = true;
 
     let totalChanges = 0;
+    const apiKey = process.env.GEMINI_API_KEY || '';
 
     try {
         for (const update of updates) {
             const file = update.file; // 'user' or 'memory'
             const cleaned = update.content.replace(/^[-•*]\s*/, '').trim();
             if (cleaned.length < 5) continue;
+
+            const confidence = update.confidence ?? 1.0;
 
             if (update.action === 'remove' && update.match) {
                 const existing = memoryStore!.findByContent(file, update.match);
@@ -255,18 +259,29 @@ async function updateMemoryViaStore(memoryDir: string, updates: MemoryUpdate[]):
                 const existing = memoryStore!.findByContent(file, update.match);
                 if (existing) {
                     memoryStore!.updateItem(existing.id, cleaned);
+                    memoryStore!.touchItem(existing.id);
                     totalChanges++;
                     log.info(`Updated in ${file} via DB`, { id: existing.id, old: update.match, new: cleaned });
+                    // Re-embed updated content
+                    if (apiKey) memoryStore!.embedItem(existing.id, cleaned, apiKey);
                 } else {
                     // Match not found — treat as add
-                    memoryStore!.addItem(file, update.section || '', cleaned);
-                    totalChanges++;
-                    log.info(`Added to ${file} via DB (update target not found)`, { content: cleaned });
+                    const id = memoryStore!.addItem(file, update.section || '', cleaned, confidence);
+                    if (id > 0) {
+                        totalChanges++;
+                        log.info(`Added to ${file} via DB (update target not found)`, { content: cleaned });
+                        // Auto-embed new item
+                        if (apiKey) memoryStore!.embedItem(id, cleaned, apiKey);
+                    }
                 }
             } else if (update.action === 'add') {
                 try {
-                    memoryStore!.addItem(file, update.section || '', cleaned);
-                    totalChanges++;
+                    const id = memoryStore!.addItem(file, update.section || '', cleaned, confidence);
+                    if (id > 0) {
+                        totalChanges++;
+                        // Auto-embed new item
+                        if (apiKey) memoryStore!.embedItem(id, cleaned, apiKey);
+                    }
                 } catch {
                     // Duplicate — skip silently
                 }

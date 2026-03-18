@@ -132,15 +132,23 @@ export class Agent {
             this.activeProvider = 'ollama';
         }
 
-        // Initialize background provider — lightweight local model for non-user-facing tasks
+        // Initialize background provider — lightweight model for non-user-facing tasks
         // (memory extraction, auto-title, session compaction, heartbeat)
         try {
             const bgModel = config.background?.model || config.ollama.model;
-            this.backgroundProvider = new OAIProvider({
-                model: bgModel,
-                baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
-            });
-            log.info('Background provider: Ollama', { model: bgModel });
+            if (bgModel.startsWith('gemini-') && config.gemini.apiKey) {
+                // Route to Gemini API for gemini-* background models
+                const bgConfig = { ...config, gemini: { ...config.gemini, model: bgModel } };
+                this.backgroundProvider = new GeminiProvider(bgConfig);
+                log.info('Background provider: Gemini', { model: bgModel });
+            } else {
+                // Fall back to local Ollama for non-Gemini models
+                this.backgroundProvider = new OAIProvider({
+                    model: bgModel,
+                    baseUrl: `http://${config.ollama.host}:${config.ollama.port}/v1/chat/completions`,
+                });
+                log.info('Background provider: Ollama', { model: bgModel });
+            }
         } catch {
             log.warn('Background provider unavailable — background tasks will use primary model');
         }
@@ -922,7 +930,7 @@ export class Agent {
 
         registerTool({ name: 'calendar_list', description: 'List upcoming calendar events with titles, times, locations, attendees.', parameters: { type: 'object', properties: { max_results: { type: 'number', description: 'Max events (default 10)' }, time_min: { type: 'string', description: 'Start time RFC3339 (default: now)' }, time_max: { type: 'string', description: 'End time RFC3339 (optional)' } }, required: [] }, execute: async (a: any) => { const p: any = { calendarId: 'primary', maxResults: a.max_results || 10, singleEvents: true, orderBy: 'startTime', timeMin: a.time_min || new Date().toISOString() }; if (a.time_max) p.timeMax = a.time_max; return runGws(['calendar', 'events', 'list', '--params', JSON.stringify(p)]); } });
 
-        registerTool({ name: 'calendar_create', description: 'Create a calendar event with title, start/end, location, attendees.', parameters: { type: 'object', properties: { summary: { type: 'string', description: 'Event title' }, start: { type: 'string', description: 'Start RFC3339' }, end: { type: 'string', description: 'End RFC3339' }, location: { type: 'string', description: 'Location (optional)' }, description: { type: 'string', description: 'Description (optional)' }, attendees: { type: 'string', description: 'Comma-separated emails (optional)' } }, required: ['summary', 'start', 'end'] }, execute: async (a: any) => { const e: any = { summary: a.summary, start: { dateTime: a.start }, end: { dateTime: a.end } }; if (a.location) e.location = a.location; if (a.description) e.description = a.description; if (a.attendees) e.attendees = a.attendees.split(',').map((x: string) => ({ email: x.trim() })); return runGws(['calendar', 'events', 'insert', '--params', JSON.stringify({ calendarId: 'primary' }), '--json', JSON.stringify(e)]); } });
+        registerTool({ name: 'calendar_create', description: 'Create a calendar event. Start/end should be RFC3339 in the user\'s local timezone (e.g. 2026-03-17T14:00:00-05:00). The timeZone is auto-set to the server\'s local timezone.', parameters: { type: 'object', properties: { summary: { type: 'string', description: 'Event title' }, start: { type: 'string', description: 'Start RFC3339 in local timezone' }, end: { type: 'string', description: 'End RFC3339 in local timezone' }, location: { type: 'string', description: 'Location (optional)' }, description: { type: 'string', description: 'Description (optional)' }, attendees: { type: 'string', description: 'Comma-separated emails (optional)' } }, required: ['summary', 'start', 'end'] }, execute: async (a: any) => { const tz = Intl.DateTimeFormat().resolvedOptions().timeZone; const e: any = { summary: a.summary, start: { dateTime: a.start, timeZone: tz }, end: { dateTime: a.end, timeZone: tz } }; if (a.location) e.location = a.location; if (a.description) e.description = a.description; if (a.attendees) e.attendees = a.attendees.split(',').map((x: string) => ({ email: x.trim() })); return runGws(['calendar', 'events', 'insert', '--params', JSON.stringify({ calendarId: 'primary' }), '--json', JSON.stringify(e)]); } });
 
         registerTool({ name: 'drive_list', description: 'List Google Drive files. Optional query filter.', parameters: { type: 'object', properties: { query: { type: 'string', description: 'Drive search query (optional)' }, max_results: { type: 'number', description: 'Max files (default 20)' } }, required: [] }, execute: async (a: any) => { const p: any = { pageSize: a.max_results || 20, fields: 'files(id,name,mimeType,modifiedTime,size,webViewLink)' }; if (a.query) p.q = a.query; return runGws(['drive', 'files', 'list', '--params', JSON.stringify(p)]); } });
 
@@ -1880,22 +1888,32 @@ Use emoji and clean formatting.`,
             if (parts.length > 0) personaOverlay = '\n\n' + parts.join('\n\n');
         }
 
+        const tzName = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const currentDate = new Date().toLocaleString('en-US', {
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            timeZone: tzName,
             dateStyle: 'full',
             timeStyle: 'short',
         });
 
         this.systemPrompt = [
-            `You are ${personaName}, a personal AI assistant. Answer questions using the context below. Do NOT call tools for information already in your context.`,
+            `You are ${personaName}, a personal AI assistant.`,
             '',
             memoryPrompt,
             personaOverlay,
             '',
-            `Current date/time: ${currentDate}`,
+            `Current date/time: ${currentDate} (${tzName})`,
+            `When creating calendar events, use RFC3339 timestamps with the local timezone offset (e.g. 2026-03-17T14:00:00-05:00 for CDT).`,
             `Working directory: ${process.cwd()}`,
             '',
-            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, semantic_search, search_codebase, set_reminder, generate_image, canvas, get_location) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
+            `## Tool Priority (IMPORTANT)`,
+            `When answering questions about people, contacts, facts, or relationships:`,
+            `1. FIRST check your in-context memory above (<user_context>, <long_term_memory>) — if the answer is there, respond directly WITHOUT calling any tools.`,
+            `2. If not in context, use knowledge_graph (action: search) or search_memory to look it up.`,
+            `3. If still not found, use contacts_search.`,
+            `4. ONLY use gmail_search, gmail_read, or web_search as a LAST RESORT when steps 1-3 fail.`,
+            `ALWAYS produce a text response that answers the user's question. Never leave the user without an answer.`,
+            '',
+            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, semantic_search, search_codebase, set_reminder, generate_image, canvas, get_location, knowledge_graph, contacts_search, add_knowledge) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
             `IMPORTANT: When the user asks for charts, dashboards, visualizations, calculators, forms, or any interactive content, ALWAYS use the 'canvas' tool to push HTML directly inline in chat. Do NOT use write_file to create HTML files — use the canvas tool ONLY. If you absolutely must save a file, write it to ~/.alice/canvas/ (never to the working directory).`,
             `/no_think`,
         ].filter(Boolean).join('\n');
@@ -1913,6 +1931,105 @@ Use emoji and clean formatting.`,
     }
 
     /**
+     * Get additional context for voice mode: recent conversation history + session summaries.
+     * Gives voice mode awareness of what's been discussed in text chat.
+     */
+    getVoiceContext(): string {
+        const parts: string[] = [];
+
+        // 1. Recent conversation exchanges from current session (last 10 turns)
+        const history = this.getHistory();
+        if (history.length > 0) {
+            const recentExchanges: string[] = [];
+            const startIdx = Math.max(0, history.length - 20); // last 10 pairs = 20 messages
+            for (let i = startIdx; i < history.length; i++) {
+                const msg = history[i];
+                const text = msg.parts
+                    .filter((p: any) => 'text' in p && p.text)
+                    .map((p: any) => p.text)
+                    .join(' ')
+                    .slice(0, 200);
+                if (text.trim()) {
+                    const role = msg.role === 'user' ? 'User' : 'You';
+                    recentExchanges.push(`${role}: ${text}`);
+                }
+            }
+            if (recentExchanges.length > 0) {
+                parts.push('--- Recent conversation (for context) ---');
+                parts.push(recentExchanges.join('\n'));
+            }
+        }
+
+        // 2. Recent session summaries (last 3 sessions, for cross-session continuity)
+        try {
+            const summaries = this.sessionStore.getRecentSummaries(3);
+            if (summaries.length > 0) {
+                const summaryLines = summaries.map(s =>
+                    `• "${s.title}": ${s.summary}`
+                );
+                parts.push('--- Recent sessions ---');
+                parts.push(summaryLines.join('\n'));
+            }
+        } catch {
+            // Non-critical — skip if session store isn't available
+        }
+
+        // 3. Proactive recall from memory store (search using recent topics)
+        try {
+            const memStore = getMemoryStore();
+            if (memStore && history.length > 0) {
+                // Use the last user message as a recall query
+                const lastUserMsg = [...history]
+                    .reverse()
+                    .find(m => m.role === 'user');
+                if (lastUserMsg) {
+                    const query = lastUserMsg.parts
+                        .filter((p: any) => 'text' in p && p.text)
+                        .map((p: any) => p.text)
+                        .join(' ')
+                        .slice(0, 200);
+                    if (query.length > 10) {
+                        const results = memStore.searchItems(query);
+                        if (results.length > 0) {
+                            parts.push('--- Recalled memories ---');
+                            for (const item of results.slice(0, 5)) {
+                                parts.push(`• [${item.file}/${item.section}] ${item.content}`);
+                            }
+                        }
+
+                        // Also search the entity graph for people/entities mentioned
+                        const entities = memStore.searchEntities(query);
+                        if (entities.length > 0) {
+                            const entityParts: string[] = ['--- Known entities ---'];
+                            for (const entity of entities.slice(0, 5)) {
+                                let line = `• ${entity.name} (${entity.type})`;
+                                if (entity.description) line += `: ${entity.description}`;
+                                // Get relationships
+                                const relations = memStore.getRelations(entity.name);
+                                if (relations.length > 0) {
+                                    const relStrs = relations.map(r =>
+                                        r.direction === 'from'
+                                            ? `→ ${r.relation} → ${r.entity}`
+                                            : `← ${r.relation} ← ${r.entity}`
+                                    );
+                                    line += ` [${relStrs.join(', ')}]`;
+                                }
+                                entityParts.push(line);
+                            }
+                            parts.push(entityParts.join('\n'));
+                        }
+                    }
+                }
+            }
+        } catch {
+            // Non-critical
+        }
+
+        if (parts.length === 0) return '';
+        return '\n\n' + parts.join('\n');
+    }
+
+    /**
      * Save voice conversation transcripts to the session store.
      * Called by Gateway when a voice session ends.
      */
@@ -1925,6 +2042,12 @@ Use emoji and clean formatting.`,
         if (assistantText.trim()) {
             this.pushMessage({ role: 'model', parts: [{ text: `[Voice] ${assistantText.trim()}` }] });
         }
+
+        // Feed voice exchanges through memory extraction (same pipeline as text chat)
+        if (userText.trim() && assistantText.trim()) {
+            this.extractMemoryAsync(userText.trim(), assistantText.trim(), []);
+        }
+
         log.info('Voice transcript saved', {
             userChars: userText.length,
             assistantChars: assistantText.length,
@@ -2043,21 +2166,77 @@ Use emoji and clean formatting.`,
                 // Only include if part of a matched pair
                 if (keepIndices.has(i)) {
                     result.push(msg);
-                } else if (hasFunctionResponse) {
-                    log.debug('Dropping orphaned functionResponse turn', { index: i });
+                } else {
+                    // If the turn has both text and functionCall, preserve the text parts
+                    if (hasFunctionCall) {
+                        const textParts = msg.parts.filter((p: any) => !('functionCall' in p) && ('text' in p));
+                        if (textParts.length > 0) {
+                            result.push({ role: msg.role, parts: textParts });
+                        }
+                    }
+                    log.debug('Dropping orphaned function turn', { index: i, type: hasFunctionCall ? 'call' : 'response' });
                 }
             } else {
                 result.push(msg);
             }
         }
 
-        // Ensure the history starts with a user turn (Gemini API requirement)
-        while (result.length > 0 && result[0].role !== 'user') {
-            log.debug('Dropping leading non-user message');
-            result.shift();
+        // Pass 3: Final validation — verify strict Gemini ordering
+        // Every functionCall turn MUST be immediately followed by a functionResponse turn
+        const validated: LLMMessage[] = [];
+        for (let i = 0; i < result.length; i++) {
+            const msg = result[i];
+            const hasFunctionCall = msg.parts.some((p: any) => 'functionCall' in p);
+            const hasFunctionResponse = msg.parts.some((p: any) => 'functionResponse' in p);
+
+            if (hasFunctionCall) {
+                const next = result[i + 1];
+                if (next && next.parts.some((p: any) => 'functionResponse' in p)) {
+                    validated.push(msg);
+                    validated.push(next);
+                    i++; // Skip the response, we already added it
+                } else {
+                    log.warn('Pass 3: Dropping functionCall without adjacent response', { index: i });
+                    // Preserve any text/thought parts
+                    const textParts = msg.parts.filter((p: any) => !('functionCall' in p) && ('text' in p));
+                    if (textParts.length > 0) {
+                        validated.push({ role: msg.role, parts: textParts });
+                    }
+                }
+            } else if (hasFunctionResponse) {
+                // Orphaned response — previous message wasn't a functionCall
+                const prev = validated[validated.length - 1];
+                if (prev && prev.parts.some((p: any) => 'functionCall' in p)) {
+                    validated.push(msg); // Matched
+                } else {
+                    log.warn('Pass 3: Dropping orphaned functionResponse', { index: i });
+                }
+            } else {
+                validated.push(msg);
+            }
         }
 
-        return result;
+        // Ensure the history starts with a user turn (Gemini API requirement)
+        while (validated.length > 0 && validated[0].role !== 'user') {
+            log.debug('Dropping leading non-user message');
+            validated.shift();
+        }
+
+        // Debug: dump the validated history structure to find ordering issues
+        if (validated.length > 0) {
+            const structure = validated.map((m, i) => {
+                const partTypes = m.parts.map((p: any) => {
+                    const keys = Object.keys(p);
+                    if ('functionCall' in p) return `functionCall:${(p as any).functionCall?.name || '?'}`;
+                    if ('functionResponse' in p) return `functionResponse:${(p as any).functionResponse?.name || '?'}`;
+                    return keys.join(',');
+                });
+                return `[${i}] ${m.role}: ${partTypes.join(' | ')}`;
+            });
+            log.debug('sanitizeHistory output', { count: validated.length, structure: structure.join('; ') });
+        }
+
+        return validated;
     }
 
     /**
@@ -2355,9 +2534,34 @@ Use emoji and clean formatting.`,
                         return { text: response.text, toolsUsed, iterations };
                     }
 
-                    // Case 3: Empty response (unusual — treat as error)
-                    log.warn('Empty response from model', { iteration: iterations });
-                    const emptyMsg = 'I received an empty response. Could you rephrase your request?';
+                    // Case 3: Empty response — if tools were used, acknowledge; otherwise ask to rephrase
+                    log.warn('Empty response from model', { iteration: iterations, toolsUsed: toolsUsed.length });
+                    let emptyMsg: string;
+                    if (toolsUsed.length > 0) {
+                        // Tools ran but model didn't produce text — force a summarization
+                        log.warn('No text after tool calls, forcing summarization', { toolsUsed: toolsUsed.length });
+                        this.pushMessage({
+                            role: 'user',
+                            parts: [{ text: 'Now answer my original question using the tool results above. Respond directly and concisely.' }],
+                        });
+                        try {
+                            const summaryResponse = await this.provider.generateContent(
+                                this.systemPrompt,
+                                this.conversationHistory,
+                                [] // No tools — force text only
+                            );
+                            if (summaryResponse.text) {
+                                this.pushMessage({ role: 'model', parts: [{ text: summaryResponse.text }] });
+                                return { text: summaryResponse.text, toolsUsed, iterations };
+                            }
+                        } catch (err: any) {
+                            log.warn('Forced summarization failed', { error: err.message });
+                        }
+                        // Final fallback if summarization also fails
+                        emptyMsg = `Done! I used ${toolsUsed.length} tool${toolsUsed.length > 1 ? 's' : ''} (${[...new Set(toolsUsed)].join(', ')}) to process your request.`;
+                    } else {
+                        emptyMsg = 'I received an empty response. Could you rephrase your request?';
+                    }
                     this.pushMessage({ role: 'model', parts: [{ text: emptyMsg }] });
                     return { text: emptyMsg, toolsUsed, iterations };
 
@@ -2392,7 +2596,15 @@ Use emoji and clean formatting.`,
                     }
 
                     if (isModelError) {
-                        // 400/invalid errors can't self-correct — fail fast
+                        // Check if this is a function ordering error — auto-recover by clearing history
+                        if (errorMessage.includes('function response turn') && iterations === 1) {
+                            log.warn('Function ordering error detected — clearing corrupted history and retrying');
+                            // Keep only the current user message
+                            const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
+                            this.conversationHistory = lastUserMsg ? [lastUserMsg] : [];
+                            continue; // Retry with clean history
+                        }
+                        // Other 400/invalid errors can't self-correct — fail fast
                         const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
                         log.error('Non-recoverable model error, failing fast');
                         this.pushMessage({ role: 'model', parts: [{ text: errMsg }] });
@@ -2673,7 +2885,32 @@ Use emoji and clean formatting.`,
                         return { text: response.text, toolsUsed, iterations };
                     }
 
-                    const emptyMsg = 'I received an empty response. Could you rephrase your request?';
+                    let emptyMsg: string;
+                    if (toolsUsed.length > 0) {
+                        // Tools ran but model didn't produce text — force a summarization
+                        log.warn('No text after tool calls (streaming), forcing summarization', { toolsUsed: toolsUsed.length });
+                        this.pushMessage({
+                            role: 'user',
+                            parts: [{ text: 'Now answer my original question using the tool results above. Respond directly and concisely.' }],
+                        });
+                        try {
+                            const summaryResponse = await this.provider.generateContent(
+                                this.systemPrompt,
+                                this.conversationHistory,
+                                [] // No tools — force text only
+                            );
+                            if (summaryResponse.text) {
+                                this.pushMessage({ role: 'model', parts: [{ text: summaryResponse.text }] });
+                                emit('token', summaryResponse.text);
+                                return { text: summaryResponse.text, toolsUsed, iterations };
+                            }
+                        } catch (err: any) {
+                            log.warn('Forced summarization failed (streaming)', { error: err.message });
+                        }
+                        emptyMsg = `Done! I used ${toolsUsed.length} tool${toolsUsed.length > 1 ? 's' : ''} (${[...new Set(toolsUsed)].join(', ')}) to process your request.`;
+                    } else {
+                        emptyMsg = 'I received an empty response. Could you rephrase your request?';
+                    }
                     this.pushMessage({ role: 'model', parts: [{ text: emptyMsg }] });
                     return { text: emptyMsg, toolsUsed, iterations };
 
@@ -2723,6 +2960,13 @@ Use emoji and clean formatting.`,
                     }
 
                     if (isModelError) {
+                        // Check if this is a function ordering error — auto-recover by clearing history
+                        if (errorMessage.includes('function response turn') && iterations === 1) {
+                            log.warn('Function ordering error detected (streaming) — clearing corrupted history and retrying');
+                            const lastUserMsg = [...this.conversationHistory].reverse().find(m => m.role === 'user');
+                            this.conversationHistory = lastUserMsg ? [lastUserMsg] : [];
+                            continue; // Retry with clean history
+                        }
                         emit('error', `Model error: ${errorMessage.slice(0, 100)}`);
                         const errMsg = `Request error: ${errorMessage.slice(0, 200)}. This is likely a configuration issue.`;
                         log.error('Non-recoverable model error, failing fast');
@@ -2938,12 +3182,13 @@ Use emoji and clean formatting.`,
     /**
      * Extract facts from a conversation exchange and persist to MEMORY.md.
      * Runs asynchronously in the background — does not block the response.
-     * Uses the lightweight background model (local Ollama) to avoid burning API credits.
+     * Uses the lightweight background model to keep costs low.
      * Implements cooldown (60s) and batching (3 exchanges or 2-min timer) to reduce calls.
      */
     private extractMemoryAsync(userMessage: string, assistantResponse: string, toolsUsed: string[]): void {
-        // Only extract when the conversation was substantial
-        const isSubstantial = toolsUsed.length > 0 || userMessage.length > 100;
+        // Only extract when the user said something substantial (not just tool-triggered exchanges)
+        // Tool-only exchanges (weather lookups, calendar checks) produce noisy, ephemeral facts
+        const isSubstantial = userMessage.length > 100;
         if (!isSubstantial) return;
 
         // Cooldown: skip if less than 60 seconds since last extraction
@@ -2986,7 +3231,7 @@ Use emoji and clean formatting.`,
 
     /**
      * Flush all pending extractions in a single batch LLM call.
-     * Uses the background provider (local Ollama) to avoid burning API credits.
+     * Uses the background provider to keep costs low.
      */
     private flushExtractions(): void {
         const exchanges = this.pendingExtractions.splice(0);
@@ -3009,7 +3254,27 @@ Use emoji and clean formatting.`,
                     `--- Exchange ${i + 1} ---\nUSER: ${ex.userMessage.slice(0, 300)}\nASSISTANT: ${ex.assistantResponse.slice(0, 300)}`
                 ).join('\n\n');
 
-                const extractPrompt = `Analyze these conversation exchanges and extract facts to store in memory files.
+                const extractPrompt = `Analyze these conversation exchanges and extract ONLY durable, personal facts to store in memory files.
+
+ONLY extract facts that will still be true weeks or months from now. Examples of GOOD facts:
+- Personal preferences, habits, communication style
+- Names, roles, relationships of people the user mentions
+- Project names, tech stacks, architecture decisions
+- Work patterns, scheduling preferences
+
+DO NOT extract (respond with empty updates instead):
+- Current weather, temperatures, or ephemeral conditions
+- Task/job statuses, progress updates, or one-time actions taken
+- Tool execution details ("searched the web", "sent an email", "task completed")
+- Temporary states ("task is running", "research in progress")
+- Information that is just restating what a tool returned (e.g. email contents, search results)
+- Transient data that changes frequently
+
+For each fact, assign a CONFIDENCE score (0.0 to 1.0):
+- 1.0 = explicitly stated by the user ("I prefer dark mode")
+- 0.8 = strongly implied from context
+- 0.6 = reasonable inference
+- Below 0.5 = speculative (don't include these)
 
 Route each fact to the correct file:
 - "user" → personal info, preferences, habits, name, birthday, work style
@@ -3022,10 +3287,17 @@ For each fact, specify an action:
 
 For "user" file facts, specify a section: "About Anthony", "Preferences", or "Active Projects".
 
+Also extract ENTITIES (people, projects, tools, places) and RELATIONSHIPS between them.
+
 ${transcript}
 
-Respond with ONLY valid JSON (no markdown, no code fences). If nothing to extract, respond: {"updates":[]}
-Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","content":"fact here"},{"file":"memory","action":"add","content":"fact here"}]}`;
+Respond with ONLY valid JSON (no markdown, no code fences). If nothing worth remembering, respond: {"updates":[],"entities":[],"relations":[]}
+Format:
+{
+  "updates": [{"file":"user","action":"add","section":"About Anthony","content":"fact","confidence":0.9}],
+  "entities": [{"name":"Tyler Martin","type":"person","description":"Colleague at Hill's Pet Nutrition"}],
+  "relations": [{"from":"Tyler Martin","to":"Hill's Pet Nutrition","relation":"works_at"}]
+}`;
 
                 const result = await provider.generateContent(
                     'You are a JSON fact extraction system. Output only valid JSON. Be concise. /no_think',
@@ -3041,7 +3313,11 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
                 const jsonMatch = text.match(/\{[\s\S]*\}/);
                 if (jsonMatch) jsonStr = jsonMatch[0];
 
-                let parsed: { updates?: MemoryUpdate[] };
+                let parsed: {
+                    updates?: (MemoryUpdate & { confidence?: number })[];
+                    entities?: { name: string; type: string; description?: string }[];
+                    relations?: { from: string; to: string; relation: string }[];
+                };
                 try {
                     parsed = JSON.parse(jsonStr);
                 } catch {
@@ -3058,25 +3334,53 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
                     return;
                 }
 
-                if (!parsed.updates || parsed.updates.length === 0) return;
+                // Process memory updates (with confidence)
+                if (parsed.updates && parsed.updates.length > 0) {
+                    const validUpdates: MemoryUpdate[] = parsed.updates
+                        .filter(u =>
+                            u && u.file && u.action && u.content &&
+                            ['user', 'memory'].includes(u.file) &&
+                            ['add', 'update', 'remove'].includes(u.action) &&
+                            (u.confidence === undefined || u.confidence >= 0.5)
+                        )
+                        .map(u => ({
+                            ...u,
+                            confidence: u.confidence ?? 0.8,
+                        }));
 
-                // Validate and sanitize updates
-                const validUpdates = parsed.updates.filter(u =>
-                    u && u.file && u.action && u.content &&
-                    ['user', 'memory'].includes(u.file) &&
-                    ['add', 'update', 'remove'].includes(u.action)
-                );
+                    if (validUpdates.length > 0) {
+                        const changed = await updateMemory(memoryDir, validUpdates);
+                        if (changed > 0) {
+                            log.info(`Smart memory update (batch of ${exchanges.length})`, {
+                                changes: changed,
+                                updates: validUpdates.map(u => `${u.action}:${u.file}:${u.confidence?.toFixed(1)}`),
+                            });
+                            // Refresh context so next response uses updated memory
+                            this.refreshContext();
+                        }
+                    }
+                }
 
-                if (validUpdates.length === 0) return;
-
-                const changed = await updateMemory(memoryDir, validUpdates);
-                if (changed > 0) {
-                    log.info(`Smart memory update (batch of ${exchanges.length})`, {
-                        changes: changed,
-                        updates: validUpdates.map(u => `${u.action}:${u.file}`),
-                    });
-                    // Refresh context so next response uses updated memory
-                    this.refreshContext();
+                // Process entity graph (#4 — auto-populate entities and relationships)
+                const store = getMemoryStore();
+                if (store && parsed.entities && parsed.entities.length > 0) {
+                    for (const entity of parsed.entities) {
+                        if (entity.name && entity.type) {
+                            store.upsertEntity(entity.name, entity.type, entity.description || '');
+                        }
+                    }
+                    log.info(`Entity graph updated`, { entities: parsed.entities.length });
+                }
+                if (store && parsed.relations && parsed.relations.length > 0) {
+                    for (const rel of parsed.relations) {
+                        if (rel.from && rel.to && rel.relation) {
+                            // Ensure both entities exist before linking
+                            store.upsertEntity(rel.from, 'concept', '');
+                            store.upsertEntity(rel.to, 'concept', '');
+                            store.addRelation(rel.from, rel.to, rel.relation);
+                        }
+                    }
+                    log.info(`Entity relations added`, { relations: parsed.relations.length });
                 }
             } catch (err: any) {
                 log.debug('Memory extraction failed (non-critical)', { error: err.message });
@@ -3120,7 +3424,7 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
     }
 
     /**
-     * Get the background provider (for heartbeat, consolidation — uses local Ollama).
+     * Get the background provider (for heartbeat, consolidation — uses gemini-2.5-flash-lite or local Ollama).
      * Falls back to the primary provider if background is unavailable.
      */
     getBackgroundProvider(): any {
@@ -3136,11 +3440,16 @@ Format: {"updates":[{"file":"user","action":"add","section":"About Anthony","con
         let bgProvider: ChatProvider;
         if (opts?.model) {
             // Create an ad-hoc provider for the specified model
-            const { OAIProvider } = await import('./providers/oai-provider.js');
-            bgProvider = new OAIProvider({
-                model: opts.model,
-                baseUrl: `http://localhost:11434/v1/chat/completions`,
-            });
+            if (opts.model.startsWith('gemini-') && this.config.gemini.apiKey) {
+                const adHocConfig = { ...this.config, gemini: { ...this.config.gemini, model: opts.model } };
+                bgProvider = new GeminiProvider(adHocConfig);
+            } else {
+                const { OAIProvider } = await import('./providers/oai-provider.js');
+                bgProvider = new OAIProvider({
+                    model: opts.model,
+                    baseUrl: `http://localhost:11434/v1/chat/completions`,
+                });
+            }
         } else if (opts?.useMainProvider) {
             bgProvider = this.provider;
         } else {
@@ -3301,6 +3610,26 @@ ${transcript.slice(0, 3000)}`,
                     Array.isArray(parsed.topics) ? parsed.topics : []
                 );
                 log.info('Auto-generated session summary', { sessionId });
+
+                // #6 — Auto-populate Knowledge Base from session summary
+                if (this.kb && parsed.summary.length > 20) {
+                    try {
+                        const sessionTitle = this.sessionStore.listSessions(50)
+                            .find(s => s.id === sessionId)?.title || 'Untitled';
+                        this.kb.addEntry(
+                            sessionTitle,
+                            parsed.summary,
+                            {
+                                sources: [`session:${sessionId}`],
+                                tags: Array.isArray(parsed.topics) ? parsed.topics : [],
+                                entryType: 'session_insight',
+                            }
+                        );
+                        log.info('KB entry created from session', { sessionId, topic: sessionTitle });
+                    } catch (kbErr: any) {
+                        log.debug('KB auto-populate failed', { error: kbErr.message });
+                    }
+                }
             }
         } catch (err: any) {
             log.warn('Failed to auto-summarize session', { sessionId, error: err.message });

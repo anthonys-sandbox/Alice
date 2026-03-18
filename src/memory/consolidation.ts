@@ -135,12 +135,53 @@ export class MemoryConsolidator {
                 }
             }
 
-            log.info('Consolidation complete', { consolidated, removed });
+            // Prune stale memory items (#5 — TTL decay)
+            const pruned = this.pruneStaleItems(60); // 60 days
+            if (pruned > 0) {
+                log.info('Pruned stale memory items', { pruned });
+            }
+
+            log.info('Consolidation complete', { consolidated, removed, pruned });
         } finally {
             this.running = false;
         }
 
         return { consolidated, removed };
+    }
+
+    /**
+     * Prune memory items that haven't been accessed in `olderThanDays` days.
+     * Keeps a minimum of `minKeep` items to prevent over-pruning.
+     * Returns the number of items deleted.
+     */
+    pruneStaleItems(olderThanDays: number = 60, minKeep: number = 20): number {
+        try {
+            // Check if memory_items table exists and has last_accessed column
+            const cutoff = new Date(Date.now() - olderThanDays * 86400_000).toISOString();
+
+            // Count total items first
+            const total = (this.db.prepare(
+                'SELECT COUNT(*) as c FROM memory_items'
+            ).get() as any)?.c ?? 0;
+
+            if (total <= minKeep) return 0; // Don't prune if below minimum
+
+            // Find stale items (low confidence first, then oldest access)
+            const maxDelete = Math.max(0, total - minKeep);
+            const result = this.db.prepare(`
+                DELETE FROM memory_items WHERE id IN (
+                    SELECT id FROM memory_items
+                    WHERE last_accessed < ?
+                    ORDER BY confidence ASC, last_accessed ASC
+                    LIMIT ?
+                )
+            `).run(cutoff, maxDelete);
+
+            return result.changes;
+        } catch (err: any) {
+            log.debug('Stale item pruning skipped', { error: err.message });
+            return 0;
+        }
     }
 
     /**

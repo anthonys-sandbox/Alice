@@ -1577,24 +1577,26 @@ export class Gateway {
 
               // Use Alice's full system prompt (includes user memories, persona, etc.)
               // with a voice-specific overlay for conversational style
+              // Plus inject recent conversation context for parity with text chat
               const basePrompt = this.agent.getSystemPrompt();
-              const sysPrompt = basePrompt + '\n\nIMPORTANT: This is a live voice conversation. Keep responses natural, conversational, and concise. Avoid markdown formatting, code blocks, or long lists. Respond as if speaking to a friend.';
+              const voiceContext = this.agent.getVoiceContext();
+              const sysPrompt = basePrompt + voiceContext + '\n\nIMPORTANT: This is a live voice conversation. Keep responses natural, conversational, and concise. Avoid markdown formatting, code blocks, or long lists. Respond as if speaking to a friend.';
 
-              // Select voice-appropriate tools (skip file writing, code, heavy tools)
-              const voiceToolNames = new Set([
-                'web_search', 'search_memory', 'semantic_search', 'set_reminder',
-                'cancel_reminder', 'list_reminders', 'get_location', 'web_fetch',
-                'bash', 'read_file', 'list_directory', 'git_status',
-                'create_cron_job', 'list_cron_jobs', 'delete_cron_job',
+              // Use the same core tool set as text chat, minus heavy/blocking tools
+              // that are inappropriate for real-time voice conversations
+              const VOICE_EXCLUDED_TOOLS = new Set([
+                'gemini_code',         // Can take 5+ minutes
+                'deep_research',       // Multi-phase, very slow
+                'delegate_tasks',      // Spawns sub-agents, slow
+                'parallel_tasks',      // Spawns sub-agents, slow
+                'generate_image',      // Slow, returns no useful voice output
+                'generate_document',   // Slow, multi-step
+                'start_background_task', // Async, not useful in voice context
+                'analyze_screenshot',  // Needs Puppeteer, slow
               ]);
-              const { getAllTools } = await import('../runtime/tools/registry.js');
-              const voiceTools = getAllTools()
-                .filter(t => voiceToolNames.has(t.name) || t.name.startsWith('mcp_'))
-                .map(t => ({
-                  name: t.name,
-                  description: t.description,
-                  parameters: t.parameters,
-                }));
+              const { toGeminiFunctionDeclarations } = await import('../runtime/tools/registry.js');
+              const voiceTools = toGeminiFunctionDeclarations()
+                .filter(t => !VOICE_EXCLUDED_TOOLS.has(t.name));
 
               const liveSession = await liveAi.live.connect({
                 model: liveModel,
@@ -1665,6 +1667,22 @@ export class Gateway {
                         status: 'thinking',
                       }));
 
+                      // Sensitive tools that require verbal confirmation before execution
+                      const VOICE_SENSITIVE_TOOLS = new Set([
+                        'gmail_send',
+                        'compose_email',
+                        'calendar_create',
+                        'github_create_issue',
+                        'docs_create',
+                        'sheets_write',
+                      ]);
+
+                      // Initialize pending confirmations map on the WebSocket if needed
+                      if (!(ws as any)._pendingConfirmations) {
+                        (ws as any)._pendingConfirmations = new Map<string, { tool: string; args: any; timestamp: number }>();
+                      }
+                      const pendingMap = (ws as any)._pendingConfirmations as Map<string, { tool: string; args: any; timestamp: number }>;
+
                       // Async IIFE — onmessage is sync but tool execution is async
                       (async () => {
                         const { executeTool } = await import('../runtime/tools/registry.js');
@@ -1674,25 +1692,94 @@ export class Gateway {
                         const functionResponses: Array<{ name: string; id: string; response: Record<string, any> }> = [];
                         for (const fc of message.toolCall!.functionCalls!) {
                           const toolName = fc.name || 'unknown';
-                          log.info('Voice tool call', { name: toolName, args: Object.keys(fc.args || {}) });
+                          const toolArgs = fc.args || {};
+                          log.info('Voice tool call', { name: toolName, args: Object.keys(toolArgs) });
                           ws.send(JSON.stringify({
                             type: 'voice_tool_call',
                             tool: toolName,
                           }));
 
-                          try {
-                            const result = await executeTool(toolName, fc.args || {});
-                            functionResponses.push({
-                              name: toolName,
-                              id: fc.id || '',
-                              response: { result },
-                            });
-                          } catch (err: any) {
-                            functionResponses.push({
-                              name: toolName,
-                              id: fc.id || '',
-                              response: { error: err.message || 'Tool execution failed' },
-                            });
+                          // Check if this is a sensitive tool requiring verbal confirmation
+                          if (VOICE_SENSITIVE_TOOLS.has(toolName)) {
+                            const confirmKey = toolName; // Simple: one pending per tool type
+
+                            // Check for existing pending confirmation
+                            const pending = pendingMap.get(confirmKey);
+                            const now = Date.now();
+
+                            if (pending && (now - pending.timestamp) < 60_000) {
+                              // Confirmed! User said yes — execute for real
+                              log.info('Voice tool confirmed, executing', { tool: toolName });
+                              pendingMap.delete(confirmKey);
+                              ws.send(JSON.stringify({
+                                type: 'voice_status',
+                                status: `Executing ${toolName}...`,
+                              }));
+
+                              try {
+                                const result = await executeTool(toolName, toolArgs);
+                                functionResponses.push({
+                                  name: toolName,
+                                  id: fc.id || '',
+                                  response: { result },
+                                });
+                              } catch (err: any) {
+                                functionResponses.push({
+                                  name: toolName,
+                                  id: fc.id || '',
+                                  response: { error: err.message || 'Tool execution failed' },
+                                });
+                              }
+                            } else {
+                              // First call — request verbal confirmation
+                              pendingMap.set(confirmKey, { tool: toolName, args: toolArgs, timestamp: now });
+
+                              // Build a human-readable preview of the action
+                              let preview = `execute ${toolName}`;
+                              if (toolName === 'gmail_send' || toolName === 'compose_email') {
+                                preview = `send an email to ${toolArgs.to || 'someone'} with subject "${toolArgs.subject || 'no subject'}"`;
+                              } else if (toolName === 'calendar_create') {
+                                preview = `create a calendar event: "${toolArgs.summary || toolArgs.title || 'untitled'}"`;
+                              } else if (toolName === 'github_create_issue') {
+                                preview = `create a GitHub issue: "${toolArgs.title || 'untitled'}"`;
+                              } else if (toolName === 'docs_create') {
+                                preview = `create a Google Doc: "${toolArgs.title || 'untitled'}"`;
+                              } else if (toolName === 'sheets_write') {
+                                preview = `write data to Google Sheets`;
+                              }
+
+                              log.info('Voice tool requires confirmation', { tool: toolName, preview });
+                              ws.send(JSON.stringify({
+                                type: 'voice_approval_required',
+                                tool: toolName,
+                                preview,
+                              }));
+
+                              functionResponses.push({
+                                name: toolName,
+                                id: fc.id || '',
+                                response: {
+                                  status: 'CONFIRMATION_REQUIRED',
+                                  message: `I need your verbal approval before I ${preview}. Please confirm by saying "yes" or "go ahead", or say "no" to cancel.`,
+                                },
+                              });
+                            }
+                          } else {
+                            // Non-sensitive tool — execute immediately
+                            try {
+                              const result = await executeTool(toolName, toolArgs);
+                              functionResponses.push({
+                                name: toolName,
+                                id: fc.id || '',
+                                response: { result },
+                              });
+                            } catch (err: any) {
+                              functionResponses.push({
+                                name: toolName,
+                                id: fc.id || '',
+                                response: { error: err.message || 'Tool execution failed' },
+                              });
+                            }
                           }
                         }
 

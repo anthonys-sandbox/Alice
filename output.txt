@@ -1,0 +1,26 @@
+From: Smartsheet Automation <automation@app.smartsheet.com>
+Subject: New Comment on Pro Social: April CE (HVA Self Paced Course - Nutritional Management of Pruritic Dogs) (SCS2762)
+Date: Mon, 09 Mar 2026 17:02:11 +0000
+--------------------
+Snippet: New Comment on Pro Social: April CE (HVA Self Paced Course - Nutritional Management of Pruritic Dogs) (SCS2762) The following comment was added to a ticket you are following: Tyler Martin - @
+
+Body Preview:
+<!DOCTYPE html>
+<html>
+    <head>
+
+
+    </head>
+    <body style="background-color: #ffffff; font-family:'Inter', 'Arial','Helvetica', 'Sans-Serif', 'Segoe UI Emoji', 'Segoe UI Symbol'; color: var(--Neutrals-dark-40, #111); font-feature-settings: 'liga' off, 'clig' off; font-weight:400; font-size: 0.9375rem; font-style: normal; line-height: 1.4375rem;">
+        <div align="center" style="width: 100%; margin: auto;">
+            <table cellpadding="0" cellspacing="0" style="width: 100%; background-color: #e3ebf4; padding-left: 30px; padding-right: 30px;  font-family: Roboto, Arial; font-size:13px;">
+                <tbody>
+                    <tr>
+                        <td>
+                            <table align="center" cellpadding="0" cellspacing="0" border="0"
+                                   style="width: 100%; max-width: 628px">
+                                <tbody>
+                                    <tr>
+                                        <td>
+                        
+...

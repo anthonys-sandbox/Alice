@@ -424,6 +424,15 @@ export class SessionStore {
         sessionTitle: string;
     }> {
         try {
+            // Sanitize FTS5 query: strip special chars and quote each word
+            const sanitized = query
+                .replace(/[^\w\s]/g, ' ')   // Strip non-word, non-space chars
+                .split(/\s+/)               // Split into words
+                .filter(w => w.length > 1)  // Drop single chars
+                .map(w => `"${w}"`)          // Quote each word
+                .join(' ');
+            if (!sanitized) return [];
+            
             const rows = this.db.prepare(`
                 SELECT f.content, f.session_id, f.role,
                        COALESCE(s.title, 'Untitled') as session_title
@@ -432,7 +441,7 @@ export class SessionStore {
                 WHERE messages_fts MATCH ?
                 ORDER BY rank
                 LIMIT ?
-            `).all(query, limit) as Array<{
+            `).all(sanitized, limit) as Array<{
                 content: string;
                 session_id: string;
                 role: string;
