@@ -50,7 +50,8 @@ export class Gateway {
       config.googleChat.sheetId,
       config.googleChat.oauthClientId,
       config.googleChat.oauthClientSecret,
-      config.googleChat.serviceAccountKeyPath
+      config.googleChat.serviceAccountKeyPath,
+      config.googleChat.firebaseProjectId
     );
     this.chat.setAgent(this.agent);
 

@@ -8,35 +8,45 @@ import type { Agent } from '../runtime/agent.js';
 
 const log = createLogger('GoogleChat');
 
+type RelayMode = 'firestore' | 'sheets' | 'none';
+
 /**
- * Google Chat adapter — Google Sheets Queue Mode.
+ * Google Chat adapter — supports two relay modes:
  *
- * Polls a Google Sheet for new messages using the Sheets API (OAuth2).
- * Apps Script writes incoming Chat messages to the sheet.
- * This adapter reads them, processes with the agent, and writes responses back.
- * Apps Script picks up the responses and returns them to Google Chat.
+ * 1. **Firestore (preferred)** — real-time listener via onSnapshot, zero polling.
+ *    Requires FIREBASE_PROJECT_ID + service account key.
+ *    Apps Script writes to Firestore, Alice listens instantly.
  *
- * Sheet columns: id | timestamp | sender | text | status | response
+ * 2. **Sheets (fallback)** — polls a Google Sheet every 30s.
+ *    Apps Script writes incoming Chat messages to the sheet.
+ *    Higher API usage but simpler setup.
+ *
+ * Both modes use the Chat API directly for sending responses.
  */
 export class GoogleChatAdapter {
     private sheetId: string;
     private oauthClientId: string;
     private oauthClientSecret: string;
+    private firebaseProjectId: string;
     private agent: Agent | null = null;
     private pollInterval: ReturnType<typeof setInterval> | null = null;
     private processedIds: Set<string> = new Set();
     private chatAuth: GoogleAuth | null = null;
     private lastSpaceName: string | null = null;
+    private relayMode: RelayMode = 'none';
+    private firestoreUnsubscribe: (() => void) | null = null;
 
     constructor(
         sheetId: string,
         oauthClientId: string,
         oauthClientSecret: string,
-        serviceAccountKeyPath?: string
+        serviceAccountKeyPath?: string,
+        firebaseProjectId?: string
     ) {
         this.sheetId = sheetId;
         this.oauthClientId = oauthClientId;
         this.oauthClientSecret = oauthClientSecret;
+        this.firebaseProjectId = firebaseProjectId || '';
 
         // Set up service account auth for Chat API if key is available
         if (serviceAccountKeyPath && existsSync(serviceAccountKeyPath)) {
@@ -52,10 +62,15 @@ export class GoogleChatAdapter {
             }
         }
 
-        if (sheetId && oauthClientId && oauthClientSecret) {
-            log.info('Google Chat adapter initialized (Sheets queue mode)');
+        // Determine relay mode
+        if (this.firebaseProjectId) {
+            this.relayMode = 'firestore';
+            log.info('Google Chat adapter initialized (Firestore real-time mode)');
+        } else if (sheetId && oauthClientId && oauthClientSecret) {
+            this.relayMode = 'sheets';
+            log.info('Google Chat adapter initialized (Sheets polling mode — consider migrating to Firestore)');
         } else {
-            log.warn('Google Chat not configured — set RELAY_SHEET_ID, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET in .env');
+            log.warn('Google Chat not configured — set FIREBASE_PROJECT_ID or RELAY_SHEET_ID in .env');
         }
     }
 
@@ -63,14 +78,209 @@ export class GoogleChatAdapter {
         this.agent = agent;
     }
 
-    async startListening(pollMs: number = 3000): Promise<void> {
-        if (!this.sheetId || !this.oauthClientId || !this.oauthClientSecret) {
-            log.debug('Sheets queue not configured — skipping polling');
+    async startListening(pollMs: number = 30000): Promise<void> {
+        if (!this.agent) {
+            log.error('Agent not bound — call setAgent() before startListening()');
             return;
         }
 
-        if (!this.agent) {
-            log.error('Agent not bound — call setAgent() before startListening()');
+        if (this.relayMode === 'firestore') {
+            return this.startFirestoreListener();
+        } else if (this.relayMode === 'sheets') {
+            return this.startSheetsPolling(pollMs);
+        } else {
+            log.debug('No relay configured — skipping');
+        }
+    }
+
+    stopListening(): void {
+        if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+            this.pollInterval = null;
+            log.info('Stopped Sheets polling');
+        }
+        if (this.firestoreUnsubscribe) {
+            this.firestoreUnsubscribe();
+            this.firestoreUnsubscribe = null;
+            log.info('Stopped Firestore listener');
+        }
+    }
+
+    // ─── Firestore Real-Time Mode ──────────────────────────────────────────
+
+    private async startFirestoreListener(): Promise<void> {
+        try {
+            const { initializeApp, cert, getApps } = await import('firebase-admin/app');
+            const { getFirestore } = await import('firebase-admin/firestore');
+
+            // Initialize Firebase Admin if not already initialized
+            if (getApps().length === 0) {
+                const saKeyPath = process.env.GOOGLE_SA_KEY_PATH;
+                if (saKeyPath && existsSync(saKeyPath)) {
+                    const serviceAccount = JSON.parse(readFileSync(saKeyPath, 'utf-8'));
+                    initializeApp({
+                        credential: cert(serviceAccount),
+                        projectId: this.firebaseProjectId,
+                    });
+                } else {
+                    // Try application default credentials
+                    initializeApp({ projectId: this.firebaseProjectId });
+                }
+            }
+
+            const db = getFirestore();
+            const messagesRef = db.collection('alice-chat-relay');
+
+            // Query for pending messages
+            const pendingQuery = messagesRef
+                .where('status', '==', 'pending')
+                .orderBy('timestamp', 'asc');
+
+            // Real-time listener — fires on new pending messages
+            this.firestoreUnsubscribe = pendingQuery.onSnapshot(
+                (snapshot) => {
+                    snapshot.docChanges().forEach((change) => {
+                        if (change.type === 'added') {
+                            const data = change.doc.data();
+                            const docId = change.doc.id;
+
+                            // Skip already processed
+                            if (this.processedIds.has(docId)) return;
+                            this.processedIds.add(docId);
+
+                            // Process async
+                            this.processFirestoreMessage(db, docId, data).catch((err) => {
+                                log.error('Firestore message processing failed', { docId, error: err.message });
+                            });
+                        }
+                    });
+                },
+                (error) => {
+                    log.error('Firestore listener error', { error: error.message });
+                    // Attempt to reconnect after 10s
+                    setTimeout(() => {
+                        log.info('Attempting to reconnect Firestore listener...');
+                        this.startFirestoreListener().catch(e =>
+                            log.error('Firestore reconnect failed', { error: e.message })
+                        );
+                    }, 10000);
+                }
+            );
+
+            // Trim processed set periodically
+            if (this.processedIds.size > 500) {
+                const arr = Array.from(this.processedIds);
+                this.processedIds = new Set(arr.slice(-250));
+            }
+
+            log.info('🔥 Firestore real-time listener active — zero polling, instant message delivery');
+        } catch (err: any) {
+            log.error('Failed to start Firestore listener', { error: err.message });
+            // Fall back to Sheets if available
+            if (this.sheetId && this.oauthClientId) {
+                log.warn('Falling back to Sheets polling mode');
+                this.relayMode = 'sheets';
+                return this.startSheetsPolling(30000);
+            }
+        }
+    }
+
+    private async processFirestoreMessage(
+        db: FirebaseFirestore.Firestore,
+        docId: string,
+        data: FirebaseFirestore.DocumentData
+    ): Promise<void> {
+        const { sender, text, spaceName } = data;
+
+        // Remember space name for outbound messages
+        if (spaceName && !this.lastSpaceName) {
+            this.lastSpaceName = spaceName;
+            log.info('Learned Chat space name', { spaceName });
+        }
+
+        log.info(`💬 Message from ${sender}: ${(text || '').slice(0, 80)}`);
+
+        if (!this.agent || !text) return;
+
+        let responseText: string;
+        const trimmedCmd = text.trim().toLowerCase();
+
+        if (trimmedCmd.startsWith('/')) {
+            const cmdResponse = await this.handleChatCommand(trimmedCmd);
+            if (cmdResponse !== null) {
+                responseText = formatForGoogleChat(cmdResponse);
+            } else {
+                try {
+                    const result = await this.agent.processMessage(text);
+                    const toolInfo = result.toolsUsed.length > 0
+                        ? `\n\n_Tools: ${result.toolsUsed.join(', ')} | Iterations: ${result.iterations}_`
+                        : '';
+                    responseText = formatForGoogleChat(result.text) + toolInfo;
+                } catch (err: any) {
+                    log.error('Error processing message', { error: err.message });
+                    responseText = `❌ Error: ${err.message}`;
+                }
+            }
+        } else {
+            try {
+                const result = await this.agent.processMessage(text);
+                const toolInfo = result.toolsUsed.length > 0
+                    ? `\n\n_Tools: ${result.toolsUsed.join(', ')} | Iterations: ${result.iterations}_`
+                    : '';
+                responseText = formatForGoogleChat(result.text) + toolInfo;
+            } catch (err: any) {
+                log.error('Error processing message', { error: err.message });
+                responseText = `❌ Error: ${err.message}`;
+            }
+        }
+
+        // Write response back to Firestore
+        const docRef = db.collection('alice-chat-relay').doc(docId);
+        await docRef.update({
+            status: 'done',
+            response: responseText,
+            respondedAt: new Date().toISOString(),
+        });
+
+        // Send response directly via Chat API if available
+        if (spaceName && this.chatAuth) {
+            try {
+                const client = await this.chatAuth.getClient();
+                const tokenResponse = await client.getAccessToken();
+                const token = typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token;
+
+                if (token) {
+                    const chatUrl = `https://chat.googleapis.com/v1/${spaceName}/messages`;
+                    const chatRes = await fetch(chatUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ text: responseText }),
+                    });
+
+                    if (chatRes.ok) {
+                        await docRef.update({ status: 'delivered' });
+                        log.info('📤 Response delivered to Google Chat');
+                    } else {
+                        const errBody = await chatRes.text();
+                        log.error('Chat API error', { status: chatRes.status, body: errBody.slice(0, 200) });
+                    }
+                }
+            } catch (chatErr: any) {
+                log.error('Failed to deliver to Chat', { error: chatErr.message });
+            }
+        }
+
+        log.info('📨 Response written to Firestore');
+    }
+
+    // ─── Sheets Polling Mode (fallback) ────────────────────────────────────
+
+    private async startSheetsPolling(pollMs: number): Promise<void> {
+        if (!this.sheetId || !this.oauthClientId || !this.oauthClientSecret) {
+            log.debug('Sheets queue not configured — skipping polling');
             return;
         }
 
@@ -107,14 +317,6 @@ export class GoogleChatAdapter {
 
         // Then on interval
         this.pollInterval = setInterval(() => this.poll(), pollMs);
-    }
-
-    stopListening(): void {
-        if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-            log.info('Stopped polling');
-        }
     }
 
     private async poll(): Promise<void> {
@@ -247,6 +449,8 @@ export class GoogleChatAdapter {
         }
     }
 
+    // ─── Outbound Message Sending ──────────────────────────────────────────
+
     async sendMessage(text: string): Promise<boolean> {
         // Try Chat API directly (service account)
         const spaceName = this.lastSpaceName || process.env.GOOGLE_CHAT_SPACE;
@@ -278,6 +482,27 @@ export class GoogleChatAdapter {
                 }
             } catch (err: any) {
                 log.error('Chat API send error', { error: err.message });
+            }
+        }
+
+        // Fallback: write to Firestore relay
+        if (this.relayMode === 'firestore' && this.firebaseProjectId) {
+            try {
+                const { getFirestore } = await import('firebase-admin/firestore');
+                const db = getFirestore();
+                const msgId = `out_${Date.now().toString(36)}`;
+                await db.collection('alice-chat-relay').doc(msgId).set({
+                    sender: 'Alice',
+                    text: '',
+                    status: 'outbound',
+                    response: text,
+                    timestamp: new Date().toISOString(),
+                    spaceName: spaceName || '',
+                });
+                log.info(`📤 Wrote to Firestore relay: ${text.slice(0, 100)}`);
+                return true;
+            } catch (err: any) {
+                log.error('Firestore relay write failed', { error: err.message });
             }
         }
 
@@ -362,6 +587,8 @@ export class GoogleChatAdapter {
         return false;
     }
 
+    // ─── Chat Commands ─────────────────────────────────────────────────────
+
     /**
      * Handle chat commands. Returns response string if handled, null otherwise.
      */
@@ -379,6 +606,7 @@ export class GoogleChatAdapter {
                     `Model: ${s.model}`,
                     `System prompt: ${s.systemPromptChars} chars`,
                     `Est. context: ~${s.estimatedTokens} tokens`,
+                    `Relay: ${this.relayMode}`,
                 ].join('\n');
             }
             case '/new':
