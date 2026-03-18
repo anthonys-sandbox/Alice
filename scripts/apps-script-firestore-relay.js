@@ -101,7 +101,7 @@ function onMessage(event) {
  * Called when the bot is added to a space.
  */
 function onAddToSpace(event) {
-  return { text: '👋 Hi! I\\'m Alice, your AI assistant. Send me a message and I\\'ll respond!' };
+  return { text: "👋 Hi! I'm Alice, your AI assistant. Send me a message and I'll respond!" };
 }
 
 /**

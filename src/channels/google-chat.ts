@@ -131,18 +131,17 @@ export class GoogleChatAdapter {
             const db = getFirestore();
             const messagesRef = db.collection('alice-chat-relay');
 
-            // Query for pending messages
-            const pendingQuery = messagesRef
-                .where('status', '==', 'pending')
-                .orderBy('timestamp', 'asc');
-
-            // Real-time listener — fires on new pending messages
-            this.firestoreUnsubscribe = pendingQuery.onSnapshot(
+            // Listen to all documents — filter for 'pending' client-side
+            // (avoids needing a composite Firestore index)
+            this.firestoreUnsubscribe = messagesRef.onSnapshot(
                 (snapshot) => {
                     snapshot.docChanges().forEach((change) => {
                         if (change.type === 'added') {
                             const data = change.doc.data();
                             const docId = change.doc.id;
+
+                            // Only process pending messages
+                            if (data.status !== 'pending') return;
 
                             // Skip already processed
                             if (this.processedIds.has(docId)) return;
@@ -156,14 +155,18 @@ export class GoogleChatAdapter {
                     });
                 },
                 (error) => {
-                    log.error('Firestore listener error', { error: error.message });
-                    // Attempt to reconnect after 10s
+                    log.error('Firestore listener error', {
+                        error: error.message,
+                        code: (error as any).code,
+                        details: (error as any).details || 'none',
+                    });
+                    // Attempt to reconnect after 30s (give IAM time to propagate)
                     setTimeout(() => {
                         log.info('Attempting to reconnect Firestore listener...');
                         this.startFirestoreListener().catch(e =>
                             log.error('Firestore reconnect failed', { error: e.message })
                         );
-                    }, 10000);
+                    }, 30000);
                 }
             );
 
