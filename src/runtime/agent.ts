@@ -952,7 +952,57 @@ export class Agent {
 
         registerTool({ name: 'chat_send', description: 'Send a message to a Google Chat space.', parameters: { type: 'object', properties: { space: { type: 'string', description: 'Space resource name (e.g. "spaces/AAAA...")' }, message: { type: 'string', description: 'Message text' } }, required: ['space', 'message'] }, execute: async (a: any) => runGws(['chat', 'spaces', 'messages', 'create', '--params', JSON.stringify({ parent: a.space }), '--json', JSON.stringify({ text: a.message })]) });
 
-        registerTool({ name: 'chat_list_spaces', description: 'List all Google Chat spaces.', parameters: { type: 'object', properties: {}, required: [] }, execute: async () => runGws(['chat', 'spaces', 'list', '--params', JSON.stringify({ pageSize: 50 })]) });
+        registerTool({ name: 'chat_list_spaces', description: 'List all Google Chat spaces and DMs you are a member of.', parameters: { type: 'object', properties: {}, required: [] }, execute: async () => runGws(['chat', 'spaces', 'list', '--params', JSON.stringify({ pageSize: 50 })]) });
+
+        registerTool({
+            name: 'chat_with_person',
+            description: 'Read Google Chat DM history with a specific person. Automatically finds their DM space and retrieves messages. Use this when the user asks about chats, DMs, or conversations with someone.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    email: { type: 'string', description: 'Email address of the person (e.g. "kati_callahan@hillspet.com")' },
+                    max_results: { type: 'number', description: 'Max messages to return (default 25)' },
+                    after_date: { type: 'string', description: 'Only return messages after this date (ISO format, e.g. "2026-03-17T00:00:00Z")' },
+                },
+                required: ['email'],
+            },
+            async execute(a: any) {
+                try {
+                    // Step 1: Find the DM space
+                    const spaceResult = await runGws(['chat', 'spaces', 'findDirectMessage', '--params', JSON.stringify({ name: `users/${a.email}` })]);
+                    const spaceData = JSON.parse(spaceResult);
+                    const spaceName = spaceData.name;
+                    if (!spaceName) return `Could not find a DM conversation with ${a.email}`;
+
+                    // Step 2: Read messages from the space
+                    const msgParams: any = { parent: spaceName, pageSize: a.max_results || 25, orderBy: 'createTime desc' };
+                    if (a.after_date) {
+                        msgParams.filter = `createTime > "${a.after_date}"`;
+                    }
+                    const messagesResult = await runGws(['chat', 'spaces', 'messages', 'list', '--params', JSON.stringify(msgParams)]);
+                    const msgData = JSON.parse(messagesResult);
+
+                    if (!msgData.messages || msgData.messages.length === 0) {
+                        return `Found DM space with ${a.email} but no messages${a.after_date ? ` after ${a.after_date}` : ''}.`;
+                    }
+
+                    // Step 3: Format messages for readability
+                    const formatted = msgData.messages.map((m: any) => {
+                        const time = new Date(m.createTime).toLocaleString();
+                        const sender = m.sender?.name || 'unknown';
+                        return `[${time}] ${sender}: ${m.text || '(no text)'}`;
+                    }).join('\n');
+
+                    return `Chat history with ${a.email} (${msgData.messages.length} messages):\n${formatted}`;
+                } catch (err: any) {
+                    return `Error reading chat with ${a.email}: ${err.message}`;
+                }
+            }
+        });
+
+        registerTool({ name: 'chat_history', description: 'Read messages from a Google Chat space by space ID. For reading DMs with a person, prefer chat_with_person instead.', parameters: { type: 'object', properties: { space: { type: 'string', description: 'Space resource name (e.g. "spaces/AAAA...")' }, max_results: { type: 'number', description: 'Max messages (default 25)' }, filter: { type: 'string', description: 'Filter (e.g. create_time > "2026-03-01T00:00:00Z")' } }, required: ['space'] }, execute: async (a: any) => { const p: any = { parent: a.space, pageSize: a.max_results || 25 }; if (a.filter) p.filter = a.filter; return runGws(['chat', 'spaces', 'messages', 'list', '--params', JSON.stringify(p)]); } });
+
+        registerTool({ name: 'chat_read', description: 'Read a specific Google Chat message by its resource name.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Message resource name' } }, required: ['name'] }, execute: async (a: any) => runGws(['chat', 'spaces', 'messages', 'get', '--params', JSON.stringify({ name: a.name })]) });
 
         registerTool({ name: 'keep_list', description: 'List Google Keep notes.', parameters: { type: 'object', properties: { max_results: { type: 'number', description: 'Max notes (default 20)' } }, required: [] }, execute: async (a: any) => runGws(['keep', 'notes', 'list', '--params', JSON.stringify({ pageSize: a.max_results || 20 })]) });
 
@@ -1905,15 +1955,26 @@ Use emoji and clean formatting.`,
             `When creating calendar events, use RFC3339 timestamps with the local timezone offset (e.g. 2026-03-17T14:00:00-05:00 for CDT).`,
             `Working directory: ${process.cwd()}`,
             '',
-            `## Tool Priority (IMPORTANT)`,
-            `When answering questions about people, contacts, facts, or relationships:`,
-            `1. FIRST check your in-context memory above (<user_context>, <long_term_memory>) — if the answer is there, respond directly WITHOUT calling any tools.`,
-            `2. If not in context, use knowledge_graph (action: search) or search_memory to look it up.`,
-            `3. If still not found, use contacts_search.`,
-            `4. ONLY use gmail_search, gmail_read, or web_search as a LAST RESORT when steps 1-3 fail.`,
+            `## Tool Priority — MANDATORY (READ CAREFULLY)`,
+            `STOP-AND-CHECK RULE: Before calling ANY tool for a question about a person, contact, fact, or relationship:`,
+            `→ Re-read the <user_context> and <long_term_memory> and "--- Known entities ---" sections above.`,
+            `→ If the answer (name, email, role, team, relationship) is already present, respond IMMEDIATELY with that information. Do NOT call any tools.`,
+            `Example: If <user_context> says "Jon Corral (jon_corral@hillspet.com) – Lead copywriter on the SCS team. Reports directly to me." and the user asks "Who is Jon Corral?" — you ALREADY HAVE the answer. Do NOT call gmail_search or contacts_search. Just answer.`,
+            ``,
+            `If the answer is NOT in your context, use tools in this exact order:`,
+            `1. knowledge_graph (action: search) or search_memory`,
+            `2. contacts_search`,
+            `3. ONLY as a LAST RESORT: gmail_search, gmail_read, web_search`,
+            ``,
             `ALWAYS produce a text response that answers the user's question. Never leave the user without an answer.`,
+            ``,
+            `## Google Chat — IMPORTANT`,
+            `When the user asks about "chats", "Google Chat", "DMs", or conversations with someone:`,
+            `→ Use chat_with_person with the person's email address. It automatically finds the DM and reads messages.`,
+            `→ You can pass after_date to filter by date (ISO format).`,
+            `→ You know the emails — check <user_context> above. Do NOT use gmail_search for Google Chat conversations.`,
             '',
-            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, semantic_search, search_codebase, set_reminder, generate_image, canvas, get_location, knowledge_graph, contacts_search, add_knowledge) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
+            `You have core tools (bash, read_file, write_file, edit_file, web_search, search_memory, semantic_search, search_codebase, set_reminder, generate_image, canvas, get_location, knowledge_graph, contacts_search, add_knowledge, chat_with_person, chat_history, chat_read, chat_send, chat_list_spaces) plus these via bash: git status/diff/commit/log, clipboard read/write, web_fetch, read_pdf, list_directory, gemini (Gemini CLI).`,
             `IMPORTANT: When the user asks for charts, dashboards, visualizations, calculators, forms, or any interactive content, ALWAYS use the 'canvas' tool to push HTML directly inline in chat. Do NOT use write_file to create HTML files — use the canvas tool ONLY. If you absolutely must save a file, write it to ~/.alice/canvas/ (never to the working directory).`,
             `/no_think`,
         ].filter(Boolean).join('\n');

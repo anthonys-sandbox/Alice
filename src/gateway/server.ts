@@ -4789,6 +4789,7 @@ const WEB_UI_HTML = `<!DOCTYPE html>
           'bash': 'System', 'web_search': 'Web', 'web_fetch': 'Web', 'read_pdf': 'Documents',
           'generate_image': 'Creative', 'gemini_code': 'Creative',
           'gmail_search': 'Google Workspace', 'gmail_send': 'Google Workspace', 'gmail_read': 'Google Workspace',
+          'chat_with_person': 'Google Workspace', 'chat_history': 'Google Workspace', 'chat_read': 'Google Workspace',
           'browse_page': 'Browser', 'screenshot': 'Browser', 'click_element': 'Browser', 'type_text': 'Browser', 'browser_clear_data': 'Browser',
           // Memory
           'search_memory': 'Memory & Search', 'semantic_search': 'Memory & Search',

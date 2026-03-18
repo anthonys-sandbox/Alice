@@ -58,6 +58,9 @@ Alice is a personal AI agent runtime that runs entirely on your Mac. She can:
 - 📧 **Email Watcher** — automatic inbox monitoring with configurable triage and notifications
 - 📅 **Meeting Prep** — automatic pre-meeting briefings with attendee intel and agenda summaries
 - 🧠 **Knowledge Base** — structured long-term knowledge store with semantic search (facts, decisions, preferences, research)
+- 💬 **Google Chat History** — read and search DM conversations with colleagues via `chat_with_person`
+- 🔗 **Entity Graph** — knowledge graph of people, teams, and relationships, surfaced proactively in responses
+- 🛡️ **Auto-recovery** — graceful recovery from corrupted conversation history (400 errors)
 
 ## Architecture
 
@@ -490,6 +493,16 @@ These tools enable full browser automation with a **persistent browser profile**
 | `canvas` | Push interactive HTML/JS content inline in chat; persists in SQLite, supports fullscreen expand |
 | `get_location` | Get the user's device location (lat/lng via browser Geolocation API) |
 
+### Google Chat Tools
+
+| Tool | Description |
+|---|---|
+| `chat_with_person` | Read Google Chat DM history with a person by email (auto-finds DM space, retrieves messages, supports date filtering) |
+| `chat_history` | Read messages from a Chat space by space ID |
+| `chat_read` | Read a specific Chat message by resource name |
+| `chat_send` | Send a message to a Chat space |
+| `chat_list_spaces` | List all Chat spaces and DMs |
+
 ### Cron Job Tools
 
 | Tool | Description |
@@ -517,11 +530,20 @@ Alice's personality and knowledge are defined by markdown files in the `memory/`
 |---|---|
 | `IDENTITY.md` | Alice's name, role, and capabilities |
 | `SOUL.md` | Personality, values, and communication style |
-| `USER.md` | Information about you (preferences, context) |
+| `USER.md` | Information about you (preferences, context, contacts) |
 | `MEMORY.md` | Long-term memories and learned facts |
 | `HEARTBEAT.md` | Instructions for periodic self-check reports |
 
 Edit these files to customize Alice's behavior. They're loaded into the system prompt on every startup and heartbeat cycle.
+
+### Entity Graph (Knowledge Graph)
+
+Alice maintains a structured entity graph in SQLite (`memory/data/sessions.db`) that stores:
+
+- **Entities** — people, teams, and organizations with descriptions and contact info
+- **Relationships** — connections between entities (reports_to, member_of, friend, partner, manager_of)
+
+When you ask about a person, Alice proactively searches the entity graph and injects their details (role, email, team, reporting chain) into the context — often answering without needing any tool calls.
 
 ---
 
